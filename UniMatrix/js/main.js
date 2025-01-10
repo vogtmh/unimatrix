@@ -6,6 +6,8 @@ var roomlist;
 var roomnames = [];
 var roommessages;
 var setting_limitmessages;
+var currentRoomId;
+var currentRoomname;
 
 function loadSettings() {
     if (localStorage.getItem("matrix_server") === null) {
@@ -339,6 +341,8 @@ function printRoomnames() {
 }
 
 function getRoomMessages(roomId, roomName) {
+    currentRoomId = roomId;
+    currentRoomName = roomName;
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
     $("#activityicon").html('<img src="images/activity_on.gif" />');
 
@@ -357,24 +361,65 @@ function getRoomMessages(roomId, roomName) {
             let messages = roommessages.chunk;
             let messagecount = messages.length;
             let roomhtml = '';
-            
+            let inputhtml = `<input type="text" id="messageinput">
+                            <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `","` + roomName + `")>
+                            <img src="images/send.png" /></div>`;
 
             for (let i = 0; i < messagecount; i++) {
                 let messagecontent = messages[i].content;
                 let messagetimestamp = messages[i].origin_server_ts;
+                let sender = messages[i].sender;
                 let ts = timeConverter(messagetimestamp);
                 if (messagecontent.hasOwnProperty("msgtype")) {
                     if (messagecontent.msgtype == "m.text") {
-                        roomhtml += `<div class="message">` + messagecontent.body + `<br/><div class="timestamp">` + ts + `</div></div >`;
+                        roomhtml += `<div class="message">` + messagecontent.body + `<br/><div class="timestamp">` + sender + ` - ` + ts + `</div></div >`;
+                    }
+                    if (messagecontent.msgtype == "m.notice") {
+                        roomhtml += `<div class="message">` + messagecontent.body + `<br/><div class="timestamp">` + sender + ` - ` + ts + `</div></div >`;
                     }
                 }
                 //console.log(messagecontent);
             }
-            $("#room").html(roomhtml);
+            $("#roomcontent").html(roomhtml);
+            $("#roominput").html(inputhtml);
+            let devicewidth = $(window).width();
+            let buttonwidth = $("#messagebutton").width();
+            let remainwidth = devicewidth - buttonwidth - 65;
+            $("#messageinput").width(remainwidth);
             openRoom(roomName);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
+            $("#activityicon").html('<img src="images/activity_off.png" />');
+        },
+    });
+}
+
+function sendRoomMessage(roomId, roomName) {
+    let message = $("#messageinput").val();
+    if (message == "") {
+        return;
+    }
+    let transactionId = Date.now();
+    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/send/m.room.message/" + transactionId + "?access_token=" + matrix_access_token;
+    $("#activityicon").html('<img src="images/activity_on.gif" />');
+
+    $.ajax({
+        url: query,
+        type: 'PUT',
+        data: JSON.stringify({
+            body: message,
+            msgtype: "m.text",
+        }),
+        dataType: 'json',
+        success(response) {
+            $("#activityicon").html('<img src="images/activity_off.png" />');
+            console.log(response);
+            getRoomMessages(roomId, roomName);
+        },
+        error(jqXHR, status, errorThrown) {
+            console.log('failed to fetch ' + query)
+            console.log(status);
             $("#activityicon").html('<img src="images/activity_off.png" />');
         },
     });
