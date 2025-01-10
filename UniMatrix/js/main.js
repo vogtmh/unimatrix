@@ -334,13 +334,14 @@ function printRoomnames() {
     for (let i = 0; i < nameitems; i++) {
         let roomId = Object.keys(roomnames)[i]
         let roomName = Object.values(roomnames)[i]
-        contenthtml += `<div class="channel" onclick='getRoomMessages("` + roomId + `", "` + roomName + `")'>` + roomName + "</div>";
+        contenthtml += `<div class="channel" onclick='getRoomMessages("` + roomId + `")'>` + roomName + "</div>";
     }
     contenthtml += "";
     $("#channellist").html(contenthtml);
 }
 
-function getRoomMessages(roomId, roomName) {
+function getRoomMessages(roomId) {
+    let roomName = roomnames[roomId];
     currentRoomId = roomId;
     currentRoomName = roomName;
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
@@ -362,9 +363,8 @@ function getRoomMessages(roomId, roomName) {
             let messagecount = messages.length;
             let roomhtml = '';
             let inputhtml = `<input type="text" id="messageinput">
-                            <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `","` + roomName + `")>
+                            <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `")>
                             <img src="images/send.png" /></div>`;
-
             for (let i = 0; i < messagecount; i++) {
                 let messagecontent = messages[i].content;
                 let messagetimestamp = messages[i].origin_server_ts;
@@ -386,7 +386,7 @@ function getRoomMessages(roomId, roomName) {
             let buttonwidth = $("#messagebutton").width();
             let remainwidth = devicewidth - buttonwidth - 65;
             $("#messageinput").width(remainwidth);
-            openRoom(roomName);
+            openRoom(roomId);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
@@ -395,7 +395,7 @@ function getRoomMessages(roomId, roomName) {
     });
 }
 
-function sendRoomMessage(roomId, roomName) {
+function sendRoomMessage(roomId) {
     let message = $("#messageinput").val();
     if (message == "") {
         return;
@@ -415,7 +415,7 @@ function sendRoomMessage(roomId, roomName) {
         success(response) {
             $("#activityicon").html('<img src="images/activity_off.png" />');
             console.log(response);
-            getRoomMessages(roomId, roomName);
+            getRoomMessages(roomId);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
@@ -447,7 +447,8 @@ function getRoomThreads(roomId) {
     });
 }
 
-function openRoom(roomName) {
+function openRoom(roomId) {
+    let roomName = roomnames[roomId];
     $("#header_text").html("[ " + roomName + " ]");
     $("#room").show();
     $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoom()" />')
@@ -502,6 +503,90 @@ function showLoginmenu() {
     $("#header_mainbutton").html('')
 }
 
+function openCreateRoomDialog() {
+    var createroomhtml = '';
+    createroomhtml += `
+                    <div id="input_customserver">
+                        <table id="logintable">
+                            <tr>
+                                <td><span class="login_label">Room Name</span></td>
+                                <td><input type="text" id="createroom_roomname" class="login_input" size="15" value="" /></td>
+                            </tr>
+                            <tr>
+                                <td><span class="login_label">Visibility</span></td>
+                                <td><input type="text" id="createroom_visibility" class="login_input" size="15" value="private" /></td>
+                            </tr>
+                        </table>
+                        <div id="createroom_button" class="wbutton" onclick="createRoom()">Create</div>
+                        <div id="createroom_notification"></div>
+                    </div>
+    `;
+    $("#header_text").html("[ Create room ]");
+    $("#createRoomDialog").html(createroomhtml);
+    $("#createRoomDialog").show();
+    toggleSidemenu();
+    $("#header_mainbutton").html('<img src="images/back.png" onclick="closeCreateRoomDialog()" />')
+}
+
+function closeCreateRoomDialog() {
+    $("#header_text").html("[ " + matrix_user_id + " ]");
+    $("#header_mainbutton").html('<img src="images/menu.png" onclick="toggleSidemenu()" />')
+    $("#createRoomDialog").hide();
+}
+
+function createRoom() {
+    var preset;
+    let newRoomname = $("#createroom_roomname").val();
+    let newVisibility = $("#createroom_visibility").val();
+
+    $("#createroom_notification").html("")
+    if (newRoomname == "") {
+        $("#createroom_notification").html("Room name cannot be empty")
+        return;
+    }
+    if (newVisibility == "") {
+        $("#createroom_notification").html("Visibility cannot be empty")
+        return;
+    }
+    newRoomalias = newRoomname.replace(/ /g, "_").toLowerCase();
+    
+    if (newVisibility == "private") {
+        preset = "private_chat";
+    }
+    else if (newVisibility == "public") {
+        preset = "public_chat";
+    }
+    else {
+        $("#createroom_notification").html("Visibility can only be public or private")
+        return;
+    }
+
+    let query = serverurl + "/_matrix/client/v3/createRoom?access_token=" + matrix_access_token;
+    $("#activityicon").html('<img src="images/activity_on.gif" />');
+
+    $.ajax({
+        url: query,
+        type: 'POST',
+        data: JSON.stringify({
+            "name": newRoomname,
+            "preset": preset,
+            "room_alias_name": newRoomalias
+        }),
+        dataType: 'json',
+        success(response) {
+            $("#activityicon").html('<img src="images/activity_off.png" />');
+            console.log(response);
+            getRoomlist();
+            closeCreateRoomDialog();
+        },
+        error(jqXHR, status, errorThrown) {
+            console.log('failed to fetch ' + query)
+            console.log(status);
+            $("#activityicon").html('<img src="images/activity_off.png" />');
+        },
+    });
+}
+
 function showOnlinestate(status) {
     return;
 }
@@ -539,7 +624,5 @@ $(document).ready(function () {
     document.onselectstart = new Function("return false")
 
     loadSettings();
-    //getDiscoveryInformation();
-    //getSupportedVersions();
     checkLoginstate();
 });

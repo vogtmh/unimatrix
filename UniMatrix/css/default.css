@@ -87,12 +87,14 @@ body {
 }
 
 #channellist {
-    position:fixed;
+    position: fixed;
     top: 4em;
     bottom: 0px;
     left: 0px;
     right: 0px;
-    z-index:10;
+    overflow-x: hidden;
+    overflow-y: scroll;
+    z-index: 10;
 }
 
 .channel {
@@ -305,3 +307,21 @@ body {
 }
 
 /* LOGIN FORM end */
+
+#createRoomDialog {
+    position: fixed;
+    top: 4em;
+    bottom: 0px;
+    left: 0px;
+    right: 0px;
+    z-index: 290;
+    background-color: black;
+    display: none;
+}
+
+#createroom_notification {
+    margin-top: 2em;
+    margin-left: 1em;
+    width: 90%;
+    color: red;
+}
