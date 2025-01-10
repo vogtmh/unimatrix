@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Source>C:\Users\mavo\Downloads\unimatrix_logo.png</Source>
+    <SmallTileSource>C:\Users\mavo\Downloads\unimatrix_logo.png</SmallTileSource>
+    <MediumTileSource>C:\Users\mavo\Downloads\unimatrix_logo.png</MediumTileSource>
+    <WideTileSource>C:\Users\mavo\Downloads\unimatrix_logo.png</WideTileSource>
+    <LargeTileSource>C:\Users\mavo\Downloads\unimatrix_logo.png</LargeTileSource>
+    <AppIconSource>C:\Users\mavo\Downloads\unimatrix_logo.png</AppIconSource>
+    <SplashScreenSource>C:\Users\mavo\Downloads\unimatrix_logo.png</SplashScreenSource>
+    <PackageLogoSource>C:\Users\mavo\Downloads\unimatrix_logo.png</PackageLogoSource>
+    <AppxPackageIsForStore>False</AppxPackageIsForStore>
+    <AppxShowAllApps>False</AppxShowAllApps>
+    <AppxBuildConfigurationSelection>neutral</AppxBuildConfigurationSelection>
+    <PackageOptionalProjectsInIdeBuilds>False</PackageOptionalProjectsInIdeBuilds>
+  </PropertyGroup>
+</Project>

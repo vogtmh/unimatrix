@@ -1,0 +1,48 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>UniMatrix</title>
+    <link href="css/default.css" rel="stylesheet" />
+</head>
+<body>
+    <div id="header">
+        <div id="header_mainbutton"><img src="images/menu.png" onclick="toggleSidemenu()" /></div>
+        <div id="header_text"></div>
+    </div>
+    <div id="sidemenu">
+        <!--<div id="newchat" class="menuitem"><img src="images/new.png" />New</div>-->
+        <div id="settings" class="menuitem" onclick="openSettings()"><img src="images/settings.png" />Settings</div>
+        <!--<div id="about" class="menuitem"><img src="images/help.png" />About</div>-->
+        <div id="logout" class="menuitem" onclick="logoutUser()"><img src="images/logout.png" />Logout</div>
+        <div id="version"></div>
+    </div>
+    <div id="channellist"></div>
+    <div id="room"></div>
+    <div id="settingsmenu"></div>
+    <div id="loginmenu">
+        <div id="input_customserver">
+            <table id="logintable">
+                <tr>
+                    <td><span class="login_label">Server</span></td>
+                    <td><input type="text" id="login_server" class="login_input" name="login_server" size="15" value="matrix.org" /></td>
+                </tr>
+                <tr>
+                    <td><span class="login_label">Username</span></td>
+                    <td><input type="text" id="login_username" class="login_input" name="login_username" size="15" /></td>
+                </tr>
+                <tr>
+                    <td><span class="login_label">Password</span></td>
+                    <td><input type="password" id="login_password" class="login_input" name="login_password" size="15" /></td>
+                </tr>
+            </table>
+            <div id="login_button" class="wbutton" onclick="checkLogindata()">Login</div>
+            <div id="login_notification"></div>
+        </div>
+        <div id="loginmisc"></div>
+    </div>
+    <div id="activityicon"></div>
+    <script src="js/jquery-3.7.1.min.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
