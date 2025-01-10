@@ -1,4 +1,9 @@
-﻿body {
+﻿@font-face {
+    font-family: mySegoeEmoji;
+    src: url("css/seguiemj-1.45-3d.ttf");
+}
+
+body {
     /* Uncomment this to enable scrolling and zooming
   touch-action: manipulation;
   */

@@ -75,6 +75,14 @@
     <AppxManifest Include="package.appxmanifest">
       <SubType>Designer</SubType>
     </AppxManifest>
+    <Content Include="css\seguiemj-1.45-3d.ttf" />
+    <Content Include="favicons\apple-touch-icon.png" />
+    <Content Include="favicons\favicon-96x96.png" />
+    <Content Include="favicons\favicon.ico" />
+    <Content Include="favicons\favicon.svg" />
+    <Content Include="favicons\site.webmanifest" />
+    <Content Include="favicons\web-app-manifest-192x192.png" />
+    <Content Include="favicons\web-app-manifest-512x512.png" />
     <Content Include="images\activity_off.png" />
     <Content Include="images\activity_on1.gif" />
     <Content Include="images\back.png" />
