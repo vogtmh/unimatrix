@@ -6,8 +6,10 @@ var roomlist;
 var roomnames = [];
 var roommessages;
 var setting_limitmessages;
-var currentRoomId;
-var currentRoomname;
+var currentRoomId = "";
+var currentRoomName = "";
+var nextBatch = "";
+var enableClientsync = 0;
 
 function loadSettings() {
     if (localStorage.getItem("matrix_server") === null) {
@@ -116,6 +118,35 @@ function getSupportedVersions() {
         success(response) {
             $("#activityicon").html('<img src="images/activity_off.png" />');
             console.log(response);
+        },
+        error(jqXHR, status, errorThrown) {
+            console.log('failed to fetch ' + query)
+            $("#activityicon").html('<img src="images/activity_off.png" />');
+        },
+    });
+}
+
+function syncClient(since) {
+    var query = "";
+    if (since == "" || since == undefined) {
+        console.log("Running initial sync ..")
+        query = serverurl + "/_matrix/client/v3/sync?access_token=" + matrix_access_token;
+    }
+    else {
+        console.log("Running incremental sync ..")
+        query = serverurl + "/_matrix/client/v3/sync?since=" + since + "&access_token=" + matrix_access_token;
+    } 
+    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $.ajax({
+        url: query,
+        type: 'GET',
+        dataType: 'json',
+        success(response) {
+            $("#activityicon").html('<img src="images/activity_off.png" />');
+            //console.log(response);
+            nextBatch = response.next_batch;
+            console.log("Sync completed. next_batch=" + nextBatch);
+            enableClientsync = 1;
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
@@ -342,8 +373,6 @@ function printRoomnames() {
 
 function getRoomMessages(roomId) {
     let roomName = roomnames[roomId];
-    currentRoomId = roomId;
-    currentRoomName = roomName;
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
     $("#activityicon").html('<img src="images/activity_on.gif" />');
 
@@ -397,7 +426,7 @@ function getRoomMessages(roomId) {
 
 function sendRoomMessage(roomId) {
     let message = $("#messageinput").val();
-    if (message == "") {
+    if (roomId == "" || message == "") {
         return;
     }
     let transactionId = Date.now();
@@ -449,12 +478,16 @@ function getRoomThreads(roomId) {
 
 function openRoom(roomId) {
     let roomName = roomnames[roomId];
+    currentRoomId = roomId;
+    currentRoomName = roomName;
     $("#header_text").html("[ " + roomName + " ]");
     $("#room").show();
     $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoom()" />')
 }
 
 function closeRoom() {
+    currentRoomId = "";
+    currentRoomName = "";
     $("#header_text").html("[ " + matrix_user_id + " ]");
     $("#header_mainbutton").html('<img src="images/menu.png" onclick="toggleSidemenu()" />')
     $("#room").hide();
@@ -606,6 +639,16 @@ function onBackPressed(event) {
     }
 }
 
+function TimerRun() {
+    if (currentRoomId != "") {
+        getRoomMessages(currentRoomId);
+        console.log(`Checking for updates in "` + currentRoomName + `"`);
+    }
+    if (enableClientsync == 1) {
+        syncClient(nextBatch);
+    }
+}
+
 $(document).ready(function () {
     try {
         Windows.UI.Core.SystemNavigationManager.getForCurrentView().addEventListener("backrequested", onBackPressed);
@@ -625,4 +668,7 @@ $(document).ready(function () {
 
     loadSettings();
     checkLoginstate();
+    //syncClient(nextBatch);
 });
+
+setInterval(TimerRun, 10000);

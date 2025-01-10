@@ -75,7 +75,6 @@
     <AppxManifest Include="package.appxmanifest">
       <SubType>Designer</SubType>
     </AppxManifest>
-    <Content Include="css\seguiemj-1.45-3d.ttf" />
     <Content Include="favicons\apple-touch-icon.png" />
     <Content Include="favicons\favicon-96x96.png" />
     <Content Include="favicons\favicon.ico" />
