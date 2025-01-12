@@ -220,6 +220,15 @@ body {
     width: 100%;
 }
 
+#syncled {
+    position: fixed;
+    left: 0px;
+    bottom: 0px;
+    width: 0.5em;
+    height: 0.5em;
+    z-index: 400;
+}
+
 #loginmenu {
     position: fixed;
     top: 4em;

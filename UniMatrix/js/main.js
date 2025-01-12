@@ -127,6 +127,7 @@ function getSupportedVersions() {
 }
 
 function syncClient(since) {
+    $("#syncled").css("background-color", "orange");
     var query = "";
     if (since == "" || since == undefined) {
         console.log("Running initial sync ..")
@@ -136,21 +137,23 @@ function syncClient(since) {
         console.log("Running incremental sync ..")
         query = serverurl + "/_matrix/client/v3/sync?since=" + since + "&access_token=" + matrix_access_token;
     } 
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    //$("#activityicon").html('<img src="images/activity_on.gif" />');
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
-            //console.log(response);
+            //$("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#syncled").css("background-color", "greenyellow");
+            console.log(response);
             nextBatch = response.next_batch;
             console.log("Sync completed. next_batch=" + nextBatch);
             enableClientsync = 1;
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            //$("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#syncled").css("background-color", "red");
         },
     });
 }
@@ -365,7 +368,7 @@ function printRoomnames() {
     for (let i = 0; i < nameitems; i++) {
         let roomId = Object.keys(roomnames)[i]
         let roomName = Object.values(roomnames)[i]
-        contenthtml += `<div class="channel" onclick='getRoomMessages("` + roomId + `")'>` + roomName + "</div>";
+        contenthtml += `<div class="channel" onclick='openRoom("` + roomId + `")'>` + roomName + "</div>";
     }
     contenthtml += "";
     $("#channellist").html(contenthtml);
@@ -391,9 +394,6 @@ function getRoomMessages(roomId) {
             let messages = roommessages.chunk;
             let messagecount = messages.length;
             let roomhtml = '';
-            let inputhtml = `<input type="text" id="messageinput">
-                            <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `")>
-                            <img src="images/send.png" /></div>`;
             for (let i = 0; i < messagecount; i++) {
                 let messagecontent = messages[i].content;
                 let messagetimestamp = messages[i].origin_server_ts;
@@ -410,12 +410,6 @@ function getRoomMessages(roomId) {
                 //console.log(messagecontent);
             }
             $("#roomcontent").html(roomhtml);
-            $("#roominput").html(inputhtml);
-            let devicewidth = $(window).width();
-            let buttonwidth = $("#messagebutton").width();
-            let remainwidth = devicewidth - buttonwidth - 65;
-            $("#messageinput").width(remainwidth);
-            openRoom(roomId);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
@@ -481,8 +475,17 @@ function openRoom(roomId) {
     currentRoomId = roomId;
     currentRoomName = roomName;
     $("#header_text").html("[ " + roomName + " ]");
+    let inputhtml = `<input type="text" id="messageinput">
+                     <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `")>
+                     <img src="images/send.png" /></div>`;
+    $("#roominput").html(inputhtml);
     $("#room").show();
-    $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoom()" />')
+    $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoom()" />');
+    let devicewidth = $(window).width();
+    let buttonwidth = $("#messagebutton").width();
+    let remainwidth = devicewidth - buttonwidth - 65;
+    $("#messageinput").width(remainwidth);
+    getRoomMessages(roomId);
 }
 
 function closeRoom() {
@@ -631,6 +634,10 @@ function onBackPressed(event) {
     }
     else if ($('#settingsmenu:visible').length > 0) {
         closeSettings();
+        event.handled = true;
+    }
+    else if ($('#createRoomDialog:visible').length > 0) {
+        closeCreateRoomDialog();
         event.handled = true;
     }
     else if ($('#sidemenu:visible').length > 0) {

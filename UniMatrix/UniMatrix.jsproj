@@ -128,6 +128,7 @@
     <Content Include="images\storelogo.scale-150.png" />
     <Content Include="images\storelogo.scale-200.png" />
     <Content Include="images\storelogo.scale-400.png" />
+    <Content Include="images\sync.png" />
     <Content Include="images\unimatrix_banner.png" />
     <Content Include="images\unimatrix_logo.png" />
     <Content Include="images\Wide310x150Logo.scale-100.png" />
