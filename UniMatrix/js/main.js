@@ -10,6 +10,7 @@ var currentRoomId = "";
 var currentRoomName = "";
 var nextBatch = "";
 var enableClientsync = 0;
+var matrix_avatarlinks = [];
 
 function loadSettings() {
     if (localStorage.getItem("matrix_server") === null) {
@@ -72,6 +73,13 @@ function loadSettings() {
         console.log("setting_limitmessages from localstorage: " + setting_limitmessages);
     }
 
+    if (localStorage.getItem("matrix_avatarlinks") === null) {
+        console.log("matrix_avatarlinks does not exist in localstorage.");
+    } else {
+        matrix_avatarlinks = JSON.parse(localStorage.matrix_avatarlinks);
+        console.log("matrix_avatarlinks from localstorage: " + matrix_avatarlinks);
+    }
+
     serverurl = "https://" + matrix_server;
 }
 
@@ -92,36 +100,36 @@ function timeConverter(UNIX_timestamp) {
 
 function getDiscoveryInformation() {
     let query = serverurl + "/.well-known/matrix/client";
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
 
 function getSupportedVersions() {
     let query = serverurl + "/_matrix/client/versions";
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
@@ -137,13 +145,13 @@ function syncClient(since) {
         console.log("Running incremental sync ..")
         query = serverurl + "/_matrix/client/v3/sync?since=" + since + "&access_token=" + matrix_access_token;
     } 
-    //$("#activityicon").html('<img src="images/activity_on.gif" />');
+    //$("#activityicon").show();
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
-            //$("#activityicon").html('<img src="images/activity_off.png" />');
+            //$("#activityicon").hide();
             $("#syncled").css("background-color", "greenyellow");
             console.log(response);
             nextBatch = response.next_batch;
@@ -152,7 +160,7 @@ function syncClient(since) {
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            //$("#activityicon").html('<img src="images/activity_off.png" />');
+            //$("#activityicon").hide();
             $("#syncled").css("background-color", "red");
         },
     });
@@ -188,7 +196,7 @@ function checkLogindata() {
 function authenticateUser() {
     let query = serverurl + "/_matrix/client/v3/login";
     var querydata;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     console.log(matrix_access_token);
     if (matrix_access_token != "") {
@@ -222,7 +230,7 @@ function authenticateUser() {
             data: querydata,
             dataType: 'json',
             success(response) {
-                $("#activityicon").html('<img src="images/activity_off.png" />');
+                $("#activityicon").hide();
                 matrix_access_token = response.access_token;
                 matrix_device_id = response.device_id;
                 matrix_user_id = response.user_id;
@@ -238,7 +246,7 @@ function authenticateUser() {
             },
             error(jqXHR, status, errorThrown) {
                 console.log('failed to fetch ' + query)
-                $("#activityicon").html('<img src="images/activity_off.png" />');
+                $("#activityicon").hide();
                 matrix_password = "";
                 matrix_access_token = "";
                 localStorage.matrix_password = "";
@@ -265,18 +273,18 @@ function authSuccess() {
 
 function whoAmI() {
     let query = serverurl + "/_matrix/client/v3/account/whoami?access_token=" + matrix_access_token;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
@@ -292,7 +300,7 @@ function logoutUser() {
 function getRoomlist() {
     let query = serverurl + "/_matrix/client/v3/joined_rooms?access_token=" + matrix_access_token;
     var querydata;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
     
     console.log(querydata);
     $.ajax({
@@ -300,7 +308,7 @@ function getRoomlist() {
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             //console.log(response);
             roomlist = response.joined_rooms;
             roomitems = roomlist.length;
@@ -308,11 +316,12 @@ function getRoomlist() {
                 let roomId = roomlist[i]
                 //getRoomalias(roomalias);
                 getRoomname(roomId, roomitems);
+                getRoomAvatar(roomId);
             }
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
@@ -320,7 +329,7 @@ function getRoomlist() {
 function getRoomalias(roomId) {
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/aliases?access_token=" + matrix_access_token;
     var querydata;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     console.log(querydata);
     $.ajax({
@@ -328,26 +337,26 @@ function getRoomalias(roomId) {
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
 
 function getRoomname(roomId, roomLimit) {
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/state/m.room.name?access_token=" + matrix_access_token;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             //console.log(response);
             roomnames[roomId] = response.name;
             var nameitems = Object.keys(roomnames).length;
@@ -357,7 +366,7 @@ function getRoomname(roomId, roomLimit) {
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
@@ -377,7 +386,7 @@ function printRoomnames() {
 function getRoomMessages(roomId) {
     let roomName = roomnames[roomId];
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     $.ajax({
         url: query,
@@ -388,7 +397,7 @@ function getRoomMessages(roomId) {
         },
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
             roommessages = response;
             let messages = roommessages.chunk;
@@ -413,7 +422,73 @@ function getRoomMessages(roomId) {
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
+        },
+    });
+}
+
+function getRoomAvatar(roomId) {
+    let roomName = roomnames[roomId];
+    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
+    var filter = '{"types":["m.room.avatar"]}';
+
+    let avatarcount = matrix_avatarlinks.length;
+    for (let a = 0; a < avatarcount; a++) {
+        let avataritem = matrix_avatarlinks[a];
+        if (avataritem.roomId == roomId) {
+            let avatarlink = avataritem.link;
+            $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
+            //console.log("avatarlink taken from cache: " + avatarlink);
+            console.log("avatar from cache for " + roomId);
+            return;
+        }
+    }
+
+    $("#activityicon").show();
+    $.ajax({
+        url: query,
+        type: 'GET',
+        data: {
+            dir: "b",
+            limit: 1,
+            filter, filter
+        },
+        dataType: 'json',
+        success(response) {
+            $("#activityicon").hide();
+            if (response.hasOwnProperty("chunk")) {
+                if (response.chunk != null) {
+                    try {
+                        let mxclink = response.chunk[0].content.url;
+                        let path = mxclink.slice(6);
+                        let avatarlink = "https://matrix.org/_matrix/client/v1/media/download/" + path + "?access_token=" + matrix_access_token;
+                        console.log(avatarlink);
+                        if (currentRoomId == roomId) {
+                            $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
+                        }
+                        let avataritem = {
+                            roomId: roomId,
+                            link: avatarlink
+                        };
+
+                        matrix_avatarlinks.push(avataritem);
+                        localStorage.matrix_avatarlinks = JSON.stringify(matrix_avatarlinks);
+                    }
+                    catch (e) {
+                        console.log("avatar skipped for " + roomId);
+                    }
+                }
+                else {
+                    console.log("No avatar events found in room " + roomId);
+                }
+            }
+            else {
+                console.log("No chunk item found in room " + roomId);
+            }
+        },
+        error(jqXHR, status, errorThrown) {
+            console.log('failed to fetch ' + query)
+            $("#activityicon").hide();
         },
     });
 }
@@ -425,7 +500,7 @@ function sendRoomMessage(roomId) {
     }
     let transactionId = Date.now();
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/send/m.room.message/" + transactionId + "?access_token=" + matrix_access_token;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     $.ajax({
         url: query,
@@ -436,21 +511,21 @@ function sendRoomMessage(roomId) {
         }),
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
             getRoomMessages(roomId);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
             console.log(status);
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
 
 function getRoomThreads(roomId) {
     let query = serverurl + "/_matrix/client/v1/rooms/" + roomId + "/threads?access_token=" + matrix_access_token;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     $.ajax({
         url: query,
@@ -460,12 +535,12 @@ function getRoomThreads(roomId) {
         },
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
@@ -474,6 +549,7 @@ function openRoom(roomId) {
     let roomName = roomnames[roomId];
     currentRoomId = roomId;
     currentRoomName = roomName;
+    getRoomAvatar(roomId);
     $("#header_text").html("[ " + roomName + " ]");
     let inputhtml = `<input type="text" id="messageinput">
                      <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `")>
@@ -492,6 +568,7 @@ function closeRoom() {
     currentRoomId = "";
     currentRoomName = "";
     $("#header_text").html("[ " + matrix_user_id + " ]");
+    $("#header_avatar").html(``);
     $("#header_mainbutton").html('<img src="images/menu.png" onclick="toggleSidemenu()" />')
     $("#room").hide();
 }
@@ -598,7 +675,7 @@ function createRoom() {
     }
 
     let query = serverurl + "/_matrix/client/v3/createRoom?access_token=" + matrix_access_token;
-    $("#activityicon").html('<img src="images/activity_on.gif" />');
+    $("#activityicon").show();
 
     $.ajax({
         url: query,
@@ -610,7 +687,7 @@ function createRoom() {
         }),
         dataType: 'json',
         success(response) {
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
             console.log(response);
             getRoomlist();
             closeCreateRoomDialog();
@@ -618,7 +695,7 @@ function createRoom() {
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
             console.log(status);
-            $("#activityicon").html('<img src="images/activity_off.png" />');
+            $("#activityicon").hide();
         },
     });
 }
@@ -678,4 +755,4 @@ $(document).ready(function () {
     //syncClient(nextBatch);
 });
 
-setInterval(TimerRun, 10000);
+setInterval(TimerRun, 15000);
