@@ -437,8 +437,7 @@ function getRoomAvatar(roomId) {
         let avataritem = matrix_avatarlinks[a];
         if (avataritem.roomId == roomId) {
             let avatarlink = avataritem.link;
-            $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
-            //console.log("avatarlink taken from cache: " + avatarlink);
+            setRoomAvatar(roomId, avatarlink);
             console.log("avatar from cache for " + roomId);
             return;
         }
@@ -463,9 +462,7 @@ function getRoomAvatar(roomId) {
                         let path = mxclink.slice(6);
                         let avatarlink = "https://matrix.org/_matrix/client/v1/media/download/" + path + "?access_token=" + matrix_access_token;
                         console.log(avatarlink);
-                        if (currentRoomId == roomId) {
-                            $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
-                        }
+                        setRoomAvatar(roomId, avatarlink);
                         let avataritem = {
                             roomId: roomId,
                             link: avatarlink
@@ -491,6 +488,12 @@ function getRoomAvatar(roomId) {
             $("#activityicon").hide();
         },
     });
+}
+
+function setRoomAvatar(roomId, avatarlink) {
+    if (currentRoomId == roomId) {
+        $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
+    }
 }
 
 function sendRoomMessage(roomId) {
