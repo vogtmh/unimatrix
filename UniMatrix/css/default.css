@@ -111,7 +111,6 @@ body {
 }
 
 .channel {
-    padding: 1em;
     background-color: #222;
     margin-bottom: 1em;
     margin-left: 1em;
@@ -122,6 +121,26 @@ body {
 .channel:hover {
     background-color: #333;
     cursor: pointer;
+}
+
+.channelavatar {
+    height: 3em;
+    width: 3em;
+    float: left;
+    border-radius: 0.5em 0em 0em 0.5em;
+}
+
+.channelavatar img {
+    height: 3em;
+    width: 3em;
+    border-radius: 0.5em 0em 0em 0.5em;
+}
+
+.channelname {
+    padding: 1em;
+    height: 1em;
+    width: 100%;
+    margin-left: 3em;
 }
 
 #room {

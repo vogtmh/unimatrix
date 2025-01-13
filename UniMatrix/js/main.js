@@ -98,6 +98,13 @@ function timeConverter(UNIX_timestamp) {
     return time;
 }
 
+function convertDIVname(name) {
+    let result = name.replace(/!/g, "X");
+    result = result.replace(/:/g, "C");
+    result = result.replace(/\./g, "D");
+    return result;
+}
+
 function getDiscoveryInformation() {
     let query = serverurl + "/.well-known/matrix/client";
     $("#activityicon").show();
@@ -316,7 +323,6 @@ function getRoomlist() {
                 let roomId = roomlist[i]
                 //getRoomalias(roomalias);
                 getRoomname(roomId, roomitems);
-                getRoomAvatar(roomId);
             }
         },
         error(jqXHR, status, errorThrown) {
@@ -377,10 +383,23 @@ function printRoomnames() {
     for (let i = 0; i < nameitems; i++) {
         let roomId = Object.keys(roomnames)[i]
         let roomName = Object.values(roomnames)[i]
-        contenthtml += `<div class="channel" onclick='openRoom("` + roomId + `")'>` + roomName + "</div>";
+        let divName = convertDIVname(roomId);
+        contenthtml += `<div class="channel" onclick='openRoom("` + roomId + `")'>
+                            <div class="channelavatar" id="avatar_` + divName + `"></div>
+                            <div class="channelname">` + roomName + `</div>
+                        </div>`;
     }
     contenthtml += "";
     $("#channellist").html(contenthtml);
+    printAvatars();
+}
+
+function printAvatars() {
+    var nameitems = Object.keys(roomnames).length;
+    for (let i = 0; i < nameitems; i++) {
+        let roomId = Object.keys(roomnames)[i]
+        getRoomAvatar(roomId);
+    }
 }
 
 function getRoomMessages(roomId) {
@@ -491,6 +510,10 @@ function getRoomAvatar(roomId) {
 }
 
 function setRoomAvatar(roomId, avatarlink) {
+    let divName = convertDIVname(roomId);
+    let divAvatar = "#avatar_" + divName;
+    $(divAvatar).html(`<img src="` + avatarlink + `" />`);
+
     if (currentRoomId == roomId) {
         $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
     }
