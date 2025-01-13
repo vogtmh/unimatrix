@@ -98,6 +98,11 @@ function timeConverter(UNIX_timestamp) {
     return time;
 }
 
+function getRandomColor() {
+    let randomcolor = "#" + ((1 << 24) * Math.random() | 0).toString(16).padStart(6, "0");
+    return randomcolor;
+}
+
 function convertDIVname(name) {
     let result = name.replace(/!/g, "X");
     result = result.replace(/:/g, "C");
@@ -492,6 +497,7 @@ function getRoomAvatar(roomId) {
                     }
                     catch (e) {
                         console.log("avatar skipped for " + roomId);
+                        setRoomAvatar(roomId, "");
                     }
                 }
                 else {
@@ -510,12 +516,28 @@ function getRoomAvatar(roomId) {
 }
 
 function setRoomAvatar(roomId, avatarlink) {
-    let divName = convertDIVname(roomId);
-    let divAvatar = "#avatar_" + divName;
-    $(divAvatar).html(`<img src="` + avatarlink + `" />`);
+    let roomName = roomnames[roomId];
+    if (avatarlink != "") {
+        let divName = convertDIVname(roomId);
+        let divAvatar = "#avatar_" + divName;
+        $(divAvatar).html(`<img src="` + avatarlink + `" />`);
 
-    if (currentRoomId == roomId) {
-        $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
+        if (currentRoomId == roomId) {
+            $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
+        }
+    }
+    else {
+        let avatarLetter = roomName.charAt().toUpperCase()
+        let avatarColor = getRandomColor();
+        let avatarhtml = `<div class="generic_avatar" style="background-color: ` + avatarColor + `;">` + avatarLetter + `</div>`
+
+        let divName = convertDIVname(roomId);
+        let divAvatar = "#avatar_" + divName;
+        $(divAvatar).html(avatarhtml);
+
+        if (currentRoomId == roomId) {
+            $("#header_avatar").html(avatarhtml);
+        }
     }
 }
 
