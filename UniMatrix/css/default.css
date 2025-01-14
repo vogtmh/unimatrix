@@ -52,6 +52,10 @@ body {
     float: right;
 }
 
+#header:hover {
+    cursor: pointer;
+}
+
 #header_avatar img {
     height: 100%;
     width: 100%;
@@ -220,7 +224,6 @@ body {
 #roominfo_avatar_container {
     height: 12em;
     width: 100%;
-    background-color: #222;
     text-align: center;
 }
 
@@ -239,6 +242,14 @@ body {
 
 #roominfo_avatar img {
     height: 100%;
+}
+
+#roominfo_content {
+    text-align: center;
+}
+
+#roominfo_alias {
+    margin:1em;
 }
 
 #messageinput {

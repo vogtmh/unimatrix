@@ -10,7 +10,7 @@ var currentRoomId = "";
 var currentRoomName = "";
 var nextBatch = "";
 var enableClientsync = 0;
-var matrix_avatarlinks = [];
+var matrix_roomcache = [];
 var sendingMessage = 0;
 
 function loadSettings() {
@@ -74,12 +74,13 @@ function loadSettings() {
         console.log("setting_limitmessages from localstorage: " + setting_limitmessages);
     }
 
-    if (localStorage.getItem("matrix_avatarlinks") === null) {
-        console.log("matrix_avatarlinks does not exist in localstorage.");
+    if (localStorage.getItem("matrix_roomcache") === null) {
+        console.log("matrix_roomcache does not exist in localstorage.");
     } else {
-        matrix_avatarlinks = JSON.parse(localStorage.matrix_avatarlinks);
-        console.log("matrix_avatarlinks from localstorage: " + matrix_avatarlinks);
+        matrix_roomcache = JSON.parse(localStorage.matrix_roomcache);
+        console.log("matrix_roomcache from localstorage: " + matrix_roomcache);
     }
+    localStorage.removeItem("matrix_avatarLinks");
 
     serverurl = "https://" + matrix_server;
 }
@@ -315,42 +316,67 @@ function getRoomlist() {
     var querydata;
     $("#activityicon").show();
     
-    console.log(querydata);
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
             $("#activityicon").hide();
-            //console.log(response);
             roomlist = response.joined_rooms;
             roomitems = roomlist.length;
             for (let i = 0; i < roomitems; i++) {
                 let roomId = roomlist[i]
-                //getRoomalias(roomalias);
                 getRoomname(roomId, roomitems);
             }
         },
         error(jqXHR, status, errorThrown) {
-            console.log('failed to fetch ' + query)
+            console.log('failed to fetch ' + query) 
             $("#activityicon").hide();
         },
     });
 }
 
-function getRoomalias(roomId) {
+function getRoomAlias(roomId, mode) {
+    $("#roominfo_alias").html("");
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/aliases?access_token=" + matrix_access_token;
     var querydata;
     $("#activityicon").show();
 
-    console.log(querydata);
+    let avatarcount = matrix_roomcache.length;
+    for (let a = 0; a < avatarcount; a++) {
+        let avataritem = matrix_roomcache[a];
+        if (avataritem.roomId == roomId) {
+            if (avataritem.alias != "") {
+                $("#roominfo_alias").html(avataritem.alias);
+                if (mode != "forced") {
+                    console.log("alias of " + avataritem.alias + " taken from cache")
+                    return;
+                }
+            }
+        }
+    }
+
     $.ajax({
         url: query,
         type: 'GET',
         dataType: 'json',
         success(response) {
             $("#activityicon").hide();
-            console.log(response);
+            let aliases = response.aliases;
+            let aliascount = aliases.length;
+            let latestitem = aliascount - 1;
+            let latestalias = aliases[latestitem];
+            $("#roominfo_alias").html(latestalias);
+
+            let avatarcount = matrix_roomcache.length;
+            for (let a = 0; a < avatarcount; a++) {
+                let avataritem = matrix_roomcache[a];
+                if (avataritem.roomId == roomId) {
+                    console.log(latestalias);
+                    avataritem.alias = latestalias;
+                    localStorage.matrix_roomcache = JSON.stringify(matrix_roomcache);
+                }
+            }
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
@@ -452,14 +478,72 @@ function getRoomMessages(roomId) {
     });
 }
 
+function getRoomMembers(roomId, mode) {
+    let roomName = roomnames[roomId];
+    $("#roominfo_membercount").html("");
+    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/joined_members?access_token=" + matrix_access_token;
+    $("#activityicon").show();
+
+    let avatarcount = matrix_roomcache.length;
+    for (let a = 0; a < avatarcount; a++) {
+        let avataritem = matrix_roomcache[a];
+        if (avataritem.roomId == roomId) {
+            if (avataritem.membercount != "") {
+                $("#roominfo_membercount").html(avataritem.membercount + " members");
+                if (mode != "forced") {
+                    console.log("membercount of " + avataritem.membercount + " taken from cache")
+                    return;
+                }
+            }
+        }
+    }
+
+    $.ajax({
+        url: query,
+        type: 'GET',
+        data: {
+            membership: "join",
+            not_membership: "leave"
+        },
+        dataType: 'json',
+        success(response) {
+            $("#activityicon").hide();
+            try {
+                let joined = response.joined;
+                let membercount = Object.keys(joined).length
+                console.log(membercount + " members");
+                $("#roominfo_membercount").html(membercount + " members")
+
+                let avatarcount = matrix_roomcache.length;
+                for (let a = 0; a < avatarcount; a++) {
+                    let avataritem = matrix_roomcache[a];
+                    if (avataritem.roomId == roomId) {
+                        avataritem.membercount = membercount;
+                        localStorage.matrix_roomcache = JSON.stringify(matrix_roomcache);
+                    }
+                }
+            }
+            catch (e) {
+                let membercount = 0;
+                console.log(membercount + " members");
+                $("#roominfo_membercount").html(membercount + " members")
+            }
+        },
+        error(jqXHR, status, errorThrown) {
+            console.log('failed to fetch ' + query)
+            $("#activityicon").hide();
+        },
+    });
+}
+
 function getRoomAvatar(roomId) {
     let roomName = roomnames[roomId];
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
     var filter = '{"types":["m.room.avatar"]}';
 
-    let avatarcount = matrix_avatarlinks.length;
+    let avatarcount = matrix_roomcache.length;
     for (let a = 0; a < avatarcount; a++) {
-        let avataritem = matrix_avatarlinks[a];
+        let avataritem = matrix_roomcache[a];
         if (avataritem.roomId == roomId) {
             if (avataritem.type == "link") {
                 let avatarlink = avataritem.link;
@@ -499,24 +583,27 @@ function getRoomAvatar(roomId) {
                         let avataritem = {
                             roomId: roomId,
                             type: "link",
-                            link: avatarlink
+                            link: avatarlink,
+                            alias: "",
+                            membercount: ""
                         };
 
-                        matrix_avatarlinks.push(avataritem);
-                        localStorage.matrix_avatarlinks = JSON.stringify(matrix_avatarlinks);
+                        matrix_roomcache.push(avataritem);
+                        localStorage.matrix_roomcache = JSON.stringify(matrix_roomcache);
                     }
                     catch (e) {
-                        console.log("avatar skipped for " + roomId);
                         let avatarColor = getRandomColor();
                         setRoomAvatar(roomId, "", avatarColor);
                         let avataritem = {
                             roomId: roomId,
                             type: "div",
-                            color: avatarColor
+                            color: avatarColor,
+                            alias: "",
+                            membercount: ""
                         };
 
-                        matrix_avatarlinks.push(avataritem);
-                        localStorage.matrix_avatarlinks = JSON.stringify(matrix_avatarlinks);
+                        matrix_roomcache.push(avataritem);
+                        localStorage.matrix_roomcache = JSON.stringify(matrix_roomcache);
                     }
                 }
                 else {
@@ -542,14 +629,14 @@ function setRoomAvatar(roomId, avatarlink, avatarColor) {
         $(divAvatar).html(`<img src="` + avatarlink + `" />`);
 
         if (currentRoomId == roomId) {
-            $("#header_avatar").html(`<img src="` + avatarlink + `" onclick="openRoominfo()" />`);
+            $("#header_avatar").html(`<img src="` + avatarlink + `" onclick=openRoominfo("` + roomId + `") />`);
             $("#roominfo_avatar_imagearea").html(`<img src="` + avatarlink + `" />`);
         }
     }
     else {
         let avatarLetter = roomName.charAt().toUpperCase()
         let roomlisthtml = `<div class="generic_avatar" style="background-color: ` + avatarColor + `;">` + avatarLetter + `</div>`
-        let headerhtml = `<div class="generic_avatar_header" style="background-color: ` + avatarColor + `;" onclick="openRoominfo()">` + avatarLetter + `</div>`
+        let headerhtml = `<div class="generic_avatar_header" style="background-color: ` + avatarColor + `;" onclick=openRoominfo("` + roomId + `")>` + avatarLetter + `</div>`
         let infohtml = `<div class="generic_avatar_info" style="background-color: ` + avatarColor + `;">` + avatarLetter + `</div>`;
 
         let divName = convertDIVname(roomId);
@@ -654,6 +741,8 @@ function openRoom(roomId) {
     let remainwidth = devicewidth - buttonwidth - 65;
     $("#messageinput").width(remainwidth);
     getRoomMessages(roomId);
+    getRoomAlias(roomId, "normal");
+    getRoomMembers(roomId, "normal");
 }
 
 function closeRoom() {
@@ -669,6 +758,8 @@ function openRoominfo(roomId) {
     let roomName = roomnames[roomId];
     $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoominfo()" />');
     $("#roominfo").show();
+    getRoomAlias(roomId, "forced");
+    getRoomMembers(roomId, "forced");
 }
 
 function closeRoominfo() {
@@ -862,4 +953,4 @@ $(document).ready(function () {
     //syncClient(nextBatch);
 });
 
-setInterval(TimerRun, 15000);
+setInterval(TimerRun, 20000);
