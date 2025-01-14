@@ -67,6 +67,29 @@ body {
     border-radius: 0.25em 0em 0em 0.25em;
 }
 
+.generic_avatar_header {
+    width: 1.5em;
+    height: 1.5em;
+    text-align: center;
+    line-height: 1.5em;
+    font-size: 2em;
+}
+
+#generic_avatar_header img {
+    height: 100%;
+}
+
+.generic_avatar_info {
+    position: absolute;
+    left: 50%;
+    width: 1.5em;
+    height: 1.5em;
+    margin-left: -0.75em;
+    text-align: center;
+    line-height: 1.5em;
+    font-size: 8em;
+}
+
 #sidemenu {
     position:fixed;
     top: 3em;
@@ -180,7 +203,42 @@ body {
     left: 0px;
     right: 0px;
     bottom: 0px;
-    background-color: #444;
+    background-color: #222;
+}
+
+#roominfo {
+    position: fixed;
+    top: 4em;
+    bottom: 0px;
+    left: 0px;
+    right: 0px;
+    z-index: 30;
+    background-color: black;
+    display: none;
+}
+
+#roominfo_avatar_container {
+    height: 12em;
+    width: 100%;
+    background-color: #222;
+    text-align: center;
+}
+
+#roominfo_avatar_imagearea {
+    position: absolute;
+    left: 50%;
+    margin-left: -6em;
+    height: 12em;
+    width: 12em;
+}
+
+#roominfo_avatar_imagearea img {
+    height: 100%;
+    width: 100%;
+}
+
+#roominfo_avatar img {
+    height: 100%;
 }
 
 #messageinput {

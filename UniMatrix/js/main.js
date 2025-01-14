@@ -11,6 +11,7 @@ var currentRoomName = "";
 var nextBatch = "";
 var enableClientsync = 0;
 var matrix_avatarlinks = [];
+var sendingMessage = 0;
 
 function loadSettings() {
     if (localStorage.getItem("matrix_server") === null) {
@@ -460,10 +461,18 @@ function getRoomAvatar(roomId) {
     for (let a = 0; a < avatarcount; a++) {
         let avataritem = matrix_avatarlinks[a];
         if (avataritem.roomId == roomId) {
-            let avatarlink = avataritem.link;
-            setRoomAvatar(roomId, avatarlink);
-            console.log("avatar from cache for " + roomId);
-            return;
+            if (avataritem.type == "link") {
+                let avatarlink = avataritem.link;
+                setRoomAvatar(roomId, avatarlink);
+                console.log("avatar from cache for " + roomId);
+                return;
+            }
+            if (avataritem.type == "div") {
+                let avatarColor = avataritem.color;
+                setRoomAvatar(roomId, "", avatarColor);
+                console.log("generic avatar from cache for " + roomId);
+                return;
+            }
         }
     }
 
@@ -485,10 +494,11 @@ function getRoomAvatar(roomId) {
                         let mxclink = response.chunk[0].content.url;
                         let path = mxclink.slice(6);
                         let avatarlink = "https://matrix.org/_matrix/client/v1/media/download/" + path + "?access_token=" + matrix_access_token;
-                        console.log(avatarlink);
+                        //console.log(avatarlink);
                         setRoomAvatar(roomId, avatarlink);
                         let avataritem = {
                             roomId: roomId,
+                            type: "link",
                             link: avatarlink
                         };
 
@@ -497,7 +507,16 @@ function getRoomAvatar(roomId) {
                     }
                     catch (e) {
                         console.log("avatar skipped for " + roomId);
-                        setRoomAvatar(roomId, "");
+                        let avatarColor = getRandomColor();
+                        setRoomAvatar(roomId, "", avatarColor);
+                        let avataritem = {
+                            roomId: roomId,
+                            type: "div",
+                            color: avatarColor
+                        };
+
+                        matrix_avatarlinks.push(avataritem);
+                        localStorage.matrix_avatarlinks = JSON.stringify(matrix_avatarlinks);
                     }
                 }
                 else {
@@ -515,7 +534,7 @@ function getRoomAvatar(roomId) {
     });
 }
 
-function setRoomAvatar(roomId, avatarlink) {
+function setRoomAvatar(roomId, avatarlink, avatarColor) {
     let roomName = roomnames[roomId];
     if (avatarlink != "") {
         let divName = convertDIVname(roomId);
@@ -523,29 +542,43 @@ function setRoomAvatar(roomId, avatarlink) {
         $(divAvatar).html(`<img src="` + avatarlink + `" />`);
 
         if (currentRoomId == roomId) {
-            $("#header_avatar").html(`<img src="` + avatarlink + `" />`);
+            $("#header_avatar").html(`<img src="` + avatarlink + `" onclick="openRoominfo()" />`);
+            $("#roominfo_avatar_imagearea").html(`<img src="` + avatarlink + `" />`);
         }
     }
     else {
         let avatarLetter = roomName.charAt().toUpperCase()
-        let avatarColor = getRandomColor();
-        let avatarhtml = `<div class="generic_avatar" style="background-color: ` + avatarColor + `;">` + avatarLetter + `</div>`
+        let roomlisthtml = `<div class="generic_avatar" style="background-color: ` + avatarColor + `;">` + avatarLetter + `</div>`
+        let headerhtml = `<div class="generic_avatar_header" style="background-color: ` + avatarColor + `;" onclick="openRoominfo()">` + avatarLetter + `</div>`
+        let infohtml = `<div class="generic_avatar_info" style="background-color: ` + avatarColor + `;">` + avatarLetter + `</div>`;
 
         let divName = convertDIVname(roomId);
         let divAvatar = "#avatar_" + divName;
-        $(divAvatar).html(avatarhtml);
+        $(divAvatar).html(roomlisthtml);
 
         if (currentRoomId == roomId) {
-            $("#header_avatar").html(avatarhtml);
+            $("#header_avatar").html(headerhtml);
+            $("#roominfo_avatar_imagearea").html(infohtml);
         }
     }
 }
 
 function sendRoomMessage(roomId) {
+
     let message = $("#messageinput").val();
+
     if (roomId == "" || message == "") {
         return;
     }
+
+    sendingMessage = 1;
+    let oldcontent = $("#roomcontent").html()
+    tempcontent = `<div class="message">` + message + `<br />
+                     <div class="timestamp">` + matrix_user_id + ` - Sending ..
+                     </div>
+                   </div >` + oldcontent;
+    $("#roomcontent").html(tempcontent);
+
     let transactionId = Date.now();
     let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/send/m.room.message/" + transactionId + "?access_token=" + matrix_access_token;
     $("#activityicon").show();
@@ -559,14 +592,18 @@ function sendRoomMessage(roomId) {
         }),
         dataType: 'json',
         success(response) {
+            $("#messageinput").val("");
+            $("#messageinput").blur();
             $("#activityicon").hide();
             console.log(response);
             getRoomMessages(roomId);
+            sendingMessage = 0;
         },
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
             console.log(status);
             $("#activityicon").hide();
+            sendingMessage = 0;
         },
     });
 }
@@ -603,6 +640,13 @@ function openRoom(roomId) {
                      <div id="messagebutton" onclick=sendRoomMessage("`+ roomId + `")>
                      <img src="images/send.png" /></div>`;
     $("#roominput").html(inputhtml);
+    $('#messageinput').keydown(function (event) {
+        if (event.which === 13) {
+            sendRoomMessage(roomId);
+        }
+    });
+    let roomhtml = `<div class="message">fetching messages ..</div >`;
+    $("#roomcontent").html(roomhtml);
     $("#room").show();
     $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoom()" />');
     let devicewidth = $(window).width();
@@ -619,6 +663,17 @@ function closeRoom() {
     $("#header_avatar").html(``);
     $("#header_mainbutton").html('<img src="images/menu.png" onclick="toggleSidemenu()" />')
     $("#room").hide();
+}
+
+function openRoominfo(roomId) {
+    let roomName = roomnames[roomId];
+    $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoominfo()" />');
+    $("#roominfo").show();
+}
+
+function closeRoominfo() {
+    $("#header_mainbutton").html('<img src="images/back.png" onclick="closeRoom()" />');
+    $("#roominfo").hide();
 }
 
 function openSettings() {
@@ -753,7 +808,11 @@ function showOnlinestate(status) {
 }
 
 function onBackPressed(event) {
-    if ($('#room:visible').length > 0) {
+    if ($('#roominfo:visible').length > 0) {
+        closeRoominfo();
+        event.handled = true;
+    }
+    else if ($('#room:visible').length > 0) {
         closeRoom();
         event.handled = true;
     }
@@ -772,7 +831,7 @@ function onBackPressed(event) {
 }
 
 function TimerRun() {
-    if (currentRoomId != "") {
+    if (currentRoomId != "" && sendingMessage == 0) {
         getRoomMessages(currentRoomId);
         console.log(`Checking for updates in "` + currentRoomName + `"`);
     }
