@@ -5,7 +5,7 @@ var matrix_login_token = "";
 var roomlist;
 var roomnames = [];
 var roommessages;
-var setting_limitmessages;
+var matrix_messagelimit;
 var currentRoomId = "";
 var currentRoomName = "";
 var nextBatch = "";
@@ -65,13 +65,13 @@ function loadSettings() {
         console.log("matrix_device_id from localstorage: " + matrix_device_id);
     }
 
-    if (localStorage.getItem("setting_limitmessages") === null) {
-        console.log("setting_limitmessages does not exist in localstorage. Creating ..");
-        localStorage.setting_limitmessages = "30";
-        setting_limitmessages = localStorage.setting_limitmessages;
+    if (localStorage.getItem("matrix_messagelimit") === null) {
+        console.log("matrix_messagelimit does not exist in localstorage. Creating ..");
+        localStorage.matrix_messagelimit = "50";
+        matrix_messagelimit = localStorage.matrix_messagelimit;
     } else {
-        setting_limitmessages = localStorage.setting_limitmessages;
-        console.log("setting_limitmessages from localstorage: " + setting_limitmessages);
+        matrix_messagelimit = localStorage.matrix_messagelimit;
+        console.log("matrix_messagelimit from localstorage: " + matrix_messagelimit);
     }
 
     if (localStorage.getItem("matrix_roomcache") === null) {
@@ -212,7 +212,6 @@ function authenticateUser() {
     var querydata;
     $("#activityicon").show();
 
-    console.log(matrix_access_token);
     if (matrix_access_token != "") {
         console.log("Already have an access token, login skipped.");
         authSuccess();
@@ -444,7 +443,7 @@ function getRoomMessages(roomId) {
         type: 'GET',
         data: {
             dir: 'b',
-            limit: setting_limitmessages,
+            limit: matrix_messagelimit,
         },
         dataType: 'json',
         success(response) {
@@ -459,12 +458,20 @@ function getRoomMessages(roomId) {
                 let messagetimestamp = messages[i].origin_server_ts;
                 let sender = messages[i].sender;
                 let ts = timeConverter(messagetimestamp);
+                var messageclass;
+                if (sender == matrix_user_id) {
+                    messageclass = "mymessage";
+                }
+                else {
+                    messageclass = "message";
+                }
+
                 if (messagecontent.hasOwnProperty("msgtype")) {
                     if (messagecontent.msgtype == "m.text") {
-                        roomhtml += `<div class="message">` + messagecontent.body + `<br/><div class="timestamp">` + sender + ` - ` + ts + `</div></div >`;
+                        roomhtml += `<div class="` + messageclass + `">` + messagecontent.body + `<br/><div class="timestamp">` + sender + ` - ` + ts + `</div></div >`;
                     }
                     if (messagecontent.msgtype == "m.notice") {
-                        roomhtml += `<div class="message">` + messagecontent.body + `<br/><div class="timestamp">` + sender + ` - ` + ts + `</div></div >`;
+                        roomhtml += `<div class="`+ messageclass + `">` + messagecontent.body + `<br/><div class="timestamp">` + sender + ` - ` + ts + `</div></div >`;
                     }
                 }
                 //console.log(messagecontent);
@@ -772,7 +779,9 @@ function openSettings() {
     settingshtml += '<div class="settingitem">matrix_user_id: ' + matrix_user_id + '</div>';
     settingshtml += '<div class="settingitem">matrix_device_id: ' + matrix_device_id + '</div>';
     settingshtml += '<div class="settingitem">matrix_access_token: ' + matrix_access_token + '</div>';
-    settingshtml += '<div class="settingitem">setting_limitmessages: ' + setting_limitmessages + '</div>';
+    settingshtml += `<div class="settingitem_active" onclick='settingDialog("matrix_messagelimit")'>matrix_messagelimit: ` + matrix_messagelimit + '</div>';
+    settingshtml += `<div id="settingdialog"></div>`;
+
     $("#header_text").html("[ Settings ]");
     $("#settingsmenu").html(settingshtml);
     $("#settingsmenu").show();
@@ -784,6 +793,24 @@ function closeSettings() {
     $("#header_text").html("[ " + matrix_user_id + " ]");
     $("#header_mainbutton").html('<img src="images/menu.png" onclick="toggleSidemenu()" />')
     $("#settingsmenu").hide();
+}
+
+function settingDialog(setting) {
+    console.log("requesting user input for " + setting + " ..");
+    var dialoghtml = '';
+    var currentvalue = eval(setting);
+    dialoghtml += `<input type="number" id="setting_newvalue" min="1" max="500" value="` + currentvalue +`">`;
+    dialoghtml += `<button onclick='updateSetting("` + setting + `")'>Apply</button>`
+    $("#settingdialog").html(dialoghtml);
+    $("#settingdialog").show();
+}
+
+function updateSetting(setting) {
+    console.log("updating " + setting + " ..");
+    let newvalue = $("#setting_newvalue").val();
+    eval(setting + ' = ' + newvalue);
+    eval("localStorage." + setting + ' = ' + newvalue);
+    $("#settingdialog").hide();
 }
 
 function toggleSidemenu() {
@@ -899,7 +926,11 @@ function showOnlinestate(status) {
 }
 
 function onBackPressed(event) {
-    if ($('#roominfo:visible').length > 0) {
+    if ($('#settingdialog:visible').length > 0) {
+        $("#settingdialog").hide();
+        event.handled = true;
+    }
+    else if ($('#roominfo:visible').length > 0) {
         closeRoominfo();
         event.handled = true;
     }

@@ -288,8 +288,13 @@ body {
     margin-right: 1em;
 }
 
-.message:hover {
-    background-color: #444;
+.mymessage {
+    padding: 1em;
+    background-color: Highlight;
+    margin-bottom: 1em;
+    margin-left: 1em;
+    border-radius: 0.5em;
+    margin-right: 1em;
 }
 
 .timestamp {
@@ -316,6 +321,43 @@ body {
     margin-left: 1em;
     border-radius: 0.5em;
     margin-right: 1em;
+}
+
+.settingitem_active {
+    padding: 1em;
+    background-color: #333;
+    margin-bottom: 1em;
+    margin-left: 1em;
+    border-radius: 0.5em;
+    margin-right: 1em;
+}
+
+.settingitem_active:hover {
+    cursor: pointer;
+    background-color: #444;
+}
+
+#settingdialog {
+    position: fixed;
+    padding: 1em;
+    top: 30%;
+    left: 20%;
+    right: 20%;
+    border: 1px solid grey;
+    background-color: #000;
+    z-index: 30;
+    display: none;
+}
+
+#settingdialog input {
+    width: 100%;
+    font-size: 1.5em;
+    margin-bottom: 1em;
+}
+
+#settingdialog button {
+    width: 100%;
+    font-size: 1.5em;
 }
 
 #activityicon {
