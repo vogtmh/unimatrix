@@ -407,6 +407,10 @@ function getRoomname(roomId, roomLimit) {
         error(jqXHR, status, errorThrown) {
             console.log('failed to fetch ' + query)
             $("#activityicon").hide();
+            var nameitems = Object.keys(roomnames).length;
+            if (nameitems == roomLimit) {
+                printRoomnames();
+            }
         },
     });
 }
