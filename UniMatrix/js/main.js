@@ -153,11 +153,11 @@ function syncClient(since) {
     var query = "";
     if (since == "" || since == undefined) {
         console.log("Running initial sync ..")
-        query = serverurl + "/_matrix/client/v3/sync?access_token=" + matrix_access_token;
+        query = serverurl + "/_matrix/client/r0/sync?access_token=" + matrix_access_token;
     }
     else {
         console.log("Running incremental sync ..")
-        query = serverurl + "/_matrix/client/v3/sync?since=" + since + "&access_token=" + matrix_access_token;
+        query = serverurl + "/_matrix/client/r0/sync?since=" + since + "&access_token=" + matrix_access_token;
     } 
     //$("#activityicon").show();
     $.ajax({
@@ -208,7 +208,7 @@ function checkLogindata() {
 }
 
 function authenticateUser() {
-    let query = serverurl + "/_matrix/client/v3/login";
+    let query = serverurl + "/_matrix/client/r0/login";
     var querydata;
     $("#activityicon").show();
 
@@ -286,7 +286,7 @@ function authSuccess() {
 }
 
 function whoAmI() {
-    let query = serverurl + "/_matrix/client/v3/account/whoami?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/account/whoami?access_token=" + matrix_access_token;
     $("#activityicon").show();
     $.ajax({
         url: query,
@@ -312,7 +312,7 @@ function logoutUser() {
 }
 
 function getRoomlist() {
-    let query = serverurl + "/_matrix/client/v3/joined_rooms?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/joined_rooms?access_token=" + matrix_access_token;
     var querydata;
     $("#activityicon").show();
     
@@ -338,7 +338,7 @@ function getRoomlist() {
 
 function getRoomAlias(roomId, mode) {
     $("#roominfo_alias").html("");
-    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/aliases?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/rooms/" + roomId + "/aliases?access_token=" + matrix_access_token;
     var querydata;
     $("#activityicon").show();
 
@@ -386,7 +386,7 @@ function getRoomAlias(roomId, mode) {
 }
 
 function getRoomname(roomId, roomLimit) {
-    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/state/m.room.name?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/rooms/" + roomId + "/state/m.room.name?access_token=" + matrix_access_token;
     $("#activityicon").show();
 
     $.ajax({
@@ -436,7 +436,7 @@ function printAvatars() {
 
 function getRoomMessages(roomId) {
     let roomName = roomnames[roomId];
-    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
     $("#activityicon").show();
 
     $.ajax({
@@ -489,7 +489,7 @@ function getRoomMessages(roomId) {
 function getRoomMembers(roomId, mode) {
     let roomName = roomnames[roomId];
     $("#roominfo_membercount").html("");
-    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/joined_members?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/rooms/" + roomId + "/joined_members?access_token=" + matrix_access_token;
     $("#activityicon").show();
 
     let avatarcount = matrix_roomcache.length;
@@ -546,7 +546,7 @@ function getRoomMembers(roomId, mode) {
 
 function getRoomAvatar(roomId) {
     let roomName = roomnames[roomId];
-    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/rooms/" + roomId + "/messages?access_token=" + matrix_access_token;
     var filter = '{"types":["m.room.avatar"]}';
 
     let avatarcount = matrix_roomcache.length;
@@ -675,7 +675,7 @@ function sendRoomMessage(roomId) {
     $("#roomcontent").html(tempcontent);
 
     let transactionId = Date.now();
-    let query = serverurl + "/_matrix/client/v3/rooms/" + roomId + "/send/m.room.message/" + transactionId + "?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + transactionId + "?access_token=" + matrix_access_token;
     $("#activityicon").show();
 
     $.ajax({
@@ -896,7 +896,7 @@ function createRoom() {
         return;
     }
 
-    let query = serverurl + "/_matrix/client/v3/createRoom?access_token=" + matrix_access_token;
+    let query = serverurl + "/_matrix/client/r0/createRoom?access_token=" + matrix_access_token;
     $("#activityicon").show();
 
     $.ajax({
