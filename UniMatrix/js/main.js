@@ -242,6 +242,7 @@ function authenticateUser() {
             type: 'POST',
             data: querydata,
             dataType: 'json',
+            contentType: "application/json",
             success(response) {
                 $("#activityicon").hide();
                 matrix_access_token = response.access_token;
