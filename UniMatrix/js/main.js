@@ -324,6 +324,8 @@ function getRoomlist() {
             $("#activityicon").hide();
             roomlist = response.joined_rooms;
             roomitems = roomlist.length;
+            console.log(roomitems);
+            console.log(roomlist);
             for (let i = 0; i < roomitems; i++) {
                 let roomId = roomlist[i]
                 getRoomname(roomId, roomitems);
