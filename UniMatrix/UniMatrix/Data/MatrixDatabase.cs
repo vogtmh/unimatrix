@@ -323,6 +323,35 @@ namespace UniMatrix.Data
             return result;
         }
 
+        /// <summary>
+        /// Returns up to <paramref name="limit"/> messages strictly older than the cursor
+        /// (<paramref name="beforeTs"/>, <paramref name="beforeEventId"/>), oldest-first. Used
+        /// for scroll-back lazy loading so only a small page is held in memory at a time. The
+        /// compound (ts, event_id) cursor is stable even when several messages share a timestamp.
+        /// </summary>
+        public List<Message> GetMessagesBefore(string roomId, long beforeTs, string beforeEventId, int limit)
+        {
+            var result = new List<Message>();
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                                    FROM messages
+                                    WHERE room_id = @room
+                                      AND (ts < @ts OR (ts = @ts AND event_id < @id))
+                                    ORDER BY ts DESC, event_id DESC
+                                    LIMIT @limit";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                cmd.Parameters.AddWithValue("@ts", beforeTs);
+                cmd.Parameters.AddWithValue("@id", (object)beforeEventId ?? "");
+                cmd.Parameters.AddWithValue("@limit", limit);
+                ReadMessages(cmd, result);
+            }
+            // Stored newest-first for the LIMIT; reverse to oldest-first for display.
+            result.Reverse();
+            return result;
+        }
+
         private static void ReadMessages(SqliteCommand cmd, List<Message> result)
         {
             using (var r = cmd.ExecuteReader())

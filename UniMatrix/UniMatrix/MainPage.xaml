@@ -271,6 +271,7 @@
             <!-- Messages -->
             <ListView Grid.Row="1" x:Name="MessagesList" SelectionMode="None"
                       ItemsSource="{x:Bind Messages}" Padding="8,8"
+                      Loaded="MessagesList_Loaded"
                       ScrollViewer.HorizontalScrollMode="Disabled">
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">

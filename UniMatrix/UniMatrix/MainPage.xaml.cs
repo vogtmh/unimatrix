@@ -60,6 +60,14 @@ namespace UniMatrix
         private const int AvatarThumbSize = 96;
         private const int ImageThumbSize = 320;
 
+        // Scroll-back lazy loading: keep only a sliding window of messages in memory so a room
+        // with tens of thousands of messages doesn't bloat memory. The full history stays in the
+        // on-disk DB; older pages are pulled in as the user scrolls to the top.
+        private const int MessagePageSize = 50;
+        private ScrollViewer _messagesScrollViewer;
+        private bool _loadingOlder;
+        private bool _hasMoreOlder;
+
         private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings }
 
         public MainPage()
@@ -308,18 +316,20 @@ namespace UniMatrix
             Messages.Clear();
 
             // Unlimited history -> sinceTs 0 loads everything; otherwise the day window.
+            // sinceTs only governs how far back the server backfill pulls into the DB; the
+            // on-screen list itself is paged from the cache (latest page first), so memory
+            // stays bounded regardless of how much history a room has.
             long sinceTs = _settings.HistoryUnlimited
                 ? 0
                 : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
-            int fallback = PreferencesService.FallbackMessageCount;
 
-            // Render whatever is already cached immediately so the room opens instantly.
-            RenderMessages(roomId, sinceTs, fallback);
+            // Render the most recent page from cache immediately so the room opens instantly.
+            RenderLatestPage(roomId);
 
             // The /sync filter only caches a handful of recent messages per room, so the
             // cache rarely covers the requested window on first open. Backfill from the
-            // server when needed, then re-render. This is what makes the day window and
-            // "unlimited" actually load older history instead of just the last few.
+            // server when needed (into the DB), then re-render the latest page. This is what
+            // makes the day window and "unlimited" actually have older history to page through.
             if (NeedsBackfill(roomId, sinceTs))
             {
                 ShowSyncProgress(true, "Loading messages…");
@@ -335,34 +345,159 @@ namespace UniMatrix
                 // The user may have navigated away while we paged history.
                 if (_currentRoomId == roomId)
                 {
-                    RenderMessages(roomId, sinceTs, fallback);
+                    RenderLatestPage(roomId);
                     // Re-render reset the list, so return to the latest message.
                     ScrollMessagesToBottom();
                 }
             }
         }
 
-        private void RenderMessages(string roomId, long sinceTs, int fallback)
+        /// <summary>
+        /// Renders the most recent <see cref="MessagePageSize"/> messages from the cache. Older
+        /// messages are pulled in on demand by <see cref="LoadOlderMessagesAsync"/> when the user
+        /// scrolls to the top, so only a small window is ever held in memory.
+        /// </summary>
+        private void RenderLatestPage(string roomId)
         {
             var names = _db.GetMemberNames(roomId);
-            var msgs = _db.GetMessagesSince(roomId, sinceTs, fallback);
+            var msgs = _db.GetMessages(roomId, MessagePageSize);
 
             Messages.Clear();
-            DateTime? prevDay = null;
+            Message prev = null;
             foreach (var m in msgs)
             {
                 DecorateMessage(m, names);
-                var day = DateTimeOffset.FromUnixTimeMilliseconds(m.Timestamp).LocalDateTime.Date;
-                m.ShowDateSeparator = prevDay == null || day != prevDay.Value;
-                prevDay = day;
+                SetDateSeparator(m, prev);
+                prev = m;
                 Messages.Add(m);
             }
+
+            // There may be older messages to page in iff we filled a whole page.
+            _hasMoreOlder = msgs.Count >= MessagePageSize;
+            _loadingOlder = false;
 
             // Resolve image thumbnails asynchronously (fire and forget).
             foreach (var m in msgs.Where(x => x.IsImage && !string.IsNullOrEmpty(x.Mxc)))
             {
                 var _ = ResolveMessageImageAsync(m);
             }
+        }
+
+        /// <summary>
+        /// Prepends the next older page of cached messages when the user scrolls to the top,
+        /// preserving their reading position. Keeps the in-memory list growing only as far as
+        /// the user actually scrolls back, instead of loading the whole room up front.
+        /// </summary>
+        private void LoadOlderMessagesAsync()
+        {
+            if (_loadingOlder || !_hasMoreOlder) return;
+            if (Messages.Count == 0) return;
+
+            string roomId = _currentRoomId;
+            if (roomId == null) return;
+
+            // Cursor = oldest message currently in memory.
+            var anchor = Messages[0];
+            _loadingOlder = true;
+            try
+            {
+                var older = _db.GetMessagesBefore(roomId, anchor.Timestamp, anchor.EventId, MessagePageSize);
+                if (older.Count == 0)
+                {
+                    _hasMoreOlder = false;
+                    return;
+                }
+
+                var names = _db.GetMemberNames(roomId);
+                Message prev = null;
+                foreach (var m in older)
+                {
+                    DecorateMessage(m, names);
+                    SetDateSeparator(m, prev);
+                    prev = m;
+                }
+                // The previously-top message may no longer start its day now that an older page
+                // sits above it; re-evaluate that single boundary.
+                SetDateSeparator(anchor, older[older.Count - 1]);
+
+                // Preserve scroll position: capture the extent before insert, then add the same
+                // height back to the offset so the viewport stays on the same content.
+                double prevExtent = _messagesScrollViewer != null ? _messagesScrollViewer.ExtentHeight : 0;
+                double prevOffset = _messagesScrollViewer != null ? _messagesScrollViewer.VerticalOffset : 0;
+
+                for (int i = older.Count - 1; i >= 0; i--)
+                {
+                    Messages.Insert(0, older[i]);
+                }
+
+                _hasMoreOlder = older.Count >= MessagePageSize;
+
+                foreach (var m in older.Where(x => x.IsImage && !string.IsNullOrEmpty(x.Mxc)))
+                {
+                    var _ = ResolveMessageImageAsync(m);
+                }
+
+                if (_messagesScrollViewer != null)
+                {
+                    MessagesList.UpdateLayout();
+                    double newExtent = _messagesScrollViewer.ExtentHeight;
+                    _messagesScrollViewer.ChangeView(null, prevOffset + (newExtent - prevExtent), null, true);
+                }
+            }
+            finally
+            {
+                _loadingOlder = false;
+            }
+        }
+
+        /// <summary>
+        /// Sets <see cref="Message.ShowDateSeparator"/> so a Telegram-style date pill appears at
+        /// the start of each calendar day. <paramref name="previous"/> is the message immediately
+        /// above (null when this is the very first).
+        /// </summary>
+        private static void SetDateSeparator(Message m, Message previous)
+        {
+            var day = DateTimeOffset.FromUnixTimeMilliseconds(m.Timestamp).LocalDateTime.Date;
+            if (previous == null)
+            {
+                m.ShowDateSeparator = true;
+                return;
+            }
+            var prevDay = DateTimeOffset.FromUnixTimeMilliseconds(previous.Timestamp).LocalDateTime.Date;
+            m.ShowDateSeparator = day != prevDay;
+        }
+
+        private void MessagesList_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (_messagesScrollViewer != null) return;
+            _messagesScrollViewer = FindDescendant<ScrollViewer>(MessagesList);
+            if (_messagesScrollViewer != null)
+            {
+                _messagesScrollViewer.ViewChanged += MessagesScrollViewer_ViewChanged;
+            }
+        }
+
+        private void MessagesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+        {
+            // Near the top -> pull in the next older page.
+            if (_messagesScrollViewer != null && _messagesScrollViewer.VerticalOffset <= 60 &&
+                _hasMoreOlder && !_loadingOlder)
+            {
+                LoadOlderMessagesAsync();
+            }
+        }
+
+        private static T FindDescendant<T>(DependencyObject root) where T : DependencyObject
+        {
+            int count = Windows.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+            for (int i = 0; i < count; i++)
+            {
+                var child = Windows.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+                if (child is T match) return match;
+                var deeper = FindDescendant<T>(child);
+                if (deeper != null) return deeper;
+            }
+            return null;
         }
 
         /// <summary>
@@ -805,7 +940,7 @@ namespace UniMatrix
                     // Keep previews fresh, and refresh the open room if we just filled it.
                     if (_activeView == View.RoomList) RefreshRooms();
                     if (_currentRoomId == roomId)
-                        RenderMessages(roomId, since, PreferencesService.FallbackMessageCount);
+                        RenderLatestPage(roomId);
                 }
             }
             catch (OperationCanceledException) { }
