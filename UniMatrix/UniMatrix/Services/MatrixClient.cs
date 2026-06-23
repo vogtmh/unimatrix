@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Data.Json;
 using Windows.Web.Http;
+using UniMatrix.Models;
 
 namespace UniMatrix.Services
 {
@@ -277,6 +279,59 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Joins a room by its id (!abc:server) or alias (#room:server). The room then
+        /// appears on the next /sync pass. Returns the joined room id.
+        /// </summary>
+        public async Task<string> JoinRoomAsync(string roomIdOrAlias)
+        {
+            string target = Uri.EscapeDataString(roomIdOrAlias.Trim());
+            var resp = await PostAsync("/_matrix/client/r0/join/" + target, new JsonObject(), requireAuth: true);
+            return GetString(resp, "room_id");
+        }
+
+        /// <summary>
+        /// Queries the public room directory. Pass an empty <paramref name="searchTerm"/> to
+        /// list the most popular rooms, or a term to filter. <paramref name="server"/> may name a
+        /// remote homeserver's directory (e.g. "matrix.org"); leave empty for the user's own.
+        /// </summary>
+        public async Task<List<PublicRoomEntry>> GetPublicRoomsAsync(string server, string searchTerm, CancellationToken ct)
+        {
+            string path = "/_matrix/client/r0/publicRooms";
+            if (!string.IsNullOrWhiteSpace(server))
+                path += "?server=" + Uri.EscapeDataString(server.Trim());
+
+            var body = new JsonObject { ["limit"] = JsonValue.CreateNumberValue(50) };
+            if (!string.IsNullOrWhiteSpace(searchTerm))
+            {
+                body["filter"] = new JsonObject
+                {
+                    ["generic_search_term"] = JsonValue.CreateStringValue(searchTerm.Trim())
+                };
+            }
+
+            var resp = await PostAsync(path, body, requireAuth: true);
+
+            var list = new List<PublicRoomEntry>();
+            if (resp != null && resp.ContainsKey("chunk") && resp["chunk"].ValueType == JsonValueType.Array)
+            {
+                foreach (var item in resp.GetNamedArray("chunk"))
+                {
+                    if (item.ValueType != JsonValueType.Object) continue;
+                    var o = item.GetObject();
+                    list.Add(new PublicRoomEntry
+                    {
+                        RoomId = GetString(o, "room_id"),
+                        Name = GetString(o, "name"),
+                        Topic = GetString(o, "topic"),
+                        CanonicalAlias = GetString(o, "canonical_alias"),
+                        MemberCount = (int)GetNumber(o, "num_joined_members")
+                    });
+                }
+            }
+            return list;
+        }
+
+        /// <summary>
         /// Fetches a page of room history (newest-first, dir=b). Pass the <paramref name="from"/>
         /// token returned in a previous response's "end" field to page further back. Note that
         /// <paramref name="limit"/> counts ALL events (state, membership, etc.), not just messages.
@@ -496,6 +551,17 @@ namespace UniMatrix.Services
             }
             catch { }
             return null;
+        }
+
+        internal static double GetNumber(JsonObject obj, string key)
+        {
+            try
+            {
+                if (obj != null && obj.ContainsKey(key) && obj[key].ValueType == JsonValueType.Number)
+                    return obj.GetNamedNumber(key);
+            }
+            catch { }
+            return 0;
         }
     }
 

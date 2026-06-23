@@ -57,6 +57,7 @@ namespace UniMatrix
         // Bound collections.
         public ObservableCollection<Room> Rooms { get; } = new ObservableCollection<Room>();
         public ObservableCollection<Message> Messages { get; } = new ObservableCollection<Message>();
+        public ObservableCollection<PublicRoomEntry> PublicRooms { get; } = new ObservableCollection<PublicRoomEntry>();
 
         private const int AvatarThumbSize = 96;
         private const int ImageThumbSize = 320;
@@ -69,7 +70,7 @@ namespace UniMatrix
         private bool _loadingOlder;
         private bool _hasMoreOlder;
 
-        private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings }
+        private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom }
 
         public MainPage()
         {
@@ -186,13 +187,14 @@ namespace UniMatrix
             ChatView.Visibility = view == View.Chat ? Visibility.Visible : Visibility.Collapsed;
             RoomInfoPanel.Visibility = view == View.RoomInfo ? Visibility.Visible : Visibility.Collapsed;
             SettingsPanel.Visibility = view == View.Settings ? Visibility.Visible : Visibility.Collapsed;
+            AddRoomPanel.Visibility = view == View.AddRoom ? Visibility.Visible : Visibility.Collapsed;
             UpdateBackButton();
         }
 
         private void UpdateBackButton()
         {
             var nav = SystemNavigationManager.GetForCurrentView();
-            bool canGoBack = _activeView == View.Chat || _activeView == View.RoomInfo || _activeView == View.Settings;
+            bool canGoBack = _activeView == View.Chat || _activeView == View.RoomInfo || _activeView == View.Settings || _activeView == View.AddRoom;
             nav.AppViewBackButtonVisibility = canGoBack
                 ? AppViewBackButtonVisibility.Visible
                 : AppViewBackButtonVisibility.Collapsed;
@@ -219,6 +221,10 @@ namespace UniMatrix
                     ShowView(View.Chat);
                     break;
                 case View.Settings:
+                    e.Handled = true;
+                    ShowView(View.RoomList);
+                    break;
+                case View.AddRoom:
                     e.Handled = true;
                     ShowView(View.RoomList);
                     break;

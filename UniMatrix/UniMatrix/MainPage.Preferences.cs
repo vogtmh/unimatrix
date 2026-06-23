@@ -224,6 +224,11 @@ namespace UniMatrix
 
         private void NewRoomButton_Click(object sender, RoutedEventArgs e)
         {
+            OpenAddRoom();
+        }
+
+        private void CreateNewRoomButton_Click(object sender, RoutedEventArgs e)
+        {
             NewRoomName.Text = "";
             NewRoomPublic.IsOn = false;
             CreateRoomError.Visibility = Visibility.Collapsed;

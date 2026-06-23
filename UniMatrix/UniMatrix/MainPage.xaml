@@ -388,6 +388,129 @@
             </ScrollViewer>
         </Grid>
 
+        <!-- ========================= ADD ROOM ========================= -->
+        <Grid x:Name="AddRoomPanel" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="64">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Click="AddRoomCloseButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
+                </Button>
+                <TextBlock Grid.Column="1" Text="Add room" Foreground="White" FontSize="17"
+                           FontWeight="SemiBold" VerticalAlignment="Center" />
+            </Grid>
+
+            <!-- Top controls -->
+            <StackPanel Grid.Row="1" Padding="16,12">
+                <Button x:Name="CreateNewRoomButton" Click="CreateNewRoomButton_Click"
+                        HorizontalAlignment="Stretch" Padding="0,12"
+                        Background="{StaticResource AppCardBrush}" Foreground="White"
+                        FontSize="15" FontWeight="SemiBold" BorderThickness="0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="16"
+                                  Foreground="White" VerticalAlignment="Center" />
+                        <TextBlock Text="Create a new room" Margin="8,0,0,0" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+
+                <TextBlock Text="JOIN BY ADDRESS" Foreground="{StaticResource AppFaintTextBrush}"
+                           FontSize="11" FontWeight="SemiBold" Margin="2,20,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" x:Name="JoinAddressBox"
+                             PlaceholderText="#room:server.org or !id:server.org"
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                             VerticalAlignment="Center" KeyDown="JoinAddressBox_KeyDown" />
+                    <Button Grid.Column="1" Content="Join" Click="JoinAddressButton_Click"
+                            Margin="8,0,0,0" Padding="18,9"
+                            Background="{StaticResource AppAccentBrush}" Foreground="White"
+                            BorderThickness="0" />
+                </Grid>
+
+                <TextBlock Text="BROWSE PUBLIC ROOMS" Foreground="{StaticResource AppFaintTextBrush}"
+                           FontSize="11" FontWeight="SemiBold" Margin="2,20,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" x:Name="DirectorySearchBox"
+                             PlaceholderText="Search (leave empty to list popular rooms)"
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                             VerticalAlignment="Center" KeyDown="DirectorySearchBox_KeyDown" />
+                    <Button Grid.Column="1" Click="DirectorySearchButton_Click"
+                            Margin="8,0,0,0" Padding="14,9"
+                            Background="{StaticResource AppAccentBrush}" Foreground="White"
+                            BorderThickness="0">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE721;" FontSize="16" Foreground="White" />
+                    </Button>
+                </Grid>
+
+                <Grid Margin="0,12,0,0">
+                    <ProgressRing x:Name="AddRoomProgress" Width="24" Height="24"
+                                  Foreground="{StaticResource AppAccentBrush}" IsActive="False"
+                                  HorizontalAlignment="Left" />
+                    <TextBlock x:Name="AddRoomStatus" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"
+                               Visibility="Collapsed" />
+                </Grid>
+            </StackPanel>
+
+            <!-- Directory results -->
+            <ListView Grid.Row="2" x:Name="PublicRoomsList" SelectionMode="None"
+                      IsItemClickEnabled="True" ItemClick="PublicRoomsList_ItemClick"
+                      ItemsSource="{x:Bind PublicRooms}"
+                      ScrollViewer.HorizontalScrollMode="Disabled">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="14,10" Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Grid.Column="0" Width="44" Height="44" Margin="0,0,12,0">
+                                <Ellipse Fill="{Binding AvatarBrush}" />
+                                <TextBlock Text="{Binding AvatarInitial}" Foreground="White"
+                                           FontSize="18" FontWeight="SemiBold"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Grid>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding DisplayName}" Foreground="White"
+                                           FontSize="15" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" MaxLines="1" />
+                                <TextBlock Text="{Binding TopicLine}" Foreground="{StaticResource AppSubtleTextBrush}"
+                                           FontSize="12" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding MembersText}" Foreground="{StaticResource AppFaintTextBrush}"
+                                           FontSize="11" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+
         <!-- ======================= CREATE ROOM ======================= -->
         <Grid x:Name="CreateRoomPanel" Background="#CC000000" Visibility="Collapsed">
             <Border Background="{StaticResource AppPanelBrush}" CornerRadius="12"

@@ -111,11 +111,81 @@ namespace UniMatrix.Models
     }
 
     /// <summary>
+    /// A public room returned by the homeserver's room directory (publicRooms).
+    /// Used only for the "Add room" browse list; not persisted.
+    /// </summary>
+    public class PublicRoomEntry
+    {
+        public string RoomId { get; set; }
+        public string Name { get; set; }
+        public string Topic { get; set; }
+        public string CanonicalAlias { get; set; }
+        public int MemberCount { get; set; }
+
+        public string DisplayName
+        {
+            get
+            {
+                if (!string.IsNullOrEmpty(Name)) return Name;
+                if (!string.IsNullOrEmpty(CanonicalAlias)) return CanonicalAlias;
+                return RoomId;
+            }
+        }
+
+        /// <summary>Prefer the alias when joining — it is more federation-friendly than a bare room id.</summary>
+        public string JoinTarget
+        {
+            get { return !string.IsNullOrEmpty(CanonicalAlias) ? CanonicalAlias : RoomId; }
+        }
+
+        /// <summary>Second line: topic when present, otherwise the address.</summary>
+        public string TopicLine
+        {
+            get { return string.IsNullOrEmpty(Topic) ? (CanonicalAlias ?? RoomId) : Topic.Replace("\n", " ").Replace("\r", " "); }
+        }
+
+        public string MembersText
+        {
+            get { return MemberCount == 1 ? "1 member" : MemberCount + " members"; }
+        }
+
+        public string AvatarInitial
+        {
+            get
+            {
+                string n = DisplayName;
+                if (string.IsNullOrEmpty(n)) return "?";
+                foreach (char c in n)
+                {
+                    if (char.IsLetterOrDigit(c)) return char.ToUpper(c).ToString();
+                }
+                return "#";
+            }
+        }
+
+        public Windows.UI.Color AvatarColor
+        {
+            get
+            {
+                int hash = (RoomId ?? DisplayName ?? "?").GetHashCode();
+                byte r = (byte)(60 + (Math.Abs(hash) % 150));
+                byte g = (byte)(60 + (Math.Abs(hash / 7) % 150));
+                byte b = (byte)(60 + (Math.Abs(hash / 13) % 150));
+                return Windows.UI.Color.FromArgb(255, r, g, b);
+            }
+        }
+
+        public Windows.UI.Xaml.Media.SolidColorBrush AvatarBrush
+        {
+            get { return new Windows.UI.Xaml.Media.SolidColorBrush(AvatarColor); }
+        }
+    }
+
+    /// <summary>
     /// A single message event displayed inside a room's timeline.
     /// </summary>
     public class Message : INotifyPropertyChanged
-    {
-        public string EventId { get; set; }
+    {        public string EventId { get; set; }
         public string RoomId { get; set; }
         public string Sender { get; set; }
 
