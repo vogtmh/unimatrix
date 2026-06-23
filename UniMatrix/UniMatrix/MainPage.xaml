@@ -8,9 +8,10 @@
     <Grid>
 
         <!-- ============================ SPLASH ============================ -->
-        <!-- Shown while restoring a saved session so the login form doesn't flash. -->
+        <!-- Shown while restoring a saved session so the login form doesn't flash.
+             Visible by default so it appears instantly before code-behind runs. -->
         <Grid x:Name="SplashPanel" Background="{StaticResource AppBackgroundBrush}"
-              Visibility="Collapsed">
+              Visibility="Visible">
             <Grid.Resources>
                 <Storyboard x:Name="SplashFadeIn">
                     <DoubleAnimation Storyboard.TargetName="SplashContent"
@@ -50,7 +51,8 @@
         </Grid>
 
         <!-- ============================ LOGIN ============================ -->
-        <Grid x:Name="LoginPanel" Background="{StaticResource AppBackgroundBrush}">
+        <Grid x:Name="LoginPanel" Background="{StaticResource AppBackgroundBrush}"
+              Visibility="Collapsed">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
                             MaxWidth="420" Padding="24,48">
