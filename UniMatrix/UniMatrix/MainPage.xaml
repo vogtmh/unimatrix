@@ -54,8 +54,8 @@
         <Grid x:Name="LoginPanel" Background="{StaticResource AppBackgroundBrush}"
               Visibility="Collapsed">
             <ScrollViewer x:Name="LoginScroll" VerticalScrollBarVisibility="Auto">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                            MaxWidth="420" Padding="24,48">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Top"
+                            MaxWidth="420" Padding="24,24">
                     <Image Source="ms-appx:///Assets/unimatrix_banner.png" Stretch="Uniform"
                            MaxWidth="280" HorizontalAlignment="Center" />
                     <TextBlock Text="Matrix chat for Windows Mobile" Foreground="{StaticResource AppSubtleTextBrush}"
