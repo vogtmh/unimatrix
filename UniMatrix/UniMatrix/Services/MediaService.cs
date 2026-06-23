@@ -122,6 +122,49 @@ namespace UniMatrix.Services
             }
         }
 
+        /// <summary>
+        /// Returns an ms-appdata:// URI for the FULL-resolution original of an mxc image,
+        /// downloading and caching it on first use (separate cache key from the thumbnail).
+        /// Used by the full-screen image viewer. Returns null on failure or non-mxc input.
+        /// </summary>
+        public async Task<string> GetFullImageUriAsync(string mxc)
+        {
+            if (string.IsNullOrEmpty(mxc) || !mxc.StartsWith("mxc://", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            string cacheKey = "full:" + mxc;
+            string cached = _db.GetCachedMedia(cacheKey);
+            if (!string.IsNullOrEmpty(cached))
+            {
+                try
+                {
+                    await StorageFile.GetFileFromApplicationUriAsync(new Uri(cached));
+                    return cached; // Still present on disk.
+                }
+                catch { /* Removed; fall through to re-download. */ }
+            }
+
+            try
+            {
+                var buffer = await _client.FetchOriginalAsync(mxc);
+                if (buffer == null) return null;
+
+                var folder = await GetFolderAsync();
+                string fileName = "full_" + SafeFileName(mxc) + ".img";
+                var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+                await FileIO.WriteBufferAsync(file, buffer);
+
+                string appUri = "ms-appdata:///local/media/" + fileName;
+                _db.SetCachedMedia(cacheKey, appUri);
+                return appUri;
+            }
+            catch (Exception ex)
+            {
+                App.Log("Full image EXC for " + mxc + ": " + ex.Message);
+                return null;
+            }
+        }
+
         private static string SafeFileName(string mxc)
         {
             // mxc://server/mediaId -> server_mediaId with non-alphanumerics stripped.

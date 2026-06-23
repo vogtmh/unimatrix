@@ -156,6 +156,14 @@ namespace UniMatrix
 
         private void OnBackRequested(object sender, BackRequestedEventArgs e)
         {
+            // The full-screen image viewer overlays any view, so it gets first dibs on Back.
+            if (ImageViewerPanel.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                CloseImageViewer();
+                return;
+            }
+
             switch (_activeView)
             {
                 case View.Chat:

@@ -6,6 +6,7 @@ using Windows.Storage.Pickers;
 using Windows.Storage.Streams;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Media.Imaging;
 using UniMatrix.Models;
 
 namespace UniMatrix
@@ -129,6 +130,62 @@ namespace UniMatrix
                 ? (DateTime?)DateTimeOffset.FromUnixTimeMilliseconds(Messages[Messages.Count - 1].Timestamp).LocalDateTime.Date
                 : null;
             echo.ShowDateSeparator = lastDay == null || echoDay != lastDay.Value;
+        }
+
+        // ---- Full-screen image viewer ----
+
+        private async void MessageImage_Tapped(object sender, Windows.UI.Xaml.Input.TappedRoutedEventArgs e)
+        {
+            var img = sender as Image;
+            var msg = img?.DataContext as Message;
+            if (msg == null) return;
+            e.Handled = true;
+            await OpenImageViewerAsync(msg);
+        }
+
+        private async Task OpenImageViewerAsync(Message msg)
+        {
+            // Show immediately with the cached thumbnail (if any) so there's instant feedback,
+            // then swap in the full-resolution original once it has downloaded.
+            ImageViewerScroll.ChangeView(null, null, 1.0f, true);
+            ImageViewerImage.Source = null;
+            if (!string.IsNullOrEmpty(msg.MediaUrl))
+            {
+                try { ImageViewerImage.Source = new BitmapImage(new Uri(msg.MediaUrl)); }
+                catch { }
+            }
+            ImageViewerPanel.Visibility = Visibility.Visible;
+
+            if (string.IsNullOrEmpty(msg.Mxc)) return;
+
+            ImageViewerSpinner.IsActive = true;
+            try
+            {
+                string fullUri = await _media.GetFullImageUriAsync(msg.Mxc);
+                // Only apply if the viewer is still open and showing this same image.
+                if (fullUri != null && ImageViewerPanel.Visibility == Visibility.Visible)
+                {
+                    ImageViewerImage.Source = new BitmapImage(new Uri(fullUri));
+                }
+            }
+            catch (Exception ex) { App.Log("Viewer EXC: " + ex.Message); }
+            finally { ImageViewerSpinner.IsActive = false; }
+        }
+
+        private void CloseImageViewer()
+        {
+            ImageViewerPanel.Visibility = Visibility.Collapsed;
+            ImageViewerImage.Source = null;
+            ImageViewerSpinner.IsActive = false;
+        }
+
+        private void ImageViewerCloseButton_Click(object sender, RoutedEventArgs e) => CloseImageViewer();
+
+        private void ImageViewerPanel_Tapped(object sender, Windows.UI.Xaml.Input.TappedRoutedEventArgs e)
+        {
+            // Tap on the dark backdrop dismisses; taps on the image bubble up here too, but
+            // the user expects backdrop-tap-to-close like other photo viewers.
+            CloseImageViewer();
         }
     }
 }

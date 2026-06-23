@@ -301,7 +301,8 @@
                                     <TextBlock Text="{Binding Body}" Foreground="White" FontSize="15"
                                                TextWrapping="Wrap" Visibility="{Binding TextVisibility}" />
                                     <Image Source="{Binding MediaUrl}" Stretch="Uniform" MaxHeight="220"
-                                           Visibility="{Binding ImageVisibility}" Margin="0,2,0,0" />
+                                           Visibility="{Binding ImageVisibility}" Margin="0,2,0,0"
+                                           Tapped="MessageImage_Tapped" />
                                     <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
                                                FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
                                 </StackPanel>
@@ -526,6 +527,27 @@
             <ProgressBar x:Name="SyncProgressBar" IsIndeterminate="True"
                          Foreground="{StaticResource AppAccentBrush}" />
         </StackPanel>
+
+        <!-- ===================== FULL-SCREEN IMAGE VIEWER ===================== -->
+        <!-- Top-most overlay (last child) so it covers everything. Tapping the
+             backdrop or the close button dismisses it. -->
+        <Grid x:Name="ImageViewerPanel" Background="#F0000000" Visibility="Collapsed"
+              Tapped="ImageViewerPanel_Tapped">
+            <ScrollViewer x:Name="ImageViewerScroll" ZoomMode="Enabled"
+                          MinZoomFactor="1" MaxZoomFactor="6"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollMode="Auto" VerticalScrollMode="Auto"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                <Image x:Name="ImageViewerImage" Stretch="Uniform" />
+            </ScrollViewer>
+            <ProgressRing x:Name="ImageViewerSpinner" IsActive="False" Width="48" Height="48"
+                          Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <Button x:Name="ImageViewerCloseButton" Click="ImageViewerCloseButton_Click"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0"
+                    Background="#80000000" BorderThickness="0" Padding="12,12">
+                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="18" Foreground="White" />
+            </Button>
+        </Grid>
 
     </Grid>
 </Page>

@@ -335,6 +335,47 @@ namespace UniMatrix.Services
             return null;
         }
 
+        /// <summary>
+        /// Downloads the FULL-resolution original (no thumbnail) for an mxc:// URL, returning
+        /// null on failure. Used by the full-screen image viewer. Tries the authenticated v1
+        /// download endpoint first, then the legacy r0 one. Auth via access_token query param only.
+        /// </summary>
+        public async Task<Windows.Storage.Streams.IBuffer> FetchOriginalAsync(string mxc)
+        {
+            string serverAndId = ParseMxc(mxc);
+            if (serverAndId == null) return null;
+
+            string tok = Uri.EscapeDataString(_accessToken);
+            var candidates = new[]
+            {
+                _baseUrl + "/_matrix/client/v1/media/download/" + serverAndId + "?access_token=" + tok,
+                _baseUrl + "/_matrix/media/r0/download/" + serverAndId + "?access_token=" + tok,
+            };
+
+            foreach (var url in candidates)
+            {
+                try
+                {
+                    using (var resp = await _http.GetAsync(new Uri(url)))
+                    {
+                        if (resp.IsSuccessStatusCode)
+                            return await resp.Content.ReadAsBufferAsync();
+
+                        string body = "";
+                        try { body = await resp.Content.ReadAsStringAsync(); }
+                        catch { }
+                        if (body != null && body.Length > 160) body = body.Substring(0, 160);
+                        App.Log("Original " + (int)resp.StatusCode + " " + mxc + " :: " + body);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log("Original EXC " + mxc + ": " + ex.Message);
+                }
+            }
+            return null;
+        }
+
         private static string ParseMxc(string mxc)
         {
             if (string.IsNullOrEmpty(mxc) || !mxc.StartsWith("mxc://", StringComparison.OrdinalIgnoreCase))
