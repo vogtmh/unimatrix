@@ -120,6 +120,37 @@ namespace UniMatrix
             ShowView(View.Login);
         }
 
+        private async void WipeCacheButton_Click(object sender, RoutedEventArgs e)
+        {
+            var confirm = new Windows.UI.Popups.MessageDialog(
+                "This clears all locally cached rooms and messages and re-downloads everything from the server. You stay signed in. Continue?",
+                "Wipe cache & resync");
+            confirm.Commands.Add(new Windows.UI.Popups.UICommand("Wipe & resync"));
+            confirm.Commands.Add(new Windows.UI.Popups.UICommand("Cancel"));
+            confirm.DefaultCommandIndex = 1;
+            confirm.CancelCommandIndex = 1;
+
+            var choice = await confirm.ShowAsync();
+            if (choice.Label != "Wipe & resync") return;
+
+            // Stop all background work before clearing the database so nothing writes
+            // to the connection while it's being wiped.
+            StopBackfillAll();
+            StopSync();
+
+            // ClearAll() drops messages/rooms/members/media and ALL meta, which includes
+            // the next_batch sync token and the per-room backfill tokens/done flags, so the
+            // next sync starts fresh and the background backfill re-pulls full history.
+            _db.ClearAll();
+            Rooms.Clear();
+            Messages.Clear();
+            _currentRoomId = null;
+
+            // Back to the room list and kick off a clean full sync.
+            ShowView(View.RoomList);
+            StartSync();
+        }
+
         // ---- Create room ----
 
         private void NewRoomButton_Click(object sender, RoutedEventArgs e)

@@ -43,6 +43,13 @@ namespace UniMatrix
         private readonly object _bfLock = new object();
         private readonly HashSet<string> _backfillInFlight = new HashSet<string>();
 
+        // Live progress for the all-rooms backfill. Updated incrementally as pages arrive
+        // (the message counter is bumped on a background thread, so it's read via a UI-thread
+        // DispatcherTimer that refreshes the progress bar every few seconds).
+        private int _bfDone, _bfTotal;
+        private long _bfMessages;
+        private DispatcherTimer _bfTimer;
+
         // Bound collections.
         public ObservableCollection<Room> Rooms { get; } = new ObservableCollection<Room>();
         public ObservableCollection<Message> Messages { get; } = new ObservableCollection<Message>();
@@ -374,7 +381,7 @@ namespace UniMatrix
             catch { }
         }
 
-        private async Task<int> TryBackfillAsync(string roomId, long sinceTs, CancellationToken ct)
+        private async Task<int> TryBackfillAsync(string roomId, long sinceTs, CancellationToken ct, Action<int> onPageStored = null)
         {
             // The /messages limit counts ALL events (state, membership, etc.), so a single
             // page rarely yields enough real messages. Page backward until we've crossed the
@@ -410,6 +417,7 @@ namespace UniMatrix
                     }
 
                     long oldestTs = long.MaxValue;
+                    int pageStored = 0;
                     foreach (var evVal in chunk)
                     {
                         var ev = evVal.GetObject();
@@ -441,7 +449,11 @@ namespace UniMatrix
                             IsLocalEcho = false
                         });
                         fetched++;
+                        pageStored++;
                     }
+
+                    // Report this page's new messages so the progress UI can advance mid-room.
+                    if (pageStored > 0) onPageStored?.Invoke(pageStored);
 
                     // "end" is the token for the next (older) page when paging backward.
                     string end = MatrixClient.GetString(resp, "end");
@@ -705,6 +717,7 @@ namespace UniMatrix
         private async Task BackfillAllRoomsAsync(CancellationToken ct)
         {
             KeepScreenAwake(true);
+            StartBackfillTimer();
             try
             {
                 var rooms = _db.GetRooms();
@@ -716,19 +729,22 @@ namespace UniMatrix
 
                 if (pending.Count == 0) return;
 
-                int done = total - pending.Count;
-                long messages = 0;
-                UpdateBackfillUi(done, total, messages);
+                _bfTotal = total;
+                _bfDone = total - pending.Count;
+                _bfMessages = 0;
+                UpdateBackfillUi();
 
                 foreach (var roomId in pending)
                 {
                     if (ct.IsCancellationRequested) break;
 
                     long since = CurrentHistoryWindow();
-                    int got = await TryBackfillAsync(roomId, since, ct);
-                    messages += got;
-                    done++;
-                    UpdateBackfillUi(done, total, messages);
+                    // The callback runs on a background thread per page; just bump the
+                    // shared counter (the DispatcherTimer paints it on the UI thread).
+                    await TryBackfillAsync(roomId, since, ct,
+                        delta => System.Threading.Interlocked.Add(ref _bfMessages, delta));
+                    _bfDone++;
+                    UpdateBackfillUi();
 
                     // Keep previews fresh, and refresh the open room if we just filled it.
                     if (_activeView == View.RoomList) RefreshRooms();
@@ -740,10 +756,26 @@ namespace UniMatrix
             catch (Exception ex) { App.Log("Backfill-all error: " + ex.Message); }
             finally
             {
+                StopBackfillTimer();
                 _backfillAllActive = false;
                 KeepScreenAwake(false);
                 HideSyncProgress();
             }
+        }
+
+        private void StartBackfillTimer()
+        {
+            if (_bfTimer == null)
+            {
+                _bfTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                _bfTimer.Tick += (s, e) => UpdateBackfillUi();
+            }
+            _bfTimer.Start();
+        }
+
+        private void StopBackfillTimer()
+        {
+            try { _bfTimer?.Stop(); } catch { }
         }
 
         private long CurrentHistoryWindow()
@@ -753,9 +785,12 @@ namespace UniMatrix
                 : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
         }
 
-        private void UpdateBackfillUi(int done, int total, long messages)
+        private void UpdateBackfillUi()
         {
             if (SyncProgressPanel == null) return;
+            int done = _bfDone;
+            int total = _bfTotal;
+            long messages = System.Threading.Interlocked.Read(ref _bfMessages);
             if (SyncProgressText != null)
                 SyncProgressText.Text = "Syncing channels " + done + "/" + total +
                                         " · " + messages + " messages so far";
