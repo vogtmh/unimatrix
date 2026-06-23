@@ -15,8 +15,17 @@ namespace UniMatrix.Services
         private const string HomeserverKey = "matrix_homeserver";
         private const string UserIdKey = "matrix_user_id";
         private const string DeviceIdKey = "matrix_device_id";
-        private const string MessageLimitKey = "matrix_message_limit";
+        private const string HistoryDaysKey = "matrix_history_days";
         private const string UseSystemAccentKey = "use_system_accent";
+
+        /// <summary>
+        /// When a room has had no activity within the history window, show at least this
+        /// many of the most recent real messages so the chat is never empty.
+        /// </summary>
+        public const int FallbackMessageCount = 50;
+
+        /// <summary>Hard upper bound on messages loaded into a chat view to protect memory.</summary>
+        public const int MaxMessagesPerRoom = 500;
 
         private readonly ApplicationDataContainer _local = ApplicationData.Current.LocalSettings;
 
@@ -43,15 +52,15 @@ namespace UniMatrix.Services
             set { _local.Values[DeviceIdKey] = value; }
         }
 
-        public int MessageLimit
+        public int HistoryDays
         {
             get
             {
-                if (_local.Values.ContainsKey(MessageLimitKey))
-                    return (int)_local.Values[MessageLimitKey];
-                return 50;
+                if (_local.Values.ContainsKey(HistoryDaysKey))
+                    return (int)_local.Values[HistoryDaysKey];
+                return 30;
             }
-            set { _local.Values[MessageLimitKey] = value; }
+            set { _local.Values[HistoryDaysKey] = value; }
         }
 
         /// <summary>True (default) to follow the system accent color; false for the signature green.</summary>

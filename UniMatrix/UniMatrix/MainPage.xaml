@@ -375,14 +375,17 @@
                     <TextBlock x:Name="SettingsHomeserver" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="13" Margin="0,4,0,0" />
 
-                    <TextBlock Text="MESSAGES" Foreground="{StaticResource AppFaintTextBrush}"
+                    <TextBlock Text="HISTORY" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
-                    <TextBlock Text="Number of messages to load per room" Foreground="White" FontSize="14" />
-                    <Slider x:Name="MessageLimitSlider" Minimum="10" Maximum="200" StepFrequency="10"
-                            TickFrequency="10" ValueChanged="MessageLimitSlider_ValueChanged"
+                    <TextBlock Text="Days of history to load per room" Foreground="White" FontSize="14" />
+                    <Slider x:Name="HistoryDaysSlider" Minimum="7" Maximum="90" StepFrequency="1"
+                            TickFrequency="7" ValueChanged="HistoryDaysSlider_ValueChanged"
                             Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
-                    <TextBlock x:Name="MessageLimitValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                    <TextBlock x:Name="HistoryDaysValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="13" />
+                    <TextBlock Text="Quiet rooms fall back to the last 50 messages."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,4,0,0" TextWrapping="Wrap" />
 
                     <TextBlock Text="APPEARANCE" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />

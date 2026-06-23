@@ -250,27 +250,70 @@ namespace UniMatrix.Data
                                     ORDER BY ts DESC LIMIT @limit";
                 cmd.Parameters.AddWithValue("@room", roomId);
                 cmd.Parameters.AddWithValue("@limit", limit);
-                using (var r = cmd.ExecuteReader())
-                {
-                    while (r.Read())
-                    {
-                        result.Add(new Message
-                        {
-                            EventId = r.GetString(0),
-                            RoomId = r.GetString(1),
-                            Sender = r.IsDBNull(2) ? null : r.GetString(2),
-                            MsgType = r.IsDBNull(3) ? null : r.GetString(3),
-                            Body = r.IsDBNull(4) ? null : r.GetString(4),
-                            Timestamp = r.GetInt64(5),
-                            Mxc = r.IsDBNull(6) ? null : r.GetString(6),
-                            IsLocalEcho = r.GetInt32(7) != 0
-                        });
-                    }
-                }
+                ReadMessages(cmd, result);
             }
             // Stored newest-first for the LIMIT; reverse to oldest-first for display.
             result.Reverse();
             return result;
+        }
+
+        /// <summary>
+        /// Returns messages with a timestamp at or after <paramref name="sinceTs"/> (oldest-first),
+        /// capped at <paramref name="maxCount"/>. If the room had no activity in that window,
+        /// falls back to the most recent <paramref name="fallbackCount"/> messages so the chat
+        /// is never empty (e.g. quiet rooms whose last message is older than the window).
+        /// </summary>
+        public List<Message> GetMessagesSince(string roomId, long sinceTs, int fallbackCount, int maxCount)
+        {
+            var result = new List<Message>();
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                                    FROM messages WHERE room_id = @room AND ts >= @since
+                                    ORDER BY ts DESC LIMIT @limit";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                cmd.Parameters.AddWithValue("@since", sinceTs);
+                cmd.Parameters.AddWithValue("@limit", maxCount);
+                ReadMessages(cmd, result);
+            }
+
+            if (result.Count == 0)
+            {
+                using (var cmd = _connection.CreateCommand())
+                {
+                    cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                                        FROM messages WHERE room_id = @room
+                                        ORDER BY ts DESC LIMIT @limit";
+                    cmd.Parameters.AddWithValue("@room", roomId);
+                    cmd.Parameters.AddWithValue("@limit", fallbackCount);
+                    ReadMessages(cmd, result);
+                }
+            }
+
+            // Stored newest-first for the LIMIT; reverse to oldest-first for display.
+            result.Reverse();
+            return result;
+        }
+
+        private static void ReadMessages(SqliteCommand cmd, List<Message> result)
+        {
+            using (var r = cmd.ExecuteReader())
+            {
+                while (r.Read())
+                {
+                    result.Add(new Message
+                    {
+                        EventId = r.GetString(0),
+                        RoomId = r.GetString(1),
+                        Sender = r.IsDBNull(2) ? null : r.GetString(2),
+                        MsgType = r.IsDBNull(3) ? null : r.GetString(3),
+                        Body = r.IsDBNull(4) ? null : r.GetString(4),
+                        Timestamp = r.GetInt64(5),
+                        Mxc = r.IsDBNull(6) ? null : r.GetString(6),
+                        IsLocalEcho = r.GetInt32(7) != 0
+                    });
+                }
+            }
         }
 
         // ---- Members ----

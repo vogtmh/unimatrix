@@ -280,14 +280,19 @@ namespace UniMatrix
         {
             Messages.Clear();
 
+            long sinceTs = DateTimeOffset.UtcNow
+                .AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
+            int fallback = PreferencesService.FallbackMessageCount;
+            int maxCount = PreferencesService.MaxMessagesPerRoom;
+
             var names = _db.GetMemberNames(roomId);
-            var msgs = _db.GetMessages(roomId, _settings.MessageLimit);
+            var msgs = _db.GetMessagesSince(roomId, sinceTs, fallback, maxCount);
 
             // Backfill from the server if we have no cached history yet.
             if (msgs.Count == 0)
             {
-                await TryBackfillAsync(roomId);
-                msgs = _db.GetMessages(roomId, _settings.MessageLimit);
+                await TryBackfillAsync(roomId, sinceTs);
+                msgs = _db.GetMessagesSince(roomId, sinceTs, fallback, maxCount);
                 names = _db.GetMemberNames(roomId);
             }
 
@@ -322,40 +327,67 @@ namespace UniMatrix
             catch { }
         }
 
-        private async Task TryBackfillAsync(string roomId)
+        private async Task TryBackfillAsync(string roomId, long sinceTs)
         {
+            // The /messages limit counts ALL events (state, membership, etc.), so a single
+            // page rarely yields enough real messages. Page backward until we've crossed the
+            // requested time window (and have at least one message), run out of history, or
+            // hit a safety cap that protects memory on quiet rooms with old-only history.
+            const int pageSize = 60;
+            const int maxPages = 12;
             try
             {
-                var resp = await _client.GetRoomMessagesAsync(roomId, _settings.MessageLimit, CancellationToken.None);
-                // Reuse the sync processor's event parsing by wrapping chunk into a timeline.
-                var chunk = resp != null && resp.ContainsKey("chunk") ? resp.GetNamedArray("chunk") : null;
-                if (chunk == null) return;
+                string from = null;
+                int realMessages = 0;
 
-                foreach (var evVal in chunk)
+                for (int page = 0; page < maxPages; page++)
                 {
-                    var ev = evVal.GetObject();
-                    string type = MatrixClient.GetString(ev, "type");
-                    if (type != "m.room.message") continue;
+                    var resp = await _client.GetRoomMessagesAsync(roomId, pageSize, from, CancellationToken.None);
+                    var chunk = resp != null && resp.ContainsKey("chunk") ? resp.GetNamedArray("chunk") : null;
+                    if (chunk == null || chunk.Count == 0) break;
 
-                    string eventId = MatrixClient.GetString(ev, "event_id");
-                    if (string.IsNullOrEmpty(eventId) || _db.MessageExists(eventId)) continue;
-
-                    var content = ev.ContainsKey("content") ? ev.GetNamedObject("content") : null;
-                    if (content == null) continue;
-                    string msgType = MatrixClient.GetString(content, "msgtype");
-                    if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image") continue;
-
-                    _db.UpsertMessage(new Message
+                    long oldestTs = long.MaxValue;
+                    foreach (var evVal in chunk)
                     {
-                        EventId = eventId,
-                        RoomId = roomId,
-                        Sender = MatrixClient.GetString(ev, "sender"),
-                        MsgType = msgType,
-                        Body = MatrixClient.GetString(content, "body"),
-                        Timestamp = (long)(ev.ContainsKey("origin_server_ts") ? ev.GetNamedNumber("origin_server_ts") : 0),
-                        Mxc = msgType == "m.image" ? MatrixClient.GetString(content, "url") : null,
-                        IsLocalEcho = false
-                    });
+                        var ev = evVal.GetObject();
+                        long ts = (long)(ev.ContainsKey("origin_server_ts") ? ev.GetNamedNumber("origin_server_ts") : 0);
+                        if (ts > 0 && ts < oldestTs) oldestTs = ts;
+
+                        string type = MatrixClient.GetString(ev, "type");
+                        if (type != "m.room.message") continue;
+
+                        string eventId = MatrixClient.GetString(ev, "event_id");
+                        if (string.IsNullOrEmpty(eventId)) continue;
+
+                        var content = ev.ContainsKey("content") ? ev.GetNamedObject("content") : null;
+                        if (content == null) continue;
+                        string msgType = MatrixClient.GetString(content, "msgtype");
+                        if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image") continue;
+
+                        realMessages++;
+                        if (_db.MessageExists(eventId)) continue;
+
+                        _db.UpsertMessage(new Message
+                        {
+                            EventId = eventId,
+                            RoomId = roomId,
+                            Sender = MatrixClient.GetString(ev, "sender"),
+                            MsgType = msgType,
+                            Body = MatrixClient.GetString(content, "body"),
+                            Timestamp = ts,
+                            Mxc = msgType == "m.image" ? MatrixClient.GetString(content, "url") : null,
+                            IsLocalEcho = false
+                        });
+                    }
+
+                    // Stop once we've covered the time window and have something to show.
+                    bool coveredWindow = oldestTs != long.MaxValue && oldestTs < sinceTs;
+                    if (coveredWindow && realMessages > 0) break;
+
+                    // Otherwise page further back; "end" is the token for older events (dir=b).
+                    string end = MatrixClient.GetString(resp, "end");
+                    if (string.IsNullOrEmpty(end) || end == from) break;
+                    from = end;
                 }
             }
             catch { /* Offline or error: show whatever is cached. */ }

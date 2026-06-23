@@ -15,8 +15,8 @@ namespace UniMatrix
             SettingsDeviceId.Text = "Device: " + (_settings.DeviceId ?? "—");
             SettingsHomeserver.Text = "Homeserver: " + _settings.Homeserver;
 
-            MessageLimitSlider.Value = _settings.MessageLimit;
-            MessageLimitValue.Text = _settings.MessageLimit + " messages";
+            HistoryDaysSlider.Value = _settings.HistoryDays;
+            HistoryDaysValue.Text = _settings.HistoryDays + " days";
 
             UseAccentToggle.IsOn = _settings.UseSystemAccent;
 
@@ -25,12 +25,12 @@ namespace UniMatrix
 
         private void SettingsCloseButton_Click(object sender, RoutedEventArgs e) => ShowView(View.RoomList);
 
-        private void MessageLimitSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        private void HistoryDaysSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
             if (_settings == null) return;
             int value = (int)e.NewValue;
-            _settings.MessageLimit = value;
-            if (MessageLimitValue != null) MessageLimitValue.Text = value + " messages";
+            _settings.HistoryDays = value;
+            if (HistoryDaysValue != null) HistoryDaysValue.Text = value + " days";
         }
 
         private void UseAccentToggle_Toggled(object sender, RoutedEventArgs e)

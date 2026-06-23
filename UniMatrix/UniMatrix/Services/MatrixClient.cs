@@ -186,12 +186,18 @@ namespace UniMatrix.Services
             return GetString(resp, "room_id");
         }
 
-        /// <summary>Fetches the most recent messages for a room (used to backfill history).</summary>
-        public async Task<JsonObject> GetRoomMessagesAsync(string roomId, int limit, CancellationToken ct)
+        /// <summary>
+        /// Fetches a page of room history (newest-first, dir=b). Pass the <paramref name="from"/>
+        /// token returned in a previous response's "end" field to page further back. Note that
+        /// <paramref name="limit"/> counts ALL events (state, membership, etc.), not just messages.
+        /// </summary>
+        public async Task<JsonObject> GetRoomMessagesAsync(string roomId, int limit, string from, CancellationToken ct)
         {
             string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
                           "/messages?dir=b&limit=" + limit +
                           "&access_token=" + Uri.EscapeDataString(_accessToken);
+            if (!string.IsNullOrEmpty(from))
+                path += "&from=" + Uri.EscapeDataString(from);
             return await GetAsync(path, ct);
         }
 
