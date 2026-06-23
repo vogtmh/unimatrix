@@ -362,6 +362,9 @@ namespace UniMatrix
             // stays bounded regardless of how much history a room has.
             long sinceTs = DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
 
+            // ---- DIAGNOSTICS (room open) ----
+            LogRoomDiag("OPEN", roomId, sinceTs);
+
             // Render the most recent page from cache immediately so the room opens instantly.
             RenderLatestPage(roomId);
 
@@ -444,6 +447,11 @@ namespace UniMatrix
             try
             {
                 var older = _db.GetMessagesBefore(roomId, anchor.Timestamp, anchor.EventId, MessagePageSize);
+
+                App.Log("SCROLLUP room=" + roomId
+                    + " anchorTs=" + DateTimeOffset.FromUnixTimeMilliseconds(anchor.Timestamp).LocalDateTime.ToString("yyyy-MM-dd HH:mm")
+                    + " cacheOlder=" + older.Count
+                    + " bf_done=" + (IsBackfillDone(roomId) ? "1" : "0"));
 
                 // Cache exhausted at the top -> pull older history from the server on demand. We do
                 // this whenever the cache runs out, even if a previous run flagged the room "done":
@@ -542,6 +550,37 @@ namespace UniMatrix
         private bool IsBackfillDone(string roomId)
         {
             return _db.GetMeta(BackfillDoneKey(roomId)) == "1";
+        }
+
+        /// <summary>
+        /// Dumps the cache/backfill state for a room to the debug log so history-loading problems
+        /// can be diagnosed from a saved log. Format is compact key=value so it's easy to read.
+        /// </summary>
+        private void LogRoomDiag(string tag, string roomId, long sinceTs)
+        {
+            try
+            {
+                int count = _db.CountMessages(roomId);
+                long oldest = _db.GetOldestMessageTs(roomId);
+                long newest = _db.GetNewestMessageTs(roomId);
+                bool done = IsBackfillDone(roomId);
+                string bfTok = _db.GetMeta(BackfillTokenKey(roomId));
+                string pbTok = _db.GetMeta(PrevBatchKey(roomId));
+
+                string Fmt(long ts) => ts <= 0 ? "-" :
+                    DateTimeOffset.FromUnixTimeMilliseconds(ts).LocalDateTime.ToString("yyyy-MM-dd HH:mm");
+
+                App.Log(tag + " room=" + roomId
+                    + " stored=" + count
+                    + " oldest=" + Fmt(oldest)
+                    + " newest=" + Fmt(newest)
+                    + " window>=" + Fmt(sinceTs) + " (" + _settings.HistoryDays + "d)"
+                    + " bf_done=" + (done ? "1" : "0")
+                    + " needsBackfill=" + NeedsBackfill(roomId, sinceTs)
+                    + " bf_token=" + (string.IsNullOrEmpty(bfTok) ? "-" : "set")
+                    + " prev_batch=" + (string.IsNullOrEmpty(pbTok) ? "MISSING" : "set"));
+            }
+            catch (Exception ex) { App.Log("LogRoomDiag EXC: " + ex.Message); }
         }
 
         /// <summary>
@@ -658,6 +697,10 @@ namespace UniMatrix
                 if (string.IsNullOrEmpty(from))
                     from = _db.GetMeta(PrevBatchKey(roomId));
 
+                App.Log("BF start room=" + roomId + " sinceTs=" + sinceTs + " maxPages=" + maxPages
+                    + " anchor=" + (string.IsNullOrEmpty(from) ? "EMPTY(no token/no prev_batch)"
+                        : (_db.GetMeta(BackfillTokenKey(roomId)) != null ? "bf_token" : "prev_batch")));
+
                 for (int page = 0; page < maxPages; page++)
                 {
                     if (ct.IsCancellationRequested) break;
@@ -668,6 +711,7 @@ namespace UniMatrix
                     {
                         // Reached the start of the room's history.
                         _db.SetMeta(BackfillDoneKey(roomId), "1");
+                        App.Log("BF page=" + page + " EMPTY chunk -> bf_done set (room start)");
                         break;
                     }
 
@@ -712,17 +756,28 @@ namespace UniMatrix
 
                     // "end" is the token for the next (older) page when paging backward.
                     string end = MatrixClient.GetString(resp, "end");
+
+                    App.Log("BF page=" + page + " events=" + chunk.Count + " stored=" + pageStored
+                        + " oldestInPage=" + (oldestTs == long.MaxValue ? "-"
+                            : DateTimeOffset.FromUnixTimeMilliseconds(oldestTs).LocalDateTime.ToString("yyyy-MM-dd HH:mm"))
+                        + " end=" + (string.IsNullOrEmpty(end) ? "EMPTY" : (end == from ? "SAME-AS-FROM" : "next")));
+
                     if (string.IsNullOrEmpty(end) || end == from)
                     {
                         // No further pages available -> we've reached the start.
                         _db.SetMeta(BackfillDoneKey(roomId), "1");
+                        App.Log("BF page=" + page + " end empty/same -> bf_done set");
                         break;
                     }
                     from = end;
                     _db.SetMeta(BackfillTokenKey(roomId), from);
 
                     // Stop once we've paged past the requested window (unless unlimited).
-                    if (sinceTs > 0 && oldestTs != long.MaxValue && oldestTs < sinceTs) break;
+                    if (sinceTs > 0 && oldestTs != long.MaxValue && oldestTs < sinceTs)
+                    {
+                        App.Log("BF page=" + page + " crossed window (oldestInPage < sinceTs) -> stop");
+                        break;
+                    }
                 }
             }
             catch (OperationCanceledException) { /* suspended/cancelled: resume next time. */ }
@@ -731,6 +786,7 @@ namespace UniMatrix
             {
                 lock (_bfLock) { _backfillInFlight.Remove(roomId); }
             }
+            App.Log("BF done room=" + roomId + " fetched=" + fetched);
             return fetched;
         }
 
@@ -1329,6 +1385,47 @@ namespace UniMatrix
         {
             _debugBuffer.Clear();
             if (DebugText != null) DebugText.Text = "";
+        }
+
+        /// <summary>
+        /// Saves the full diagnostic log to a user-chosen location with a timestamped name like
+        /// 20260623-164612-debug.log. Prefers the complete on-disk startup.log (which has the full
+        /// history, not just the truncated on-screen buffer); falls back to the overlay buffer.
+        /// </summary>
+        private async void DebugSave_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string contents = null;
+                try
+                {
+                    var local = Windows.Storage.ApplicationData.Current.LocalFolder;
+                    var logFile = await local.GetFileAsync("startup.log");
+                    contents = await Windows.Storage.FileIO.ReadTextAsync(logFile);
+                }
+                catch { /* no startup.log yet -> use the on-screen buffer below */ }
+
+                if (string.IsNullOrEmpty(contents)) contents = _debugBuffer.ToString();
+
+                string name = DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-debug.log";
+
+                var picker = new Windows.Storage.Pickers.FileSavePicker
+                {
+                    SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.DocumentsLibrary,
+                    SuggestedFileName = name
+                };
+                picker.FileTypeChoices.Add("Log file", new List<string> { ".log" });
+
+                var file = await picker.PickSaveFileAsync();
+                if (file == null) return; // user cancelled
+
+                await Windows.Storage.FileIO.WriteTextAsync(file, contents);
+                App.Log("Debug log saved to " + file.Path);
+            }
+            catch (Exception ex)
+            {
+                App.Log("DebugSave EXC: " + ex.Message);
+            }
         }
 
         // ---- Lifecycle ----

@@ -638,13 +638,17 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="Debug log" Foreground="White"
                            FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Button Grid.Column="1" Content="Clear" Click="DebugClear_Click"
+                <Button Grid.Column="1" Content="Save" Click="DebugSave_Click"
+                        Background="Transparent" Foreground="#33FF66" BorderThickness="0"
+                        Padding="10,6" VerticalAlignment="Center" />
+                <Button Grid.Column="2" Content="Clear" Click="DebugClear_Click"
                         Background="Transparent" Foreground="#BBBBBB" BorderThickness="0"
                         Padding="10,6" VerticalAlignment="Center" />
-                <Button Grid.Column="2" Content="Close" Click="DebugToggle_Click"
+                <Button Grid.Column="3" Content="Close" Click="DebugToggle_Click"
                         Background="Transparent" Foreground="#BBBBBB" BorderThickness="0"
                         Padding="10,6" VerticalAlignment="Center" />
             </Grid>

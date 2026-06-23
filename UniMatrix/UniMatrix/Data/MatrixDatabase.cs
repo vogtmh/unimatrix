@@ -302,6 +302,34 @@ namespace UniMatrix.Data
             }
         }
 
+        /// <summary>Newest stored message timestamp for a room (0 if none). Diagnostics.</summary>
+        public long GetNewestMessageTs(string roomId)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "SELECT MAX(ts) FROM messages WHERE room_id = @room";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                var v = cmd.ExecuteScalar();
+                if (v == null || v == DBNull.Value) return 0;
+                return Convert.ToInt64(v);
+            }
+        }
+
+        /// <summary>Total stored messages for a room. Diagnostics.</summary>
+        public int CountMessages(string roomId)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "SELECT COUNT(*) FROM messages WHERE room_id = @room";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                var v = cmd.ExecuteScalar();
+                if (v == null || v == DBNull.Value) return 0;
+                return Convert.ToInt32(v);
+            }
+        }
+
         /// <summary>
         /// Returns all messages with a timestamp at or after <paramref name="sinceTs"/>
         /// (oldest-first). If the room had no activity in that window, falls back to the most
