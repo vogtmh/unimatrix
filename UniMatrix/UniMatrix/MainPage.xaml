@@ -273,14 +273,14 @@
                       ItemsSource="{x:Bind Messages}" Padding="8,8"
                       Loaded="MessagesList_Loaded"
                       ScrollViewer.HorizontalScrollMode="Disabled">
-                <!-- Non-virtualizing panel: the in-memory list is capped at one page (~50), so we
-                     can afford to realize every item. This makes the ScrollViewer's ScrollableHeight
-                     exact, which is required for scroll-to-bottom to land on the real last message
-                     instead of stopping a few items short (virtualization estimates trailing item
-                     heights and leaves a constant gap). -->
+                <!-- ItemsStackPanel with KeepLastItemInView is the platform's chat-list mode: the
+                     framework automatically keeps the newest item pinned to the bottom as items are
+                     added or resized (e.g. an image bubble growing after its picture decodes), so we
+                     don't have to chase a moving ScrollableHeight ourselves. Virtualization stays on,
+                     which is fine because the in-memory list is capped at one page (~50). -->
                 <ListView.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <StackPanel Orientation="Vertical" />
+                        <ItemsStackPanel ItemsUpdatingScrollMode="KeepLastItemInView" />
                     </ItemsPanelTemplate>
                 </ListView.ItemsPanel>
                 <ListView.ItemContainerStyle>

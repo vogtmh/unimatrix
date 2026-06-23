@@ -67,17 +67,8 @@ namespace UniMatrix
         // on-disk DB; older pages are pulled in as the user scrolls to the top.
         private const int MessagePageSize = 50;
         private ScrollViewer _messagesScrollViewer;
-        private FrameworkElement _messagesContent;
         private bool _loadingOlder;
         private bool _hasMoreOlder;
-
-        // Scroll-to-bottom state. _followBottom means "keep the newest message in view": it stays
-        // on until the user interactively scrolls up, so late layout passes and async image loads
-        // re-snap to the bottom. The pump fields drive a settle loop that re-issues the scroll each
-        // frame until the content height stops growing (no racy VerticalOffset reads).
-        private bool _followBottom;
-        private double _scrollLastExtent;
-        private int _scrollStableFrames;
 
         private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom }
 
@@ -525,35 +516,11 @@ namespace UniMatrix
             if (_messagesScrollViewer != null)
             {
                 _messagesScrollViewer.ViewChanged += MessagesScrollViewer_ViewChanged;
-
-                // The ScrollViewer's content (the items panel) raises SizeChanged whenever its
-                // height changes — new items being laid out, images decoding, etc. While we're
-                // following the conversation, every such growth must re-snap us to the bottom. This
-                // is what makes scroll-to-bottom reliable across the multi-pass layout that a single
-                // ChangeView call can't catch.
-                _messagesContent = _messagesScrollViewer.Content as FrameworkElement;
-                if (_messagesContent != null)
-                    _messagesContent.SizeChanged += MessagesContent_SizeChanged;
             }
-        }
-
-        private void MessagesContent_SizeChanged(object sender, SizeChangedEventArgs e)
-        {
-            if (_followBottom && _messagesScrollViewer != null)
-                _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
         }
 
         private void MessagesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
         {
-            // IsIntermediate is true only for user-driven (touch/wheel/inertia) scrolling; our own
-            // programmatic ChangeView calls use disableAnimation=true and report false. So if the
-            // user interactively scrolls away from the bottom, stop following it.
-            if (e.IsIntermediate && _messagesScrollViewer != null &&
-                _messagesScrollViewer.VerticalOffset < _messagesScrollViewer.ScrollableHeight - 80)
-            {
-                _followBottom = false;
-            }
-
             // Near the top -> pull in the next older page.
             if (_messagesScrollViewer != null && _messagesScrollViewer.VerticalOffset <= 60 &&
                 _hasMoreOlder && !_loadingOlder)
@@ -812,55 +779,33 @@ namespace UniMatrix
         {
             if (Messages.Count == 0) return;
 
-            // Start (or resume) following the bottom. The content's SizeChanged handler keeps us
-            // pinned there as items lay out and images decode; the pump below drives the initial
-            // settle.
-            _followBottom = true;
-
-            if (_messagesScrollViewer == null)
-            {
-                // Inner ScrollViewer not located yet (first frame) — best effort.
-                MessagesList.ScrollIntoView(Messages[Messages.Count - 1]);
-                return;
-            }
-
-            _scrollLastExtent = -1;
-            _scrollStableFrames = 0;
-            PumpScrollToBottom(40);
+            // With ItemsUpdatingScrollMode="KeepLastItemInView" the framework keeps the newest item
+            // pinned as items are added/resized. For an explicit jump (room open, after sending) we
+            // still nudge it: ScrollIntoView realizes and aligns the last item, then ChangeView pins
+            // to the very bottom. We repeat across a few frames so async image decode (which grows
+            // the last bubbles after we first scroll) is caught without reading the racy, lagging
+            // VerticalOffset.
+            ScrollToBottomPass(Messages[Messages.Count - 1], 6);
         }
 
-        /// <summary>
-        /// Re-issues "scroll to the maximum offset" once per frame until the content height has
-        /// stopped growing for a few consecutive frames. We deliberately do NOT read VerticalOffset
-        /// to decide when we're done: ChangeView is asynchronous, so the offset lags by a frame and
-        /// using it as the stop condition made the scroll land short intermittently. Tracking the
-        /// (layout-driven) ExtentHeight instead is reliable.
-        /// </summary>
-        private void PumpScrollToBottom(int budget)
+        private void ScrollToBottomPass(Message last, int attemptsLeft)
         {
-            if (budget <= 0 || _messagesScrollViewer == null || !_followBottom) return;
+            if (attemptsLeft <= 0 || last == null) return;
 
             var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
                 try
                 {
-                    var sv = _messagesScrollViewer;
-                    if (sv == null || !_followBottom) return;
-
-                    sv.UpdateLayout();
-                    double extent = sv.ExtentHeight;
-                    sv.ChangeView(null, sv.ScrollableHeight, null, true);
-
-                    if (Math.Abs(extent - _scrollLastExtent) < 0.5)
-                        _scrollStableFrames++;
-                    else
-                        _scrollStableFrames = 0;
-                    _scrollLastExtent = extent;
-
-                    if (_scrollStableFrames < 4)
-                        PumpScrollToBottom(budget - 1);
+                    MessagesList.ScrollIntoView(last);
+                    if (_messagesScrollViewer != null)
+                    {
+                        _messagesScrollViewer.UpdateLayout();
+                        _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
+                    }
                 }
                 catch { }
+
+                ScrollToBottomPass(last, attemptsLeft - 1);
             });
         }
 
