@@ -326,7 +326,11 @@ namespace UniMatrix
 
                 // The user may have navigated away while we paged history.
                 if (_currentRoomId == roomId)
+                {
                     RenderMessages(roomId, sinceTs, fallback);
+                    // Re-render reset the list, so return to the latest message.
+                    ScrollMessagesToBottom();
+                }
             }
         }
 
@@ -495,8 +499,25 @@ namespace UniMatrix
 
         private void ScrollMessagesToBottom()
         {
-            if (Messages.Count > 0)
-                MessagesList.ScrollIntoView(Messages[Messages.Count - 1]);
+            if (Messages.Count == 0) return;
+
+            // When a room is first opened the ListView hasn't laid out the freshly-added
+            // items yet, so an immediate ScrollIntoView lands on the wrong spot (or no-ops).
+            // Force a layout pass, scroll, then schedule a second scroll at low priority once
+            // virtualization has realized the last item, so we reliably end at the bottom.
+            var last = Messages[Messages.Count - 1];
+            try
+            {
+                MessagesList.UpdateLayout();
+                MessagesList.ScrollIntoView(last);
+            }
+            catch { }
+
+            var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Low, () =>
+            {
+                try { MessagesList.ScrollIntoView(last); }
+                catch { }
+            });
         }
 
         private void CloseRoom()
