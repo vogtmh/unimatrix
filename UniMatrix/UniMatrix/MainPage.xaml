@@ -273,6 +273,16 @@
                       ItemsSource="{x:Bind Messages}" Padding="8,8"
                       Loaded="MessagesList_Loaded"
                       ScrollViewer.HorizontalScrollMode="Disabled">
+                <!-- Non-virtualizing panel: the in-memory list is capped at one page (~50), so we
+                     can afford to realize every item. This makes the ScrollViewer's ScrollableHeight
+                     exact, which is required for scroll-to-bottom to land on the real last message
+                     instead of stopping a few items short (virtualization estimates trailing item
+                     heights and leaves a constant gap). -->
+                <ListView.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Vertical" />
+                    </ItemsPanelTemplate>
+                </ListView.ItemsPanel>
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
