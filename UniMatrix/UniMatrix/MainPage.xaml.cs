@@ -748,8 +748,13 @@ namespace UniMatrix
             // ScrollIntoView only scrolls *just* enough to make an item visible, and because the
             // ListView virtualizes, a freshly-added item's real height isn't measured yet — so it
             // lands a message or two short of the bottom. Driving the inner ScrollViewer straight
-            // to its maximum offset is reliable. We do it now (after a forced layout) and again at
-            // low priority once virtualization has realized the new item and ExtentHeight grew.
+            // to its maximum offset is reliable.
+            //
+            // The catch: when a room is (re)opened the whole list is rebuilt, and virtualization
+            // realizes off-screen items lazily over SEVERAL layout passes, so ScrollableHeight keeps
+            // growing after the first ChangeView — leaving us parked partway up. A single low-priority
+            // retry isn't enough for a long room. So we re-issue the scroll across a few layout cycles
+            // and stop as soon as we're actually at the bottom (or run out of attempts).
             var last = Messages[Messages.Count - 1];
             try
             {
@@ -761,19 +766,31 @@ namespace UniMatrix
             }
             catch { }
 
+            ScrollToBottomRetry(last, 8);
+        }
+
+        private void ScrollToBottomRetry(Message last, int attemptsLeft)
+        {
+            if (attemptsLeft <= 0) return;
+
             var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Low, () =>
             {
                 try
                 {
-                    if (_messagesScrollViewer != null)
-                    {
-                        _messagesScrollViewer.UpdateLayout();
-                        _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
-                    }
-                    else
+                    if (_messagesScrollViewer == null)
                     {
                         MessagesList.ScrollIntoView(last);
+                        return;
                     }
+
+                    _messagesScrollViewer.UpdateLayout();
+                    double target = _messagesScrollViewer.ScrollableHeight;
+                    _messagesScrollViewer.ChangeView(null, target, null, true);
+
+                    // If virtualization is still realizing items the extent will keep growing and
+                    // we won't be at the bottom yet — keep retrying until we settle there.
+                    if (_messagesScrollViewer.VerticalOffset < target - 4)
+                        ScrollToBottomRetry(last, attemptsLeft - 1);
                 }
                 catch { }
             });
