@@ -161,7 +161,6 @@ namespace UniMatrix
             for (int i = 0; i < rooms.Count; i++)
             {
                 var incoming = rooms[i];
-                ResolveRoomAvatar(incoming);
 
                 Room existing;
                 if (byId.TryGetValue(incoming.Id, out existing))
@@ -172,10 +171,11 @@ namespace UniMatrix
                     existing.UnreadCount = incoming.UnreadCount;
                     existing.LastEventTs = incoming.LastEventTs;
                     existing.LastPreview = incoming.LastPreview;
-                    if (existing.AvatarUrl != incoming.AvatarUrl)
+                    if (existing.AvatarMxc != incoming.AvatarMxc)
                     {
+                        // Avatar changed: drop the resolved URL so it gets re-fetched.
                         existing.AvatarMxc = incoming.AvatarMxc;
-                        existing.AvatarUrl = incoming.AvatarUrl;
+                        existing.AvatarUrl = null;
                     }
                     int currentIndex = Rooms.IndexOf(existing);
                     if (currentIndex != i && i < Rooms.Count)
@@ -196,12 +196,32 @@ namespace UniMatrix
             }
 
             RoomsEmpty.Visibility = Rooms.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+            // Download avatars (and cache them) for rooms that have one but haven't
+            // resolved it yet. On failure the room keeps its colored initial fallback.
+            var _ = LoadRoomAvatarsAsync();
         }
 
-        private void ResolveRoomAvatar(Room room)
+        /// <summary>
+        /// Downloads and caches room avatars via the media service. Only sets AvatarUrl
+        /// when the download succeeds, so rooms whose avatar can't be fetched keep their
+        /// generated initial avatar instead of showing a blank circle.
+        /// </summary>
+        private async Task LoadRoomAvatarsAsync()
         {
-            if (!string.IsNullOrEmpty(room.AvatarMxc))
-                room.AvatarUrl = _client.ResolveThumbnailUrl(room.AvatarMxc, AvatarThumbSize);
+            var pending = Rooms
+                .Where(r => !string.IsNullOrEmpty(r.AvatarMxc) && string.IsNullOrEmpty(r.AvatarUrl))
+                .ToList();
+
+            foreach (var room in pending)
+            {
+                try
+                {
+                    string uri = await _media.GetThumbnailUriAsync(room.AvatarMxc, AvatarThumbSize);
+                    if (!string.IsNullOrEmpty(uri)) room.AvatarUrl = uri;
+                }
+                catch { /* Keep the fallback initial. */ }
+            }
         }
 
         private void RoomsList_ItemClick(object sender, ItemClickEventArgs e)
