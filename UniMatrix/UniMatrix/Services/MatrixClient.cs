@@ -232,15 +232,24 @@ namespace UniMatrix.Services
                 {
                     var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ep.Url));
                     if (ep.UseBearer)
-                        request.Headers.Authorization =
-                            new Windows.Web.Http.Headers.HttpCredentialsHeaderValue("Bearer", _accessToken);
+                    {
+                        // Use an explicit header append rather than the typed Authorization
+                        // property — Windows.Web.Http does not reliably transmit the typed
+                        // property on some builds, which caused 401s on authenticated media.
+                        request.Headers.TryAppendWithoutValidation("Authorization", "Bearer " + _accessToken);
+                    }
 
                     using (var resp = await _http.SendRequestAsync(request))
                     {
                         if (resp.IsSuccessStatusCode)
                             return await resp.Content.ReadAsBufferAsync();
+
+                        string body = "";
+                        try { body = await resp.Content.ReadAsStringAsync(); }
+                        catch { }
+                        if (body != null && body.Length > 160) body = body.Substring(0, 160);
                         App.Log("Media " + (int)resp.StatusCode + (ep.UseBearer ? " [v1]" : " [r0]") +
-                                " " + mxc);
+                                " " + mxc + " :: " + body);
                     }
                 }
                 catch (Exception ex)
