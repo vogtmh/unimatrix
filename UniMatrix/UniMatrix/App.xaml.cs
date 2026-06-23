@@ -101,8 +101,40 @@ namespace UniMatrix
                     rootFrame.Navigate(typeof(MainPage), e.Arguments);
                     LogStartup("MainPage navigated");
                 }
+                else
+                {
+                    // Already running: if this launch came from a tapped toast, open that room now.
+                    if (!string.IsNullOrEmpty(e.Arguments))
+                        MainPage.Current?.HandleToastLaunch(e.Arguments);
+                }
                 Window.Current.Activate();
                 LogStartup("Window activated");
+            }
+        }
+
+        protected override async void OnBackgroundActivated(BackgroundActivatedEventArgs args)
+        {
+            base.OnBackgroundActivated(args);
+
+            var taskInstance = args.TaskInstance;
+            if (taskInstance == null || taskInstance.Task == null ||
+                taskInstance.Task.Name != Services.NotificationTask.TaskName)
+            {
+                return;
+            }
+
+            var deferral = taskInstance.GetDeferral();
+            try
+            {
+                await Services.NotificationTask.RunAsync();
+            }
+            catch
+            {
+                // Never crash the background host on a fetch error.
+            }
+            finally
+            {
+                deferral.Complete();
             }
         }
 

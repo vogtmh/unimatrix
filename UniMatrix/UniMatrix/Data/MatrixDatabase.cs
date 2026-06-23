@@ -55,6 +55,12 @@ namespace UniMatrix.Data
                     last_preview  TEXT
                 )");
 
+            // Migration: add the direct-message flag to pre-existing databases. ALTER TABLE ADD
+            // COLUMN throws "duplicate column" once the column exists, so this is a no-op after the
+            // first run; swallow that case.
+            try { Execute("ALTER TABLE rooms ADD COLUMN is_direct INTEGER NOT NULL DEFAULT 0"); }
+            catch { /* column already present */ }
+
             Execute(@"
                 CREATE TABLE IF NOT EXISTS messages (
                     event_id   TEXT PRIMARY KEY,
@@ -202,7 +208,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview
+                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct
                                     FROM rooms ORDER BY last_ts DESC";
                 using (var r = cmd.ExecuteReader())
                 {
@@ -217,12 +223,62 @@ namespace UniMatrix.Data
                             MemberCount = r.GetInt32(4),
                             UnreadCount = r.GetInt32(5),
                             LastEventTs = r.GetInt64(6),
-                            LastPreview = r.IsDBNull(7) ? null : r.GetString(7)
+                            LastPreview = r.IsDBNull(7) ? null : r.GetString(7),
+                            IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0
                         });
                     }
                 }
             }
             return result;
+        }
+
+        /// <summary>Returns a single room by id, or null if it isn't cached.</summary>
+        public Room GetRoom(string roomId)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct
+                                    FROM rooms WHERE id = @id";
+                cmd.Parameters.AddWithValue("@id", roomId);
+                using (var r = cmd.ExecuteReader())
+                {
+                    if (r.Read())
+                    {
+                        return new Room
+                        {
+                            Id = r.GetString(0),
+                            Name = r.IsDBNull(1) ? null : r.GetString(1),
+                            Topic = r.IsDBNull(2) ? null : r.GetString(2),
+                            AvatarMxc = r.IsDBNull(3) ? null : r.GetString(3),
+                            MemberCount = r.GetInt32(4),
+                            UnreadCount = r.GetInt32(5),
+                            LastEventTs = r.GetInt64(6),
+                            LastPreview = r.IsDBNull(7) ? null : r.GetString(7),
+                            IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Flags (or unflags) a room as a direct message. Driven by the m.direct account-data map,
+        /// which lists every room the user treats as a 1:1 chat. Stored separately from UpsertRoom
+        /// (whose COALESCE merge would complicate a boolean) so it's never accidentally cleared by a
+        /// state-light sync update.
+        /// </summary>
+        public void SetRoomDirect(string roomId, bool isDirect)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE rooms SET is_direct = @d WHERE id = @id";
+                cmd.Parameters.AddWithValue("@d", isDirect ? 1 : 0);
+                cmd.Parameters.AddWithValue("@id", roomId);
+                cmd.ExecuteNonQuery();
+            }
         }
 
         // ---- Messages ----
@@ -335,6 +391,29 @@ namespace UniMatrix.Data
                 cmd.Parameters.AddWithValue("@room", roomId);
                 return cmd.ExecuteScalar() as string;
             }
+        }
+
+        /// <summary>
+        /// Returns the newest real (non-echo) message in a room that was NOT sent by
+        /// <paramref name="myUserId"/>, or null if there is none. Used by the notification task so
+        /// we only ever notify about messages from other people, never our own.
+        /// </summary>
+        public Message GetLatestIncomingMessage(string roomId, string myUserId)
+        {
+            var result = new List<Message>();
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                                    FROM messages
+                                    WHERE room_id = @room AND local_echo = 0
+                                      AND (sender IS NULL OR sender <> @me)
+                                    ORDER BY ts DESC LIMIT 1";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                cmd.Parameters.AddWithValue("@me", (object)myUserId ?? "");
+                ReadMessages(cmd, result);
+            }
+            return result.Count > 0 ? result[0] : null;
         }
 
         /// <summary>Newest stored message timestamp for a room (0 if none). Diagnostics.</summary>

@@ -647,6 +647,18 @@
                                   OffContent="UniMatrix green" OnContent="System accent"
                                   Foreground="White" Toggled="UseAccentToggle_Toggled" />
 
+                    <TextBlock Text="NOTIFICATIONS" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                    <ToggleSwitch x:Name="NotifyDirectToggle" Header="Notify for direct messages"
+                                  OffContent="Off" OnContent="On"
+                                  Foreground="White" Toggled="NotifyDirectToggle_Toggled" />
+                    <ToggleSwitch x:Name="NotifyGroupsToggle" Header="Notify for group rooms"
+                                  OffContent="Off" OnContent="On"
+                                  Foreground="White" Toggled="NotifyGroupsToggle_Toggled" Margin="0,8,0,0" />
+                    <TextBlock Text="Checked about every 15 minutes in the background."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,4,0,0" TextWrapping="Wrap" />
+
                     <TextBlock Text="MAINTENANCE" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
                     <TextBlock x:Name="StorageUsage" Text="Calculating storage…"

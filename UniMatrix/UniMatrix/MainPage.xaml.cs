@@ -33,6 +33,10 @@ namespace UniMatrix
         private string _currentRoomId;
         private bool _initialized;
 
+        // When the app is launched (or activated) by tapping a message toast, the room id to open
+        // is stashed here until the room list is ready, then opened.
+        private string _pendingLaunchRoomId;
+
         /// <summary>Signals completion of the first /sync pass so the splash can dismiss.</summary>
         private TaskCompletionSource<bool> _firstSyncTcs;
 
@@ -123,6 +127,52 @@ namespace UniMatrix
         {
             base.OnNavigatedTo(e);
             SystemNavigationManager.GetForCurrentView().BackRequested += OnBackRequested;
+
+            // A toast launch passes its argument ("room=<id>") here as the navigation parameter.
+            string roomId = ParseRoomLaunchArg(e.Parameter as string);
+            if (!string.IsNullOrEmpty(roomId)) _pendingLaunchRoomId = roomId;
+        }
+
+        /// <summary>Extracts the room id from a toast launch argument ("room=&lt;id&gt;"), or null.</summary>
+        private static string ParseRoomLaunchArg(string arg)
+        {
+            if (string.IsNullOrEmpty(arg)) return null;
+            const string prefix = "room=";
+            if (arg.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                string id = arg.Substring(prefix.Length);
+                return string.IsNullOrEmpty(id) ? null : id;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Handles a toast tap while the app is already running: opens the referenced room
+        /// immediately if the room list is ready, otherwise stashes it for after initialization.
+        /// </summary>
+        public void HandleToastLaunch(string arg)
+        {
+            string roomId = ParseRoomLaunchArg(arg);
+            if (string.IsNullOrEmpty(roomId)) return;
+
+            if (_initialized) OpenRoomById(roomId);
+            else _pendingLaunchRoomId = roomId;
+        }
+
+        /// <summary>Opens a room by id, preferring the bound instance and falling back to the cache.</summary>
+        private void OpenRoomById(string roomId)
+        {
+            if (string.IsNullOrEmpty(roomId)) return;
+
+            Room room = null;
+            foreach (var r in Rooms)
+            {
+                if (r.Id == roomId) { room = r; break; }
+            }
+            if (room == null) room = _db.GetRoom(roomId);
+            if (room == null) return;
+
+            OpenRoom(room);
         }
 
         private async void MainPage_Loaded(object sender, RoutedEventArgs e)
@@ -170,6 +220,17 @@ namespace UniMatrix
                 // /sync finish in the background (the sync LED shows its progress). No need to sit
                 // on a "Logging in…" animation waiting for the network.
                 ShowView(View.RoomList);
+
+                // Keep the periodic message-notification background task registered while signed in.
+                var _ = NotificationTask.RegisterAsync();
+
+                // If we were launched by tapping a message toast, open that room now.
+                if (!string.IsNullOrEmpty(_pendingLaunchRoomId))
+                {
+                    string pending = _pendingLaunchRoomId;
+                    _pendingLaunchRoomId = null;
+                    OpenRoomById(pending);
+                }
             }
             else
             {
@@ -269,6 +330,7 @@ namespace UniMatrix
                     existing.UnreadCount = incoming.UnreadCount;
                     existing.LastEventTs = incoming.LastEventTs;
                     existing.LastPreview = incoming.LastPreview;
+                    existing.IsDirect = incoming.IsDirect;
                     if (existing.AvatarMxc != incoming.AvatarMxc)
                     {
                         // Avatar changed: drop the resolved URL so it gets re-fetched.

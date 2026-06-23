@@ -21,6 +21,10 @@ namespace UniMatrix.Models
         public string Topic { get; set; }
         public string AvatarMxc { get; set; }
 
+        /// <summary>True when this room is a direct (1:1) message, per the m.direct account data.
+        /// Drives the per-type notification toggles (DMs vs group rooms).</summary>
+        public bool IsDirect { get; set; }
+
         private string _avatarUrl;
         /// <summary>Resolved https:// URL for the room avatar, or null when unset.</summary>
         public string AvatarUrl

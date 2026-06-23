@@ -20,6 +20,9 @@ namespace UniMatrix.Services
         private const string SetupCompleteKey = "matrix_setup_complete";
         private const string UseSystemAccentKey = "use_system_accent";
 
+        private const string NotifyDirectKey = "notify_direct_messages";
+        private const string NotifyGroupsKey = "notify_group_rooms";
+
         /// <summary>
         /// When a room has had no activity within the history window, show at least this
         /// many of the most recent real messages so the chat is never empty.
@@ -79,6 +82,30 @@ namespace UniMatrix.Services
                 return true; // System accent by default.
             }
             set { _local.Values[UseSystemAccentKey] = value; }
+        }
+
+        /// <summary>Notify for incoming direct (1:1) messages. Enabled by default.</summary>
+        public bool NotifyDirectMessages
+        {
+            get
+            {
+                if (_local.Values.ContainsKey(NotifyDirectKey))
+                    return (bool)_local.Values[NotifyDirectKey];
+                return true; // DMs on by default.
+            }
+            set { _local.Values[NotifyDirectKey] = value; }
+        }
+
+        /// <summary>Notify for incoming messages in group rooms. Disabled by default.</summary>
+        public bool NotifyGroupRooms
+        {
+            get
+            {
+                if (_local.Values.ContainsKey(NotifyGroupsKey))
+                    return (bool)_local.Values[NotifyGroupsKey];
+                return false; // Groups off by default.
+            }
+            set { _local.Values[NotifyGroupsKey] = value; }
         }
 
         /// <summary>Returns the stored access token, or null if the user is not logged in.</summary>

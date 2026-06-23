@@ -20,6 +20,9 @@ namespace UniMatrix
 
             UseAccentToggle.IsOn = _settings.UseSystemAccent;
 
+            NotifyDirectToggle.IsOn = _settings.NotifyDirectMessages;
+            NotifyGroupsToggle.IsOn = _settings.NotifyGroupRooms;
+
             ShowView(View.Settings);
 
             // Compute on-disk usage off the UI thread; update the label when ready.
@@ -119,6 +122,9 @@ namespace UniMatrix
             ShowView(View.RoomList);
             LoadRoomsFromCache();
             StartSync();
+
+            // Start the periodic message-notification background task now that we're signed in.
+            var _ = Services.NotificationTask.RegisterAsync();
         }
 
         private void UseAccentToggle_Toggled(object sender, RoutedEventArgs e)
@@ -126,6 +132,34 @@ namespace UniMatrix
             if (_settings == null) return;
             _settings.UseSystemAccent = UseAccentToggle.IsOn;
             Services.ThemeService.Apply(UseAccentToggle.IsOn);
+        }
+
+        private void NotifyDirectToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.NotifyDirectMessages = NotifyDirectToggle.IsOn;
+            UpdateNotificationTaskRegistration();
+        }
+
+        private void NotifyGroupsToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.NotifyGroupRooms = NotifyGroupsToggle.IsOn;
+            UpdateNotificationTaskRegistration();
+        }
+
+        /// <summary>Registers the background notification task when at least one type is enabled,
+        /// and unregisters it when both are off (no point waking up to do nothing).</summary>
+        private void UpdateNotificationTaskRegistration()
+        {
+            if (_settings.NotifyDirectMessages || _settings.NotifyGroupRooms)
+            {
+                var _ = Services.NotificationTask.RegisterAsync();
+            }
+            else
+            {
+                Services.NotificationTask.Unregister();
+            }
         }
 
         private async void LogoutButton_Click(object sender, RoutedEventArgs e)
@@ -142,6 +176,9 @@ namespace UniMatrix
 
             StopSync();
             try { await _client.LogoutAsync(); } catch { }
+
+            // Stop background notifications for the signed-out account.
+            Services.NotificationTask.Unregister();
 
             _settings.ClearAccessToken();
             _settings.UserId = null;

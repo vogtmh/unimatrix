@@ -67,8 +67,9 @@ namespace UniMatrix
                 // The room normally appears on the next /sync, but jump straight in: persist a
                 // minimal placeholder (named after the invitee until membership syncs) so it shows
                 // in the list and can be opened now, then refresh + open it with a short animation.
-                var placeholder = new Room { Id = roomId, Name = DirectChatLocalPart(userId) };
+                var placeholder = new Room { Id = roomId, Name = DirectChatLocalPart(userId), IsDirect = true };
                 _db.UpsertRoom(placeholder);
+                _db.SetRoomDirect(roomId, true);
                 RefreshRooms();
 
                 Room room = null;

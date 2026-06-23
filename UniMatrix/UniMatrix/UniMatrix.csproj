@@ -123,6 +123,8 @@
     <Compile Include="Services\MediaService.cs" />
     <Compile Include="Services\PreferencesService.cs" />
     <Compile Include="Services\ThemeService.cs" />
+    <Compile Include="Services\ToastService.cs" />
+    <Compile Include="Services\NotificationTask.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Properties\Default.rd.xml" />

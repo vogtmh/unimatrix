@@ -36,6 +36,10 @@ namespace UniMatrix.Services
 
             result.NextBatch = MatrixClient.GetString(sync, "next_batch");
 
+            // Account data carries the m.direct map (which rooms are 1:1 DMs). It only appears in a
+            // sync when it changes, so process it whenever present and flag the listed rooms.
+            ProcessAccountData(GetObject(sync, "account_data"));
+
             JsonObject rooms = GetObject(sync, "rooms");
             if (rooms == null) return result;
 
@@ -58,6 +62,48 @@ namespace UniMatrix.Services
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Parses the top-level account_data for the m.direct event, which maps each user id to the
+        /// list of room ids the user treats as a direct (1:1) chat. Every listed room is flagged as
+        /// direct in the database so the UI and the notification toggles can distinguish DMs from
+        /// group rooms. Rooms not listed are left as-is (un-marking a DM is rare and not signalled
+        /// reliably, so we don't clear the flag here).
+        /// </summary>
+        private void ProcessAccountData(JsonObject accountData)
+        {
+            JsonArray events = GetArray(accountData, "events");
+            if (events == null) return;
+
+            foreach (var evVal in events)
+            {
+                try
+                {
+                    JsonObject ev = evVal.GetObject();
+                    if (MatrixClient.GetString(ev, "type") != "m.direct") continue;
+
+                    JsonObject content = GetObject(ev, "content");
+                    if (content == null) continue;
+
+                    // content is { "@user:server": ["!room1", "!room2"], ... }
+                    foreach (var userId in content.Keys)
+                    {
+                        if (content[userId].ValueType != JsonValueType.Array) continue;
+                        foreach (var roomVal in content.GetNamedArray(userId))
+                        {
+                            if (roomVal.ValueType != JsonValueType.String) continue;
+                            string roomId = roomVal.GetString();
+                            if (!string.IsNullOrEmpty(roomId))
+                                _db.SetRoomDirect(roomId, true);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log("SYNC m.direct parse error: " + ex.Message);
+                }
+            }
         }
 
         private void ProcessJoinedRoom(string roomId, JsonObject roomObj, SyncResult result)
