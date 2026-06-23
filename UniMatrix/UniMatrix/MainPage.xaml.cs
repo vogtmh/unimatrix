@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Windows.System;
 using Windows.UI;
 using Windows.UI.Core;
+using Windows.UI.ViewManagement;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Media;
@@ -76,6 +77,31 @@ namespace UniMatrix
             Current = this;
             this.Loaded += MainPage_Loaded;
             App.LogLine += OnLogLine;
+
+            // Keep the focused login field above the on-screen keyboard. The soft keyboard
+            // occludes the bottom of the screen, so shrink the login scroll area to the space
+            // above it; the ScrollViewer then brings the focused field into view automatically.
+            var inputPane = InputPane.GetForCurrentView();
+            inputPane.Showing += InputPane_Showing;
+            inputPane.Hiding += InputPane_Hiding;
+        }
+
+        private void InputPane_Showing(InputPane sender, InputPaneVisibilityEventArgs args)
+        {
+            if (LoginScroll != null)
+            {
+                LoginScroll.Margin = new Thickness(0, 0, 0, args.OccludedRect.Height);
+            }
+            args.EnsuredFocusedElementInView = true;
+        }
+
+        private void InputPane_Hiding(InputPane sender, InputPaneVisibilityEventArgs args)
+        {
+            if (LoginScroll != null)
+            {
+                LoginScroll.Margin = new Thickness(0);
+            }
+            args.EnsuredFocusedElementInView = true;
         }
 
         protected override void OnNavigatedTo(NavigationEventArgs e)
