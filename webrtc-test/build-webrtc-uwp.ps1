@@ -160,6 +160,13 @@ function Invoke-PrereqCheck {
     Require (Test-WindowsSdk "10.0.17763.0") "Windows SDK 10.0.17763 present" `
         "Windows SDK 10.0.17763 missing. Used by the UWP wrappers. Install it (with 'Debugging Tools for Windows') from the SDK archive page."
 
+    # Debugging Tools for Windows - run.py's prepare step ABORTS with
+    # "Windows SDK debug tools are missing!" if this optional SDK feature is absent.
+    $dbg = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers"
+    $haveDbg = (Test-Path (Join-Path $dbg "x86\windbg.exe")) -or (Test-Path (Join-Path $dbg "x64\windbg.exe"))
+    Require $haveDbg "Debugging Tools for Windows present ($dbg)" `
+        "Debugging Tools for Windows MISSING. run.py aborts with 'Windows SDK debug tools are missing!'. Fix: Settings > Apps > 'Windows Software Development Kit' > Modify > check 'Debugging Tools for Windows', for BOTH 10.0.17134 and 10.0.17763."
+
     # Python 2.7 - depot_tools/gn era. Python 3 will break the prepare scripts.
     # NOTE: Python 2.7 prints its version to STDERR. We must NOT let ErrorActionPreference=Stop
     # turn that stderr write into a terminating error, so query it carefully.

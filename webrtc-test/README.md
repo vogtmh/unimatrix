@@ -98,9 +98,18 @@ If you prefer the GUI for the first run (often easier to read errors):
 
 ## Known failure modes (and what they mean)
 
+- **`Windows SDK debug tools are missing!`** (run.py aborts in ~2 s, MSB3073 / exit code 4) → the
+  **Debugging Tools for Windows** SDK feature isn't installed. Fix: *Settings → Apps → "Windows
+  Software Development Kit" → Modify → check "Debugging Tools for Windows"* — for **both** the
+  10.0.17134 and 10.0.17763 SDKs. This is separate from the base SDK and is the most common first
+  failure.
+- **`The current .NET SDK does not support targeting .NET Standard 2.0`**
+  (`Org.WebRtc.Callstats.csproj`) → that project is optional telemetry, not needed for a call test.
+  Either install a modern .NET SDK, or unload/skip `Org.WebRtc.Callstats` and build only the native
+  `Org.WebRtc` + `PeerConnectionClient.WebRtc` projects.
 - **`MAX_PATH` / "file name too long"** → repo path too deep. Re-clone to `C:\webrtc-uwp`.
-- **gn/ninja or gclient errors during the first build** → almost always Python (must be 2.7.15
-  first on PATH) or a missing Windows SDK 17134/17763 with Debugging Tools.
+- **gn/ninja or gclient errors during the first build** → almost always Python (must be 2.7.x first
+  on PATH) or a missing Windows SDK 17134/17763.
 - **`v141` toolset / SDK not found** → VS2017 or one of the two Windows SDKs isn't installed.
 - **BoringSSL build errors** → Strawberry Perl missing from PATH.
 - **googlesource/depot_tools download failures** → network/proxy, or the deprecated pinned URLs
