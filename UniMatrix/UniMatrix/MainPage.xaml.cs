@@ -213,14 +213,27 @@ namespace UniMatrix
                 .Where(r => !string.IsNullOrEmpty(r.AvatarMxc) && string.IsNullOrEmpty(r.AvatarUrl))
                 .ToList();
 
+            App.Log("Avatars: " + pending.Count + " room(s) need fetching.");
             foreach (var room in pending)
             {
                 try
                 {
+                    App.Log("Avatar fetch '" + room.DisplayName + "' mxc=" + room.AvatarMxc);
                     string uri = await _media.GetThumbnailUriAsync(room.AvatarMxc, AvatarThumbSize);
-                    if (!string.IsNullOrEmpty(uri)) room.AvatarUrl = uri;
+                    if (!string.IsNullOrEmpty(uri))
+                    {
+                        room.AvatarUrl = uri;
+                        App.Log("Avatar OK '" + room.DisplayName + "' -> " + uri);
+                    }
+                    else
+                    {
+                        App.Log("Avatar FAILED '" + room.DisplayName + "' (null uri, using initial)");
+                    }
                 }
-                catch { /* Keep the fallback initial. */ }
+                catch (Exception ex)
+                {
+                    App.Log("Avatar EXC '" + room.DisplayName + "': " + ex.Message);
+                }
             }
         }
 

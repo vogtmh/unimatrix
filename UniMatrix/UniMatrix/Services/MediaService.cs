@@ -59,7 +59,13 @@ namespace UniMatrix.Services
 
             try
             {
-                var buffer = await _http.GetBufferAsync(new Uri(url));
+                var response = await _http.GetAsync(new Uri(url));
+                if (!response.IsSuccessStatusCode)
+                {
+                    App.Log("Media HTTP " + (int)response.StatusCode + " for " + mxc);
+                    return null;
+                }
+                var buffer = await response.Content.ReadAsBufferAsync();
                 var folder = await GetFolderAsync();
                 string fileName = SafeFileName(mxc) + ".img";
                 var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
@@ -69,8 +75,9 @@ namespace UniMatrix.Services
                 _db.SetCachedMedia(mxc, appUri);
                 return appUri;
             }
-            catch
+            catch (Exception ex)
             {
+                App.Log("Media EXC for " + mxc + ": " + ex.Message);
                 return null;
             }
         }
