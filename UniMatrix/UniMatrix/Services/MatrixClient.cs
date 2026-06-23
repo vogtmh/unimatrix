@@ -198,25 +198,57 @@ namespace UniMatrix.Services
         // ---- Media ----
 
         /// <summary>
-        /// Resolves an mxc:// URL to a downloadable https thumbnail URL.
-        /// Returns null for non-mxc input.
+        /// Downloads media bytes for an mxc:// URL, returning null on failure.
+        /// matrix.org now serves newer media only via the authenticated media API
+        /// (/_matrix/client/v1/media, requires a Bearer token), while older media is
+        /// still on the legacy unauthenticated /_matrix/media/r0 endpoints. We try the
+        /// authenticated thumbnail/download first, then fall back to the legacy ones,
+        /// so both old and new media resolve.
         /// </summary>
-        public string ResolveThumbnailUrl(string mxc, int size)
+        public async Task<Windows.Storage.Streams.IBuffer> FetchMediaAsync(string mxc, int size)
         {
             string serverAndId = ParseMxc(mxc);
             if (serverAndId == null) return null;
-            return _baseUrl + "/_matrix/media/r0/thumbnail/" + serverAndId +
-                   "?width=" + size + "&height=" + size + "&method=scale" +
-                   "&access_token=" + Uri.EscapeDataString(_accessToken);
-        }
 
-        /// <summary>Resolves an mxc:// URL to the full-resolution https download URL.</summary>
-        public string ResolveDownloadUrl(string mxc)
-        {
-            string serverAndId = ParseMxc(mxc);
-            if (serverAndId == null) return null;
-            return _baseUrl + "/_matrix/media/r0/download/" + serverAndId +
-                   "?access_token=" + Uri.EscapeDataString(_accessToken);
+            // Ordered candidates: (url, useBearerAuth). Authenticated v1 first.
+            // matrix.org accepts the access_token as a query param on v1 too; we also
+            // send the Bearer header for spec-compliant servers.
+            string tok = Uri.EscapeDataString(_accessToken);
+            var candidates = new[]
+            {
+                new MediaEndpoint(_baseUrl + "/_matrix/client/v1/media/thumbnail/" + serverAndId +
+                    "?width=" + size + "&height=" + size + "&method=scale&access_token=" + tok, true),
+                new MediaEndpoint(_baseUrl + "/_matrix/client/v1/media/download/" + serverAndId +
+                    "?access_token=" + tok, true),
+                new MediaEndpoint(_baseUrl + "/_matrix/media/r0/thumbnail/" + serverAndId +
+                    "?width=" + size + "&height=" + size + "&method=scale&access_token=" + tok, false),
+                new MediaEndpoint(_baseUrl + "/_matrix/media/r0/download/" + serverAndId +
+                    "?access_token=" + tok, false),
+            };
+
+            foreach (var ep in candidates)
+            {
+                try
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ep.Url));
+                    if (ep.UseBearer)
+                        request.Headers.Authorization =
+                            new Windows.Web.Http.Headers.HttpCredentialsHeaderValue("Bearer", _accessToken);
+
+                    using (var resp = await _http.SendRequestAsync(request))
+                    {
+                        if (resp.IsSuccessStatusCode)
+                            return await resp.Content.ReadAsBufferAsync();
+                        App.Log("Media " + (int)resp.StatusCode + (ep.UseBearer ? " [v1]" : " [r0]") +
+                                " " + mxc);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log("Media EXC " + (ep.UseBearer ? "[v1] " : "[r0] ") + mxc + ": " + ex.Message);
+                }
+            }
+            return null;
         }
 
         private static string ParseMxc(string mxc)
@@ -225,6 +257,18 @@ namespace UniMatrix.Services
                 return null;
             // mxc://server/mediaId  ->  server/mediaId
             return mxc.Substring(6);
+        }
+
+        /// <summary>A media URL candidate and whether it needs a Bearer auth header.</summary>
+        private struct MediaEndpoint
+        {
+            public readonly string Url;
+            public readonly bool UseBearer;
+            public MediaEndpoint(string url, bool useBearer)
+            {
+                Url = url;
+                UseBearer = useBearer;
+            }
         }
 
         // ---- HTTP helpers ----
