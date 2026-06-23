@@ -320,6 +320,23 @@ namespace UniMatrix.Data
             }
         }
 
+        /// <summary>
+        /// Returns the event id of the newest real (non-local-echo) message in a room, or null if
+        /// the room has no confirmed messages. Used to send a read receipt up to the latest event.
+        /// </summary>
+        public string GetLatestRealEventId(string roomId)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT event_id FROM messages
+                                    WHERE room_id = @room AND local_echo = 0
+                                    ORDER BY ts DESC LIMIT 1";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                return cmd.ExecuteScalar() as string;
+            }
+        }
+
         /// <summary>Newest stored message timestamp for a room (0 if none). Diagnostics.</summary>
         public long GetNewestMessageTs(string roomId)
         {

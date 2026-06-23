@@ -38,6 +38,10 @@ namespace UniMatrix.Services
             set { _accessToken = value; }
         }
 
+        /// <summary>The logged-in user's Matrix id (e.g. "@me:matrix.org"). Set on login/restore;
+        /// used for account-data calls such as the m.direct DM map.</summary>
+        public string UserId { get; set; }
+
         /// <summary>The homeserver base URL, e.g. https://matrix.org (no trailing slash).</summary>
         public string BaseUrl => _baseUrl;
 
@@ -97,6 +101,7 @@ namespace UniMatrix.Services
                 DeviceId = GetString(resp, "device_id")
             };
             _accessToken = result.AccessToken;
+            UserId = result.UserId;
             return result;
         }
 
@@ -252,6 +257,20 @@ namespace UniMatrix.Services
 
             var resp = await PutAsync(path, content);
             return GetString(resp, "event_id");
+        }
+
+        /// <summary>
+        /// Sends an m.read receipt up to <paramref name="eventId"/>, telling the homeserver the
+        /// user has read the room up to that event. This resets the room's server-side
+        /// notification_count, so subsequent /sync passes stop reporting it as unread (otherwise
+        /// the unread badge reappears every sync/relaunch even after the user has read it).
+        /// </summary>
+        public async Task SendReadReceiptAsync(string roomId, string eventId)
+        {
+            if (string.IsNullOrEmpty(roomId) || string.IsNullOrEmpty(eventId)) return;
+            string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
+                          "/receipt/m.read/" + Uri.EscapeDataString(eventId);
+            await PostAsync(path, new JsonObject(), requireAuth: true);
         }
 
         public async Task<string> CreateRoomAsync(string name, bool isPublic)

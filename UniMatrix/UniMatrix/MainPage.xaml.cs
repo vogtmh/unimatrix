@@ -153,6 +153,7 @@ namespace UniMatrix
             {
                 // Restore an existing session without flashing the login form.
                 _client.AccessToken = token;
+                _client.UserId = _settings.UserId;
                 _syncProcessor = new SyncProcessor(_db, _settings.UserId);
 
                 // The splash only needs to cover the brief local DB/cache load so the login form
@@ -367,12 +368,10 @@ namespace UniMatrix
             ChatRoomName.Text = room.DisplayName;
             ChatRoomMembers.Text = room.MemberText;
 
-            // Clear unread locally and in cache.
-            if (room.UnreadCount > 0)
-            {
-                room.UnreadCount = 0;
-                _db.SetRoomUnread(room.Id, 0);
-            }
+            // Clear unread locally and tell the server we've read the room (a read receipt resets
+            // the server-side notification_count, so the badge doesn't reappear on the next sync).
+            room.UnreadCount = 0;
+            MarkRoomReadAsync(room.Id);
 
             ShowView(View.Chat);
             App.Log("PERF open: ShowView done @" + _openWatch.ElapsedMilliseconds + "ms");
@@ -944,6 +943,37 @@ namespace UniMatrix
             if (atBottom) ScrollMessagesToBottom();
         }
 
+        /// <summary>
+        /// Marks a room as read: clears the local unread badge (DB + bound Room) and sends an
+        /// m.read receipt up to the newest event so the homeserver stops counting it as unread.
+        /// Without the receipt the server keeps reporting notification_count &gt; 0 and the badge
+        /// reappears on the next /sync even though the user has already read the room.
+        /// </summary>
+        private async void MarkRoomReadAsync(string roomId)
+        {
+            if (string.IsNullOrEmpty(roomId)) return;
+
+            // Local clear first (synchronous, so the badge updates immediately and a following
+            // RefreshRooms reads 0 from the DB instead of the server's stale count).
+            _db.SetRoomUnread(roomId, 0);
+            foreach (var r in Rooms)
+            {
+                if (r.Id == roomId) { r.UnreadCount = 0; break; }
+            }
+
+            // Tell the server (best effort: a failed receipt must never disrupt the UI).
+            try
+            {
+                string eventId = _db.GetLatestRealEventId(roomId);
+                if (!string.IsNullOrEmpty(eventId))
+                    await _client.SendReadReceiptAsync(roomId, eventId);
+            }
+            catch (Exception ex)
+            {
+                App.Log("Read receipt failed (" + roomId + "): " + ex.Message);
+            }
+        }
+
         /// <summary>True when the message list is at (or within a small threshold of) the bottom.</summary>
         private bool IsScrolledToBottom()
         {
@@ -1011,9 +1041,10 @@ namespace UniMatrix
                 }
                 catch { }
 
-                // The bulk page is laid out and scrolled into place now; re-enable the fade so
-                // genuinely new (live) messages arriving via sync still animate in.
-                if (attemptsLeft == 1) SetMessageTransitions(true);
+                // Note: we intentionally do NOT re-enable item transitions for live messages.
+                // The entrance/reposition animation made incoming messages (especially several at
+                // once) look like the whole list was redrawing. Keeping transitions off makes a new
+                // message simply appear at the end, which is the expected chat behavior.
                 ScrollToBottomPass(last, attemptsLeft - 1);
             });
         }
@@ -1222,6 +1253,13 @@ namespace UniMatrix
 
                     if (result.HasChanges)
                     {
+                        // If new events landed in the room the user is currently viewing, they are
+                        // effectively read: clear the unread (and send a read receipt) BEFORE
+                        // RefreshRooms so it doesn't repaint a stale badge for the open room.
+                        if (_activeView == View.Chat && _currentRoomId != null &&
+                            result.ChangedRooms.Contains(_currentRoomId))
+                            MarkRoomReadAsync(_currentRoomId);
+
                         if (_activeView == View.RoomList || _activeView == View.Chat)
                             RefreshRooms();
                         if (_currentRoomId != null && result.ChangedRooms.Contains(_currentRoomId))
