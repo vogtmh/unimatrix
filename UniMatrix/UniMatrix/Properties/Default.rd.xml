@@ -1,0 +1,19 @@
+<!--
+    This file contains Runtime Directives used by .NET Native. The defaults here are suitable for most
+    developers. However, you can modify these parameters to modify the behavior of the .NET Native
+    optimizer.
+
+    Runtime Directives are documented at https://go.microsoft.com/fwlink/?LinkID=391919
+-->
+
+<Directives xmlns="http://schemas.microsoft.com/netfx/2013/01/metadata">
+  <Application>
+    <Assembly Name="*Application*" Dynamic="Required All" />
+    <!-- Ensure SQLitePCLRaw interop types are preserved -->
+    <Assembly Name="SQLitePCLRaw.core" Dynamic="Required All" />
+    <Assembly Name="SQLitePCLRaw.provider.winsqlite3" Dynamic="Required All" />
+    <Assembly Name="SQLitePCLRaw.batteries_v2" Dynamic="Required All" />
+    <Assembly Name="SQLitePCLRaw.nativelibrary" Dynamic="Required All" />
+    <Assembly Name="Microsoft.Data.Sqlite" Dynamic="Required All" />
+  </Application>
+</Directives>

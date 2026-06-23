@@ -1,3 +1,41 @@
-AppPackages
-bin
-bld
+# Build output
+[Bb]in/
+[Oo]bj/
+[Bb]ld/
+[Dd]ebug/
+[Rr]elease/
+AppPackages/
+BundleArtifacts/
+*.appx
+*.appxbundle
+*.appxupload
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.VC.db
+*.VC.opendb
+
+# Generated build info (regenerated on each build)
+**/Properties/BuildInfo.cs
+
+# Signing certificates / keys (should never be committed)
+*.pfx
+*.snk
+
+# NuGet
+packages/
+*.nupkg
+
+# Local app/runtime data
+*.db
+*.db-wal
+*.db-shm
+startup.log
+
+# OS files
+.DS_Store
+Thumbs.db

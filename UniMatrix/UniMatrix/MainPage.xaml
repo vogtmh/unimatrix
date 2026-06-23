@@ -1,0 +1,349 @@
+<Page
+    x:Class="UniMatrix.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:UniMatrix"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.microsoft.com/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Background="{StaticResource AppBackgroundBrush}">
+
+    <Grid>
+
+        <!-- ============================ LOGIN ============================ -->
+        <Grid x:Name="LoginPanel" Background="{StaticResource AppBackgroundBrush}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            MaxWidth="420" Padding="24,48">
+                    <Image Source="ms-appx:///Assets/unimatrix_banner.png" Stretch="Uniform"
+                           MaxWidth="280" HorizontalAlignment="Center" />
+                    <TextBlock Text="Matrix chat for Windows Mobile" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="14" HorizontalAlignment="Center" Margin="0,8,0,32" />
+
+                    <TextBlock Text="HOMESERVER" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="2,0,0,4" />
+                    <TextBox x:Name="LoginServerBox" Text="matrix.org" Margin="0,0,0,16"
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+
+                    <TextBlock Text="USERNAME" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="2,0,0,4" />
+                    <TextBox x:Name="LoginUserBox" PlaceholderText="user" Margin="0,0,0,16"
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+
+                    <TextBlock Text="PASSWORD" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="2,0,0,4" />
+                    <PasswordBox x:Name="LoginPassBox" Margin="0,0,0,24"
+                                 Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+
+                    <Button x:Name="LoginButton" Content="Sign in" Click="LoginButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12"
+                            Background="{StaticResource AppAccentBrush}" Foreground="White"
+                            FontSize="16" FontWeight="SemiBold" />
+
+                    <TextBlock x:Name="LoginError" Foreground="#FF6B6B" FontSize="13"
+                               TextWrapping="Wrap" Margin="0,16,0,0" Visibility="Collapsed" />
+                    <ProgressRing x:Name="LoginProgress" Width="32" Height="32" Margin="0,16,0,0"
+                                  Foreground="{StaticResource AppAccentBrush}" IsActive="False" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ========================= ROOM LIST ========================= -->
+        <Grid x:Name="RoomListView" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="14,8" Height="52">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Ellipse Grid.Column="0" x:Name="SyncLed" Width="10" Height="10"
+                         Fill="#777777" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <TextBlock Grid.Column="1" Text="UniMatrix" Foreground="White"
+                           FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Button Grid.Column="2" Click="NewRoomButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="10" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="18" Foreground="White" />
+                </Button>
+                <Button Grid.Column="3" Click="SettingsButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="10" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE713;" FontSize="18" Foreground="White" />
+                </Button>
+            </Grid>
+
+            <!-- Rooms -->
+            <ListView Grid.Row="1" x:Name="RoomsList" SelectionMode="None"
+                      IsItemClickEnabled="True" ItemClick="RoomsList_ItemClick"
+                      ItemsSource="{x:Bind Rooms}"
+                      ScrollViewer.HorizontalScrollMode="Disabled">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="14,10" Background="Transparent">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Avatar -->
+                            <Grid Grid.Column="0" Width="48" Height="48" Margin="0,0,12,0">
+                                <Ellipse Fill="{Binding AvatarBrush}" Visibility="{Binding InitialVisibility}" />
+                                <TextBlock Text="{Binding AvatarInitial}" Foreground="White"
+                                           FontSize="20" FontWeight="SemiBold"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{Binding InitialVisibility}" />
+                                <Ellipse Visibility="{Binding AvatarVisibility}">
+                                    <Ellipse.Fill>
+                                        <ImageBrush ImageSource="{Binding AvatarUrl}" Stretch="UniformToFill" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
+                            </Grid>
+
+                            <!-- Name + preview -->
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding DisplayName}" Foreground="White"
+                                           FontSize="16" FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" MaxLines="1" />
+                                <TextBlock Text="{Binding LastPreview}" Foreground="{StaticResource AppSubtleTextBrush}"
+                                           FontSize="13" TextTrimming="CharacterEllipsis" MaxLines="1"
+                                           Margin="0,2,0,0" />
+                            </StackPanel>
+
+                            <!-- Unread badge -->
+                            <Border Grid.Column="2" Background="{StaticResource AppAccentBrush}"
+                                    CornerRadius="11" MinWidth="22" Height="22" Padding="7,0"
+                                    VerticalAlignment="Center" Visibility="{Binding UnreadVisibility}">
+                                <TextBlock Text="{Binding UnreadText}" Foreground="White" FontSize="12"
+                                           FontWeight="SemiBold" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <!-- Empty state -->
+            <StackPanel Grid.Row="1" x:Name="RoomsEmpty" VerticalAlignment="Center"
+                        HorizontalAlignment="Center" Visibility="Collapsed">
+                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE8BD;" FontSize="48"
+                          Foreground="{StaticResource AppFaintTextBrush}" HorizontalAlignment="Center" />
+                <TextBlock Text="No rooms yet" Foreground="{StaticResource AppSubtleTextBrush}"
+                           FontSize="16" HorizontalAlignment="Center" Margin="0,12,0,0" />
+            </StackPanel>
+        </Grid>
+
+        <!-- =========================== CHAT =========================== -->
+        <Grid x:Name="ChatView" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <!-- Chat header -->
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="52">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Click="ChatBackButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
+                </Button>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="ChatRoomName" Text="" Foreground="White" FontSize="17"
+                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxLines="1" />
+                    <TextBlock x:Name="ChatRoomMembers" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="12" TextTrimming="CharacterEllipsis" MaxLines="1" />
+                </StackPanel>
+                <Button Grid.Column="2" Click="RoomInfoButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE946;" FontSize="18" Foreground="White" />
+                </Button>
+            </Grid>
+
+            <!-- Messages -->
+            <ListView Grid.Row="1" x:Name="MessagesList" SelectionMode="None"
+                      ItemsSource="{x:Bind Messages}" Padding="8,8"
+                      ScrollViewer.HorizontalScrollMode="Disabled">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="Margin" Value="0,2" />
+                        <Setter Property="MinHeight" Value="0" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{Binding BubbleBrush}" CornerRadius="10"
+                                Padding="10,7" MaxWidth="300"
+                                HorizontalAlignment="{Binding Alignment}">
+                            <StackPanel>
+                                <TextBlock Text="{Binding SenderShort}" Foreground="{StaticResource AppAccentBrush}"
+                                           FontSize="12" FontWeight="SemiBold"
+                                           Visibility="{Binding SenderVisibility}" Margin="0,0,0,2" />
+                                <TextBlock Text="{Binding Body}" Foreground="White" FontSize="15"
+                                           TextWrapping="Wrap" Visibility="{Binding TextVisibility}" />
+                                <Image Source="{Binding MediaUrl}" Stretch="Uniform" MaxHeight="220"
+                                       Visibility="{Binding ImageVisibility}" Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
+                                           FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+
+            <!-- Composer -->
+            <Grid Grid.Row="2" Background="{StaticResource AppPanelBrush}" Padding="8,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox Grid.Column="0" x:Name="MessageBox" PlaceholderText="Message"
+                         Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                         TextWrapping="Wrap" AcceptsReturn="False" VerticalAlignment="Center"
+                         KeyDown="MessageBox_KeyDown" />
+                <Button Grid.Column="1" x:Name="SendButton" Click="SendButton_Click"
+                        Background="{StaticResource AppAccentBrush}" BorderThickness="0"
+                        Margin="8,0,0,0" Padding="14,10" VerticalAlignment="Stretch">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE724;" FontSize="18" Foreground="White" />
+                </Button>
+            </Grid>
+        </Grid>
+
+        <!-- ========================= ROOM INFO ========================= -->
+        <Grid x:Name="RoomInfoPanel" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="52">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Click="RoomInfoCloseButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
+                </Button>
+                <TextBlock Grid.Column="1" Text="Room info" Foreground="White" FontSize="18"
+                           FontWeight="SemiBold" VerticalAlignment="Center" />
+            </Grid>
+            <ScrollViewer Grid.Row="1">
+                <StackPanel Padding="24" HorizontalAlignment="Center" MaxWidth="420">
+                    <Grid Width="120" Height="120" Margin="0,16,0,16">
+                        <Ellipse x:Name="InfoAvatarFallback" Fill="{StaticResource AppCardBrush}" />
+                        <TextBlock x:Name="InfoAvatarInitial" Foreground="White" FontSize="48"
+                                   FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Ellipse x:Name="InfoAvatarImage" Visibility="Collapsed" />
+                    </Grid>
+                    <TextBlock x:Name="InfoRoomName" Text="" Foreground="White" FontSize="22"
+                               FontWeight="SemiBold" TextWrapping="Wrap" HorizontalAlignment="Center"
+                               TextAlignment="Center" />
+                    <TextBlock x:Name="InfoMembers" Text="" Foreground="{StaticResource AppAccentBrush}"
+                               FontSize="14" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                    <TextBlock x:Name="InfoTopic" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="14" TextWrapping="Wrap" Margin="0,16,0,0" HorizontalAlignment="Center"
+                               TextAlignment="Center" />
+                    <TextBlock x:Name="InfoRoomId" Text="" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="12" TextWrapping="Wrap" Margin="0,16,0,0" HorizontalAlignment="Center"
+                               TextAlignment="Center" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ======================= CREATE ROOM ======================= -->
+        <Grid x:Name="CreateRoomPanel" Background="#CC000000" Visibility="Collapsed">
+            <Border Background="{StaticResource AppPanelBrush}" CornerRadius="12"
+                    MaxWidth="380" Margin="24" Padding="20" VerticalAlignment="Center"
+                    HorizontalAlignment="Stretch">
+                <StackPanel>
+                    <TextBlock Text="New room" Foreground="White" FontSize="20" FontWeight="SemiBold" />
+                    <TextBox x:Name="NewRoomName" PlaceholderText="Room name" Margin="0,16,0,12"
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+                    <ToggleSwitch x:Name="NewRoomPublic" Header="Public room" OffContent="Private"
+                                  OnContent="Public" Foreground="White" />
+                    <TextBlock x:Name="CreateRoomError" Foreground="#FF6B6B" FontSize="13"
+                               TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,0" />
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="Cancel" Click="CreateRoomCancel_Click"
+                                HorizontalAlignment="Stretch" Margin="0,0,6,0"
+                                Background="{StaticResource AppCardBrush}" Foreground="White" />
+                        <Button Grid.Column="1" Content="Create" Click="CreateRoomConfirm_Click"
+                                HorizontalAlignment="Stretch" Margin="6,0,0,0"
+                                Background="{StaticResource AppAccentBrush}" Foreground="White" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ========================= SETTINGS ========================= -->
+        <Grid x:Name="SettingsPanel" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="52">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Click="SettingsCloseButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
+                </Button>
+                <TextBlock Grid.Column="1" Text="Settings" Foreground="White" FontSize="18"
+                           FontWeight="SemiBold" VerticalAlignment="Center" />
+            </Grid>
+            <ScrollViewer Grid.Row="1">
+                <StackPanel Padding="20" MaxWidth="480">
+                    <TextBlock Text="ACCOUNT" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock x:Name="SettingsUserId" Text="" Foreground="White" FontSize="15" />
+                    <TextBlock x:Name="SettingsDeviceId" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="13" Margin="0,4,0,0" />
+                    <TextBlock x:Name="SettingsHomeserver" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="13" Margin="0,4,0,0" />
+
+                    <TextBlock Text="MESSAGES" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                    <TextBlock Text="Number of messages to load per room" Foreground="White" FontSize="14" />
+                    <Slider x:Name="MessageLimitSlider" Minimum="10" Maximum="200" StepFrequency="10"
+                            TickFrequency="10" ValueChanged="MessageLimitSlider_ValueChanged"
+                            Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
+                    <TextBlock x:Name="MessageLimitValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="13" />
+
+                    <Button x:Name="LogoutButton" Content="Sign out" Click="LogoutButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12" Margin="0,32,0,0"
+                            Background="#3A1414" Foreground="#FF6B6B" FontWeight="SemiBold" />
+
+                    <TextBlock x:Name="SettingsBuild" Text="" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" HorizontalAlignment="Center" Margin="0,24,0,0" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+    </Grid>
+</Page>

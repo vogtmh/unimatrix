@@ -1,0 +1,292 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Windows.Data.Json;
+using Windows.Web.Http;
+
+namespace UniMatrix.Services
+{
+    /// <summary>Result of a successful login.</summary>
+    internal class LoginResult
+    {
+        public string UserId { get; set; }
+        public string AccessToken { get; set; }
+        public string DeviceId { get; set; }
+    }
+
+    /// <summary>
+    /// Thin wrapper over the Matrix Client-Server API (r0). Handles login,
+    /// the long-polling /sync loop, sending messages, room creation, history
+    /// pagination and mxc:// media URL resolution.
+    /// </summary>
+    internal class MatrixClient
+    {
+        private readonly HttpClient _http = new HttpClient();
+        private string _baseUrl;
+        private string _accessToken;
+
+        public MatrixClient()
+        {
+            _http.DefaultRequestHeaders.UserAgent.TryParseAdd("UniMatrix/1.0");
+        }
+
+        public string AccessToken
+        {
+            get { return _accessToken; }
+            set { _accessToken = value; }
+        }
+
+        /// <summary>The homeserver base URL, e.g. https://matrix.org (no trailing slash).</summary>
+        public string BaseUrl => _baseUrl;
+
+        /// <summary>Normalizes a user-entered homeserver into a https base URL.</summary>
+        public void SetHomeserver(string homeserver)
+        {
+            if (string.IsNullOrWhiteSpace(homeserver))
+            {
+                _baseUrl = "https://matrix.org";
+                return;
+            }
+            homeserver = homeserver.Trim().TrimEnd('/');
+            if (!homeserver.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+                !homeserver.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                homeserver = "https://" + homeserver;
+            }
+            _baseUrl = homeserver;
+        }
+
+        /// <summary>The server name part of the homeserver, e.g. matrix.org. Used for mxc resolution fallback.</summary>
+        public string ServerName
+        {
+            get
+            {
+                try
+                {
+                    var uri = new Uri(_baseUrl);
+                    return uri.Host;
+                }
+                catch { return _baseUrl; }
+            }
+        }
+
+        // ---- Authentication ----
+
+        public async Task<LoginResult> LoginAsync(string user, string password)
+        {
+            var identifier = new JsonObject
+            {
+                ["type"] = JsonValue.CreateStringValue("m.id.user"),
+                ["user"] = JsonValue.CreateStringValue(user)
+            };
+            var body = new JsonObject
+            {
+                ["type"] = JsonValue.CreateStringValue("m.login.password"),
+                ["identifier"] = identifier,
+                ["password"] = JsonValue.CreateStringValue(password),
+                ["initial_device_display_name"] = JsonValue.CreateStringValue("UniMatrix (Windows Mobile)")
+            };
+
+            var resp = await PostAsync("/_matrix/client/r0/login", body, requireAuth: false);
+            var result = new LoginResult
+            {
+                UserId = GetString(resp, "user_id"),
+                AccessToken = GetString(resp, "access_token"),
+                DeviceId = GetString(resp, "device_id")
+            };
+            _accessToken = result.AccessToken;
+            return result;
+        }
+
+        public async Task LogoutAsync()
+        {
+            try { await PostAsync("/_matrix/client/r0/logout", new JsonObject(), requireAuth: true); }
+            catch { /* Best effort; token is cleared locally regardless. */ }
+            _accessToken = null;
+        }
+
+        // ---- Sync ----
+
+        /// <summary>
+        /// Runs a single /sync request. When <paramref name="since"/> is null this is an
+        /// initial sync; otherwise it long-polls for up to <paramref name="timeoutMs"/>.
+        /// </summary>
+        public async Task<JsonObject> SyncAsync(string since, int timeoutMs, CancellationToken ct)
+        {
+            string path = "/_matrix/client/r0/sync?access_token=" + Uri.EscapeDataString(_accessToken);
+            if (string.IsNullOrEmpty(since))
+            {
+                path += "&timeout=0";
+            }
+            else
+            {
+                path += "&since=" + Uri.EscapeDataString(since) + "&timeout=" + timeoutMs;
+            }
+            return await GetAsync(path, ct);
+        }
+
+        // ---- Messages ----
+
+        public async Task<string> SendTextMessageAsync(string roomId, string body)
+        {
+            string txnId = "m" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
+                          "/send/m.room.message/" + Uri.EscapeDataString(txnId);
+
+            var content = new JsonObject
+            {
+                ["msgtype"] = JsonValue.CreateStringValue("m.text"),
+                ["body"] = JsonValue.CreateStringValue(body)
+            };
+
+            var resp = await PutAsync(path, content);
+            return GetString(resp, "event_id");
+        }
+
+        public async Task<string> CreateRoomAsync(string name, bool isPublic)
+        {
+            var body = new JsonObject
+            {
+                ["name"] = JsonValue.CreateStringValue(name),
+                ["preset"] = JsonValue.CreateStringValue(isPublic ? "public_chat" : "private_chat"),
+                ["visibility"] = JsonValue.CreateStringValue(isPublic ? "public" : "private")
+            };
+            var resp = await PostAsync("/_matrix/client/r0/createRoom", body, requireAuth: true);
+            return GetString(resp, "room_id");
+        }
+
+        /// <summary>Fetches the most recent messages for a room (used to backfill history).</summary>
+        public async Task<JsonObject> GetRoomMessagesAsync(string roomId, int limit, CancellationToken ct)
+        {
+            string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
+                          "/messages?dir=b&limit=" + limit +
+                          "&access_token=" + Uri.EscapeDataString(_accessToken);
+            return await GetAsync(path, ct);
+        }
+
+        // ---- Media ----
+
+        /// <summary>
+        /// Resolves an mxc:// URL to a downloadable https thumbnail URL.
+        /// Returns null for non-mxc input.
+        /// </summary>
+        public string ResolveThumbnailUrl(string mxc, int size)
+        {
+            string serverAndId = ParseMxc(mxc);
+            if (serverAndId == null) return null;
+            return _baseUrl + "/_matrix/media/r0/thumbnail/" + serverAndId +
+                   "?width=" + size + "&height=" + size + "&method=scale" +
+                   "&access_token=" + Uri.EscapeDataString(_accessToken);
+        }
+
+        /// <summary>Resolves an mxc:// URL to the full-resolution https download URL.</summary>
+        public string ResolveDownloadUrl(string mxc)
+        {
+            string serverAndId = ParseMxc(mxc);
+            if (serverAndId == null) return null;
+            return _baseUrl + "/_matrix/media/r0/download/" + serverAndId +
+                   "?access_token=" + Uri.EscapeDataString(_accessToken);
+        }
+
+        private static string ParseMxc(string mxc)
+        {
+            if (string.IsNullOrEmpty(mxc) || !mxc.StartsWith("mxc://", StringComparison.OrdinalIgnoreCase))
+                return null;
+            // mxc://server/mediaId  ->  server/mediaId
+            return mxc.Substring(6);
+        }
+
+        // ---- HTTP helpers ----
+
+        private async Task<JsonObject> GetAsync(string path, CancellationToken ct)
+        {
+            var uri = new Uri(_baseUrl + path);
+            using (var resp = await _http.GetAsync(uri).AsTask(ct))
+            {
+                string text = await resp.Content.ReadAsStringAsync().AsTask(ct);
+                EnsureSuccess(resp, text);
+                return Parse(text);
+            }
+        }
+
+        private async Task<JsonObject> PostAsync(string path, JsonObject body, bool requireAuth)
+        {
+            string fullPath = path;
+            if (requireAuth)
+            {
+                fullPath += (path.Contains("?") ? "&" : "?") +
+                            "access_token=" + Uri.EscapeDataString(_accessToken);
+            }
+            var uri = new Uri(_baseUrl + fullPath);
+            var content = new HttpStringContent(body.Stringify(), Windows.Storage.Streams.UnicodeEncoding.Utf8, "application/json");
+            using (var resp = await _http.PostAsync(uri, content))
+            {
+                string text = await resp.Content.ReadAsStringAsync();
+                EnsureSuccess(resp, text);
+                return Parse(text);
+            }
+        }
+
+        private async Task<JsonObject> PutAsync(string path, JsonObject body)
+        {
+            string fullPath = path + (path.Contains("?") ? "&" : "?") +
+                              "access_token=" + Uri.EscapeDataString(_accessToken);
+            var uri = new Uri(_baseUrl + fullPath);
+            var content = new HttpStringContent(body.Stringify(), Windows.Storage.Streams.UnicodeEncoding.Utf8, "application/json");
+            var request = new HttpRequestMessage(HttpMethod.Put, uri) { Content = content };
+            using (var resp = await _http.SendRequestAsync(request))
+            {
+                string text = await resp.Content.ReadAsStringAsync();
+                EnsureSuccess(resp, text);
+                return Parse(text);
+            }
+        }
+
+        private static void EnsureSuccess(HttpResponseMessage resp, string text)
+        {
+            if (resp.IsSuccessStatusCode) return;
+
+            string message = "HTTP " + (int)resp.StatusCode;
+            try
+            {
+                JsonObject err;
+                if (JsonObject.TryParse(text, out err))
+                {
+                    string code = GetString(err, "errcode");
+                    string detail = GetString(err, "error");
+                    if (!string.IsNullOrEmpty(detail))
+                        message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
+                }
+            }
+            catch { }
+            throw new MatrixException(message, (int)resp.StatusCode);
+        }
+
+        private static JsonObject Parse(string text)
+        {
+            JsonObject obj;
+            if (JsonObject.TryParse(text, out obj)) return obj;
+            return new JsonObject();
+        }
+
+        internal static string GetString(JsonObject obj, string key)
+        {
+            try
+            {
+                if (obj != null && obj.ContainsKey(key) && obj[key].ValueType == JsonValueType.String)
+                    return obj.GetNamedString(key);
+            }
+            catch { }
+            return null;
+        }
+    }
+
+    internal class MatrixException : Exception
+    {
+        public int StatusCode { get; }
+        public MatrixException(string message, int statusCode) : base(message)
+        {
+            StatusCode = statusCode;
+        }
+    }
+}
