@@ -84,6 +84,17 @@ namespace UniMatrix.Services
             JsonObject timeline = GetObject(roomObj, "timeline");
             if (timeline != null)
             {
+                // Persist the room's prev_batch token: this is the canonical anchor for paging
+                // history backward via /messages?dir=b. Backfill uses it as the starting point so
+                // it resumes from a server-valid position instead of an empty token (which made
+                // pagination unreliable and could dead-end after only the most recent messages).
+                // We refresh it every sync so it always points just before the newest timeline,
+                // which is also the best place to re-anchor recovery from if a room was wrongly
+                // marked "fully fetched".
+                string prevBatch = MatrixClient.GetString(timeline, "prev_batch");
+                if (!string.IsNullOrEmpty(prevBatch))
+                    _db.SetMeta("pb_" + roomId, prevBatch);
+
                 JsonArray events = GetArray(timeline, "events");
                 if (events != null)
                 {

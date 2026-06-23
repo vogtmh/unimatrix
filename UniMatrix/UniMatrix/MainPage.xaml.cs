@@ -445,20 +445,38 @@ namespace UniMatrix
             {
                 var older = _db.GetMessagesBefore(roomId, anchor.Timestamp, anchor.EventId, MessagePageSize);
 
-                // Cache exhausted but the room isn't fully downloaded yet -> pull the next older
-                // chunk from the server on demand, then read the cache again. Without this, a
+                // Cache exhausted at the top -> pull older history from the server on demand. We do
+                // this whenever the cache runs out, even if a previous run flagged the room "done":
+                // that flag can be stale or wrong (e.g. an earlier backfill dead-ended on a bad
+                // pagination token), so the server response is the source of truth. Without this, a
                 // freshly-joined busy room (where /sync only delivered today's few messages) could
-                // never show its history: LoadOlder used to only ever read the local cache, so once
-                // the cached page ran out it simply stopped.
-                if (older.Count == 0 && !IsBackfillDone(roomId))
+                // never show its history.
+                if (older.Count == 0)
                 {
+                    // If the room was marked fully-fetched but the user clearly wants more, the flag
+                    // is suspect. Re-anchor to the room's latest prev_batch (a known-good token) and
+                    // clear the flag so we resume from a valid position rather than a dead-end token.
+                    // Paging back from there re-covers recent messages (deduped) and reaches the gap.
+                    if (IsBackfillDone(roomId))
+                    {
+                        string pb = _db.GetMeta(PrevBatchKey(roomId));
+                        if (string.IsNullOrEmpty(pb))
+                        {
+                            // No anchor available and already done -> genuinely nothing more.
+                            _hasMoreOlder = false;
+                            return;
+                        }
+                        _db.SetMeta(BackfillTokenKey(roomId), pb);
+                        _db.SetMeta(BackfillDoneKey(roomId), "0");
+                    }
+
                     ShowSyncProgress(true, "Loading older messages…");
                     try
                     {
                         // sinceTs 0 = ignore the day window (the user is explicitly scrolling past
-                        // it); a small page budget keeps each scroll-up to a bounded fetch instead
-                        // of pulling the whole room at once.
-                        await TryBackfillAsync(roomId, 0, _syncCts?.Token ?? CancellationToken.None, maxPages: 3);
+                        // it). A modest page budget keeps each scroll-up to a bounded fetch; busy
+                        // rooms have long runs of non-message events, so allow several pages.
+                        await TryBackfillAsync(roomId, 0, _syncCts?.Token ?? CancellationToken.None, maxPages: 8);
                     }
                     finally
                     {
@@ -471,9 +489,10 @@ namespace UniMatrix
 
                 if (older.Count == 0)
                 {
-                    // Nothing more in cache; keep the trigger armed only if the server may still
-                    // have older history we haven't reached (e.g. the background fill is busy or we
-                    // were briefly offline). Once the room is fully downloaded, stop.
+                    // Still nothing older after fetching. If the server reported the start of the
+                    // room (done flag set during the fetch), stop. Otherwise keep the trigger armed
+                    // so a further scroll-up pulls the next chunk (the page we fetched may have been
+                    // all membership/state churn with no displayable messages).
                     _hasMoreOlder = !IsBackfillDone(roomId);
                     return;
                 }
@@ -591,6 +610,7 @@ namespace UniMatrix
 
         private static string BackfillDoneKey(string roomId) { return "bf_done_" + roomId; }
         private static string BackfillTokenKey(string roomId) { return "bf_token_" + roomId; }
+        private static string PrevBatchKey(string roomId) { return "pb_" + roomId; }
 
         private void DecorateMessage(Message m, Dictionary<string, string> names)
         {
@@ -628,8 +648,15 @@ namespace UniMatrix
             lock (_bfLock) { if (!_backfillInFlight.Add(roomId)) return 0; }
             try
             {
-                // Resume from where a previous backfill left off, if any.
+                // Resume from where a previous backfill left off, if any. On the very first
+                // backfill for a room there's no saved token, so anchor on the room's prev_batch
+                // (captured from /sync) — the correct, server-valid starting point for paging
+                // history backward. Falling back to an empty token made matrix.org's pagination
+                // unreliable for busy rooms (it could return a dead-end token after only the most
+                // recent page, leaving 59 of 60 days unreachable).
                 string from = _db.GetMeta(BackfillTokenKey(roomId));
+                if (string.IsNullOrEmpty(from))
+                    from = _db.GetMeta(PrevBatchKey(roomId));
 
                 for (int page = 0; page < maxPages; page++)
                 {
