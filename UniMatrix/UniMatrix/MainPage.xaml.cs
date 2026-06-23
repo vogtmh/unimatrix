@@ -357,13 +357,10 @@ namespace UniMatrix
         {
             Messages.Clear();
 
-            // Unlimited history -> sinceTs 0 loads everything; otherwise the day window.
-            // sinceTs only governs how far back the server backfill pulls into the DB; the
-            // on-screen list itself is paged from the cache (latest page first), so memory
+            // The day window. sinceTs only governs how far back the server backfill pulls into the
+            // DB; the on-screen list itself is paged from the cache (latest page first), so memory
             // stays bounded regardless of how much history a room has.
-            long sinceTs = _settings.HistoryUnlimited
-                ? 0
-                : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
+            long sinceTs = DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
 
             // Render the most recent page from cache immediately so the room opens instantly.
             RenderLatestPage(roomId);
@@ -1158,9 +1155,7 @@ namespace UniMatrix
 
         private long CurrentHistoryWindow()
         {
-            return _settings.HistoryUnlimited
-                ? 0
-                : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
+            return DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
         }
 
         private void UpdateBackfillUi()

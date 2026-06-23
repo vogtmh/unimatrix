@@ -16,8 +16,7 @@ namespace UniMatrix
             SettingsHomeserver.Text = "Homeserver: " + _settings.Homeserver;
 
             HistoryDaysSlider.Value = _settings.HistoryDays;
-            HistoryUnlimitedCheck.IsChecked = _settings.HistoryUnlimited;
-            UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
+            UpdateHistoryControls(HistoryDaysSlider, HistoryDaysValue);
 
             UseAccentToggle.IsOn = _settings.UseSystemAccent;
 
@@ -85,27 +84,17 @@ namespace UniMatrix
             if (_settings == null) return;
             int value = (int)e.NewValue;
             _settings.HistoryDays = value;
-            UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
+            UpdateHistoryControls(HistoryDaysSlider, HistoryDaysValue);
             // Changing the window is the user's way of "fixing" an over-eager backfill, so
             // clear any prior cancel and let it run for the new window.
             ResumeBackfillAll();
         }
 
-        private void HistoryUnlimitedCheck_Changed(object sender, RoutedEventArgs e)
+        /// <summary>Shared display logic for a history slider + label.</summary>
+        private static void UpdateHistoryControls(Slider slider, TextBlock label)
         {
-            if (_settings == null) return;
-            _settings.HistoryUnlimited = HistoryUnlimitedCheck.IsChecked == true;
-            UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
-            ResumeBackfillAll();
-        }
-
-        /// <summary>Shared display logic for a history slider + unlimited checkbox + label.</summary>
-        private static void UpdateHistoryControls(Slider slider, CheckBox unlimited, TextBlock label)
-        {
-            if (slider == null || unlimited == null || label == null) return;
-            bool isUnlimited = unlimited.IsChecked == true;
-            slider.IsEnabled = !isUnlimited;
-            label.Text = isUnlimited ? "Unlimited" : (int)slider.Value + " days";
+            if (slider == null || label == null) return;
+            label.Text = (int)slider.Value + " days";
         }
 
         // ---- Initial setup (shown once after a fresh login) ----
@@ -113,8 +102,7 @@ namespace UniMatrix
         private void ShowSetup()
         {
             SetupHistorySlider.Value = _settings.HistoryDays;
-            SetupUnlimitedCheck.IsChecked = _settings.HistoryUnlimited;
-            UpdateHistoryControls(SetupHistorySlider, SetupUnlimitedCheck, SetupHistoryValue);
+            UpdateHistoryControls(SetupHistorySlider, SetupHistoryValue);
             ShowView(View.Setup);
         }
 
@@ -122,14 +110,7 @@ namespace UniMatrix
         {
             if (_settings == null) return;
             _settings.HistoryDays = (int)e.NewValue;
-            UpdateHistoryControls(SetupHistorySlider, SetupUnlimitedCheck, SetupHistoryValue);
-        }
-
-        private void SetupUnlimitedCheck_Changed(object sender, RoutedEventArgs e)
-        {
-            if (_settings == null) return;
-            _settings.HistoryUnlimited = SetupUnlimitedCheck.IsChecked == true;
-            UpdateHistoryControls(SetupHistorySlider, SetupUnlimitedCheck, SetupHistoryValue);
+            UpdateHistoryControls(SetupHistorySlider, SetupHistoryValue);
         }
 
         private void SetupContinueButton_Click(object sender, RoutedEventArgs e)

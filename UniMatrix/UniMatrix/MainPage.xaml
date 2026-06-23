@@ -116,12 +116,6 @@
                             Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
                     <TextBlock x:Name="SetupHistoryValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="13" />
-                    <CheckBox x:Name="SetupUnlimitedCheck" Content="Load all history (unlimited)"
-                              Foreground="White" Margin="0,12,0,0" Checked="SetupUnlimitedCheck_Changed"
-                              Unchecked="SetupUnlimitedCheck_Changed" />
-                    <TextBlock Text="Unlimited can make the first load take several minutes on large rooms."
-                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
-                               Margin="0,4,0,0" TextWrapping="Wrap" />
 
                     <Button x:Name="SetupContinueButton" Content="Continue" Click="SetupContinueButton_Click"
                             HorizontalAlignment="Stretch" Padding="0,12" Margin="0,32,0,0"
@@ -599,9 +593,6 @@
                             Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
                     <TextBlock x:Name="HistoryDaysValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="13" />
-                    <CheckBox x:Name="HistoryUnlimitedCheck" Content="Load all history (unlimited)"
-                              Foreground="White" Margin="0,12,0,0" Checked="HistoryUnlimitedCheck_Changed"
-                              Unchecked="HistoryUnlimitedCheck_Changed" />
                     <TextBlock Text="Quiet rooms fall back to the last 50 messages."
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,4,0,0" TextWrapping="Wrap" />

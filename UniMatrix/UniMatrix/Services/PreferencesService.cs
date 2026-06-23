@@ -16,7 +16,7 @@ namespace UniMatrix.Services
         private const string UserIdKey = "matrix_user_id";
         private const string DeviceIdKey = "matrix_device_id";
         private const string HistoryDaysKey = "matrix_history_days";
-        private const string HistoryUnlimitedKey = "matrix_history_unlimited";
+
         private const string SetupCompleteKey = "matrix_setup_complete";
         private const string UseSystemAccentKey = "use_system_accent";
 
@@ -60,13 +60,6 @@ namespace UniMatrix.Services
                 return 30;
             }
             set { _local.Values[HistoryDaysKey] = value; }
-        }
-
-        /// <summary>When true, load the entire available room history (ignores HistoryDays).</summary>
-        public bool HistoryUnlimited
-        {
-            get { return _local.Values.ContainsKey(HistoryUnlimitedKey) && (bool)_local.Values[HistoryUnlimitedKey]; }
-            set { _local.Values[HistoryUnlimitedKey] = value; }
         }
 
         /// <summary>True once the user has completed the post-login initial setup dialog.</summary>
