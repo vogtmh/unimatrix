@@ -95,6 +95,42 @@ function Test-WindowsSdk($version) {
     return (Test-Path $inc)
 }
 
+# Returns the version string (e.g. "2.7.18") of a usable Python, or $null.
+# Robust against: ErrorActionPreference=Stop + Python 2 writing its version to stderr,
+# and a Python-3-first PATH (falls back to 'py -2' and C:\Python27\python.exe).
+$script:PyHow = ""
+function Get-PythonVersion {
+    $candidates = @(
+        @{ How = "python";              Exe = "python";   Args = @("--version") },
+        @{ How = "py -2";               Exe = "py";       Args = @("-2","--version") },
+        @{ How = "C:\Python27\python";  Exe = "C:\Python27\python.exe"; Args = @("--version") }
+    )
+    foreach ($c in $candidates) {
+        try {
+            # Only attempt 'py'/'python' if resolvable; full paths are tested directly.
+            if ($c.Exe -notmatch '[\\/]' -and -not (Get-Command $c.Exe -ErrorAction SilentlyContinue)) { continue }
+            if ($c.Exe -match '[\\/]' -and -not (Test-Path $c.Exe)) { continue }
+
+            # Capture stdout+stderr WITHOUT letting a stderr write become a terminating error.
+            $old = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $out = & $c.Exe $c.Args 2>&1 | Out-String
+            $ErrorActionPreference = $old
+
+            $m = [regex]::Match($out, '(\d+\.\d+\.\d+)')
+            if (-not $m.Success) { $m = [regex]::Match($out, '(\d+\.\d+)') }
+            if ($m.Success) {
+                $ver = $m.Groups[1].Value
+                if ($ver -match '^2\.7') { $script:PyHow = $c.How; return $ver }
+                # Remember a non-2.7 hit only if we haven't found anything better yet.
+                if (-not $script:PyHow) { $script:PyHow = $c.How; $script:PyFallback = $ver }
+            }
+        } catch { }
+    }
+    if ($script:PyFallback) { return $script:PyFallback }
+    return $null
+}
+
 # --------------------------------------------------------------------------------------
 function Invoke-PrereqCheck {
     Write-Section "Prerequisite check"
@@ -125,13 +161,15 @@ function Invoke-PrereqCheck {
         "Windows SDK 10.0.17763 missing. Used by the UWP wrappers. Install it (with 'Debugging Tools for Windows') from the SDK archive page."
 
     # Python 2.7 - depot_tools/gn era. Python 3 will break the prepare scripts.
-    $py = Get-Command python -ErrorAction SilentlyContinue
-    if ($py) {
-        $ver = (& python --version 2>&1) -join ""
-        Require ($ver -match "2\.7") "Python 2.7 active ($ver)" `
-            "Active python is '$ver'. webrtc-uwp needs Python 2.7.15 first on PATH (e.g. C:\Python27)."
+    # NOTE: Python 2.7 prints its version to STDERR. We must NOT let ErrorActionPreference=Stop
+    # turn that stderr write into a terminating error, so query it carefully.
+    $pyVer = Get-PythonVersion
+    if ($pyVer) {
+        Require ($pyVer -match "^2\.7") "Python 2.7 active ($pyVer via '$script:PyHow')" `
+            "Active python is '$pyVer' (via '$script:PyHow'). webrtc-uwp needs Python 2.7.x first on PATH (e.g. C:\Python27). If you have Python 3 earlier on PATH, move C:\Python27 ahead of it."
     } else {
-        Bad "python not on PATH. Install Python 2.7.15 and put C:\Python27 first on PATH."; $script:Problems++
+        Bad "Could not find a Python 2.7 interpreter (checked 'python', 'py -2', and C:\Python27\python.exe). Install Python 2.7.x and put C:\Python27 first on PATH."
+        $script:Problems++
     }
 
     # Strawberry Perl - used by BoringSSL build.
