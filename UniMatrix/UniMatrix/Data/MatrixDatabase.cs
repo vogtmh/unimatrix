@@ -115,31 +115,47 @@ namespace UniMatrix.Data
 
         public void UpsertRoom(Room room)
         {
+            // The system winsqlite3 on Windows 10 Mobile predates UPSERT
+            // (INSERT ... ON CONFLICT DO UPDATE, added in SQLite 3.24.0), so we use a
+            // portable insert-then-update. INSERT OR IGNORE creates the row if missing;
+            // the UPDATE then merges, preserving existing name/avatar/topic when the
+            // incoming value is null so state-light sync updates don't wipe details.
             using (var cmd = _connection.CreateCommand())
             {
-                // Preserve existing name/avatar/topic when the new value is null so that
-                // state-light sync updates don't wipe previously known details.
                 cmd.CommandText = @"
-                    INSERT INTO rooms(id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview)
-                    VALUES(@id, @name, @topic, @avatar, @members, @unread, @ts, @preview)
-                    ON CONFLICT(id) DO UPDATE SET
+                    INSERT OR IGNORE INTO rooms(id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview)
+                    VALUES(@id, @name, @topic, @avatar, @members, @unread, @ts, @preview)";
+                AddRoomParameters(cmd, room);
+                cmd.ExecuteNonQuery();
+            }
+
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"
+                    UPDATE rooms SET
                         name         = COALESCE(@name, name),
                         topic        = COALESCE(@topic, topic),
                         avatar_mxc   = COALESCE(@avatar, avatar_mxc),
                         member_count = CASE WHEN @members > 0 THEN @members ELSE member_count END,
                         unread       = @unread,
                         last_ts      = CASE WHEN @ts > 0 THEN @ts ELSE last_ts END,
-                        last_preview = COALESCE(@preview, last_preview)";
-                cmd.Parameters.AddWithValue("@id", room.Id);
-                cmd.Parameters.AddWithValue("@name", (object)room.Name ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@topic", (object)room.Topic ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@avatar", (object)room.AvatarMxc ?? DBNull.Value);
-                cmd.Parameters.AddWithValue("@members", room.MemberCount);
-                cmd.Parameters.AddWithValue("@unread", room.UnreadCount);
-                cmd.Parameters.AddWithValue("@ts", room.LastEventTs);
-                cmd.Parameters.AddWithValue("@preview", (object)room.LastPreview ?? DBNull.Value);
+                        last_preview = COALESCE(@preview, last_preview)
+                    WHERE id = @id";
+                AddRoomParameters(cmd, room);
                 cmd.ExecuteNonQuery();
             }
+        }
+
+        private static void AddRoomParameters(SqliteCommand cmd, Room room)
+        {
+            cmd.Parameters.AddWithValue("@id", room.Id);
+            cmd.Parameters.AddWithValue("@name", (object)room.Name ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@topic", (object)room.Topic ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@avatar", (object)room.AvatarMxc ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@members", room.MemberCount);
+            cmd.Parameters.AddWithValue("@unread", room.UnreadCount);
+            cmd.Parameters.AddWithValue("@ts", room.LastEventTs);
+            cmd.Parameters.AddWithValue("@preview", (object)room.LastPreview ?? DBNull.Value);
         }
 
         public void SetRoomUnread(string roomId, int unread)
