@@ -227,7 +227,17 @@ namespace UniMatrix.Models
         public bool IsImage { get { return MsgType == "m.image"; } }
         public bool HasImage { get { return IsImage && !string.IsNullOrEmpty(_mediaUrl); } }
         public Visibility ImageVisibility { get { return HasImage ? Visibility.Visible : Visibility.Collapsed; } }
-        public Visibility TextVisibility { get { return HasImage ? Visibility.Collapsed : Visibility.Visible; } }
+        public Visibility TextVisibility { get { return (HasImage || IsCall) ? Visibility.Collapsed : Visibility.Visible; } }
+
+        /// <summary>
+        /// True for synthesized voice/video call events (m.call.*). These render as a
+        /// centered system pill rather than a chat bubble.
+        /// </summary>
+        public bool IsCall { get { return MsgType == "m.call"; } }
+        public Visibility CallVisibility { get { return IsCall ? Visibility.Visible : Visibility.Collapsed; } }
+
+        /// <summary>The normal chat bubble is hidden for call events.</summary>
+        public Visibility BubbleVisibility { get { return IsCall ? Visibility.Collapsed : Visibility.Visible; } }
 
         public HorizontalAlignment Alignment
         {

@@ -294,6 +294,7 @@
                             </Border>
                             <Border Background="{Binding BubbleBrush}" CornerRadius="10"
                                     Padding="10,7" MaxWidth="300"
+                                    Visibility="{Binding BubbleVisibility}"
                                     HorizontalAlignment="{Binding Alignment}">
                                 <StackPanel>
                                     <TextBlock Text="{Binding SenderShort}" Foreground="{StaticResource AppAccentBrush}"
@@ -306,6 +307,18 @@
                                            Tapped="MessageImage_Tapped" />
                                     <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
                                                FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Voice/video call marker (m.call.*), centered system-style pill -->
+                            <Border HorizontalAlignment="Center" Margin="0,4"
+                                    Background="{StaticResource AppPanelBrush}" CornerRadius="14"
+                                    Padding="14,6" Visibility="{Binding CallVisibility}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding Body}" Foreground="{StaticResource AppSubtleTextBrush}"
+                                               FontSize="13" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding TimeText}" Foreground="{StaticResource AppFaintTextBrush}"
+                                               FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

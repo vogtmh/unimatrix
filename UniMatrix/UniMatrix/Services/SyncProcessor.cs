@@ -104,6 +104,15 @@ namespace UniMatrix.Services
                                 }
                             }
                         }
+                        else if (type != null && type.StartsWith("m.call."))
+                        {
+                            var msg = ApplyCallEvent(roomId, type, ev);
+                            if (msg != null && msg.Timestamp > latestTs)
+                            {
+                                latestTs = msg.Timestamp;
+                                preview = BuildPreview(msg);
+                            }
+                        }
                         else if (type == "m.room.name" || type == "m.room.avatar" ||
                                  type == "m.room.topic" || type == "m.room.member")
                         {
@@ -224,9 +233,39 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Deletes a pending local-echo placeholder that matches a confirmed message
-        /// of ours, preventing a brief duplicate after sending.
+        /// Turns a voice/video call signaling event (m.call.*) into a single timeline
+        /// marker so the user can see that a call happened. Only the call invite is
+        /// surfaced; the chatty negotiation events (candidates, answer, negotiate,
+        /// select_answer) are skipped so one call yields at most one timeline line.
+        /// Returns the parsed marker, or null if the event type is not surfaced.
         /// </summary>
+        private Message ApplyCallEvent(string roomId, string type, JsonObject ev)
+        {
+            string label;
+            switch (type)
+            {
+                case "m.call.invite": label = "\uD83D\uDCDE Call"; break;
+                case "m.call.reject": label = "\uD83D\uDCDE Call declined"; break;
+                default: return null; // candidates / answer / hangup / negotiate / select_answer
+            }
+
+            string eventId = MatrixClient.GetString(ev, "event_id");
+            if (string.IsNullOrEmpty(eventId)) return null;
+
+            var msg = new Message
+            {
+                EventId = eventId,
+                RoomId = roomId,
+                Sender = MatrixClient.GetString(ev, "sender"),
+                MsgType = "m.call",
+                Body = label,
+                Timestamp = (long)GetNumber(ev, "origin_server_ts", 0),
+                IsLocalEcho = false
+            };
+            _db.UpsertMessage(msg);
+            return msg;
+        }
+
         private void RemoveMatchingLocalEcho(string roomId, string msgType, string body)
         {
             foreach (var m in _db.GetMessages(roomId, 20))
@@ -242,6 +281,7 @@ namespace UniMatrix.Services
         private static string BuildPreview(Message msg)
         {
             if (msg.MsgType == "m.image") return "\uD83D\uDCF7 Photo";
+            if (msg.MsgType == "m.call") return msg.Body;
             return msg.Body;
         }
 

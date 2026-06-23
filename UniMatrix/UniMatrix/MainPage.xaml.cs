@@ -675,11 +675,70 @@ namespace UniMatrix
             return fetched;
         }
 
-        private async Task RefreshCurrentRoomMessagesAsync()
+        /// <summary>
+        /// Folds a /sync update into the currently-open room WITHOUT rebuilding the whole list.
+        /// A full Messages.Clear()+reload threw away the user's scroll position on every sync,
+        /// which (combined with variable-height items being re-measured) made a just-sent message
+        /// jump and then get shoved up a line or two. Instead we drop confirmed local echoes and
+        /// append only genuinely new messages, and only auto-scroll if the user was already at the
+        /// bottom — so reading older history is never interrupted either.
+        /// </summary>
+        private void RefreshCurrentRoomMessages()
         {
-            if (_currentRoomId == null) return;
-            await LoadMessagesAsync(_currentRoomId);
-            ScrollMessagesToBottom();
+            string roomId = _currentRoomId;
+            if (roomId == null) return;
+
+            bool atBottom = IsScrolledToBottom();
+
+            var names = _db.GetMemberNames(roomId);
+            var latest = _db.GetMessages(roomId, MessagePageSize);
+
+            var latestIds = new HashSet<string>();
+            foreach (var m in latest) latestIds.Add(m.EventId);
+
+            // 1. Remove local echoes that the server has now confirmed. SyncProcessor deletes the
+            //    echo row once the real event lands, so an echo still on screen but absent from the
+            //    fresh cache page is stale and its real counterpart is in `latest`.
+            for (int i = Messages.Count - 1; i >= 0; i--)
+            {
+                if (Messages[i].IsLocalEcho && !latestIds.Contains(Messages[i].EventId))
+                    Messages.RemoveAt(i);
+            }
+
+            var shownIds = new HashSet<string>();
+            foreach (var m in Messages) shownIds.Add(m.EventId);
+
+            // 2. Append only messages newer than the last one on screen. Older history is paged in
+            //    separately via scroll-back, so we never insert into the middle here.
+            Message prev = Messages.Count > 0 ? Messages[Messages.Count - 1] : null;
+            foreach (var m in latest)
+            {
+                if (shownIds.Contains(m.EventId)) continue;
+                if (prev != null &&
+                    (m.Timestamp < prev.Timestamp ||
+                     (m.Timestamp == prev.Timestamp && string.CompareOrdinal(m.EventId, prev.EventId) <= 0)))
+                    continue;
+
+                DecorateMessage(m, names);
+                SetDateSeparator(m, prev);
+                prev = m;
+                Messages.Add(m);
+
+                if (m.IsImage && !string.IsNullOrEmpty(m.Mxc))
+                {
+                    var _ = ResolveMessageImageAsync(m);
+                }
+            }
+
+            // Follow new content only if the user hadn't scrolled up to read history.
+            if (atBottom) ScrollMessagesToBottom();
+        }
+
+        /// <summary>True when the message list is at (or within a small threshold of) the bottom.</summary>
+        private bool IsScrolledToBottom()
+        {
+            if (_messagesScrollViewer == null) return true; // not yet measured -> treat as bottom
+            return _messagesScrollViewer.VerticalOffset >= _messagesScrollViewer.ScrollableHeight - 80;
         }
 
         private void ScrollMessagesToBottom()
@@ -927,7 +986,7 @@ namespace UniMatrix
                         if (_activeView == View.RoomList || _activeView == View.Chat)
                             RefreshRooms();
                         if (_currentRoomId != null && result.ChangedRooms.Contains(_currentRoomId))
-                            await RefreshCurrentRoomMessagesAsync();
+                            RefreshCurrentRoomMessages();
                     }
 
                     ShowSyncProgress(false);
