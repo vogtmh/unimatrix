@@ -155,19 +155,19 @@ namespace UniMatrix
                 _client.AccessToken = token;
                 _syncProcessor = new SyncProcessor(_db, _settings.UserId);
 
+                // The splash only needs to cover the brief local DB/cache load so the login form
+                // never flashes. It stays visible (background only, no pulsing animation) for the
+                // few milliseconds until the cached rooms are ready.
                 ShowView(View.Splash);
-                SplashFadeIn.Begin();
-                SplashPulse.Begin();
 
                 LoadRoomsFromCache();
 
                 _firstSyncTcs = new TaskCompletionSource<bool>();
                 StartSync();
 
-                // Wait for the first sync pass, but don't hang forever on a slow/offline network.
-                await Task.WhenAny(_firstSyncTcs.Task, Task.Delay(8000));
-
-                SplashPulse.Stop();
+                // Cached rooms are already populated, so show them immediately and let the first
+                // /sync finish in the background (the sync LED shows its progress). No need to sit
+                // on a "Logging in…" animation waiting for the network.
                 ShowView(View.RoomList);
             }
             else
