@@ -22,6 +22,60 @@ namespace UniMatrix
             UseAccentToggle.IsOn = _settings.UseSystemAccent;
 
             ShowView(View.Settings);
+
+            // Compute on-disk usage off the UI thread; update the label when ready.
+            var _ = UpdateStorageUsageAsync();
+        }
+
+        private async System.Threading.Tasks.Task UpdateStorageUsageAsync()
+        {
+            try
+            {
+                long dbBytes = 0, mediaBytes = 0;
+                var local = Windows.Storage.ApplicationData.Current.LocalFolder;
+
+                // The SQLite database is unimatrix.db plus its WAL/SHM sidecar files.
+                foreach (var name in new[] { "unimatrix.db", "unimatrix.db-wal", "unimatrix.db-shm" })
+                {
+                    try
+                    {
+                        var f = await local.GetFileAsync(name);
+                        var p = await f.GetBasicPropertiesAsync();
+                        dbBytes += (long)p.Size;
+                    }
+                    catch { /* file may not exist (e.g. no WAL yet) */ }
+                }
+
+                // Cached media lives in the "media" subfolder.
+                try
+                {
+                    var media = await local.GetFolderAsync("media");
+                    foreach (var f in await media.GetFilesAsync())
+                    {
+                        var p = await f.GetBasicPropertiesAsync();
+                        mediaBytes += (long)p.Size;
+                    }
+                }
+                catch { /* folder may not exist yet */ }
+
+                if (StorageUsage != null)
+                    StorageUsage.Text = "Database: " + FormatBytes(dbBytes) +
+                                        "  ·  Images: " + FormatBytes(mediaBytes);
+            }
+            catch
+            {
+                if (StorageUsage != null) StorageUsage.Text = "Storage usage unavailable";
+            }
+        }
+
+        private static string FormatBytes(long bytes)
+        {
+            if (bytes < 1024) return bytes + " B";
+            double kb = bytes / 1024.0;
+            if (kb < 1024) return kb.ToString("0.#") + " KB";
+            double mb = kb / 1024.0;
+            if (mb < 1024) return mb.ToString("0.#") + " MB";
+            return (mb / 1024.0).ToString("0.##") + " GB";
         }
 
         private void SettingsCloseButton_Click(object sender, RoutedEventArgs e) => ShowView(View.RoomList);
@@ -32,6 +86,9 @@ namespace UniMatrix
             int value = (int)e.NewValue;
             _settings.HistoryDays = value;
             UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
+            // Changing the window is the user's way of "fixing" an over-eager backfill, so
+            // clear any prior cancel and let it run for the new window.
+            ResumeBackfillAll();
         }
 
         private void HistoryUnlimitedCheck_Changed(object sender, RoutedEventArgs e)
@@ -39,6 +96,7 @@ namespace UniMatrix
             if (_settings == null) return;
             _settings.HistoryUnlimited = HistoryUnlimitedCheck.IsChecked == true;
             UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
+            ResumeBackfillAll();
         }
 
         /// <summary>Shared display logic for a history slider + unlimited checkbox + label.</summary>
@@ -145,6 +203,12 @@ namespace UniMatrix
             Rooms.Clear();
             Messages.Clear();
             _currentRoomId = null;
+
+            // Clear any earlier cancel so the fresh sync's backfill can run.
+            ResumeBackfillAll();
+
+            // Reflect the freed space immediately.
+            var _ = UpdateStorageUsageAsync();
 
             // Back to the room list and kick off a clean full sync.
             ShowView(View.RoomList);

@@ -206,6 +206,36 @@ namespace UniMatrix.Models
             }
         }
 
+        /// <summary>
+        /// When true, a date separator (Telegram-style pill) is shown above this message.
+        /// Set during rendering whenever a message starts a new calendar day.
+        /// </summary>
+        private bool _showDateSeparator;
+        public bool ShowDateSeparator
+        {
+            get { return _showDateSeparator; }
+            set { _showDateSeparator = value; Raise("ShowDateSeparator"); Raise("DateSeparatorVisibility"); }
+        }
+
+        public Visibility DateSeparatorVisibility
+        {
+            get { return _showDateSeparator ? Visibility.Visible : Visibility.Collapsed; }
+        }
+
+        /// <summary>Human-friendly day label for the separator (Today / Yesterday / date).</summary>
+        public string DateSeparatorText
+        {
+            get
+            {
+                var date = DateTimeOffset.FromUnixTimeMilliseconds(Timestamp).LocalDateTime.Date;
+                var today = DateTime.Now.Date;
+                if (date == today) return "Today";
+                if (date == today.AddDays(-1)) return "Yesterday";
+                if (date.Year == today.Year) return date.ToString("dddd, d MMMM");
+                return date.ToString("d MMMM yyyy");
+            }
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
         private void Raise(string name)
         {

@@ -282,21 +282,31 @@
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate>
-                        <Border Background="{Binding BubbleBrush}" CornerRadius="10"
-                                Padding="10,7" MaxWidth="300"
-                                HorizontalAlignment="{Binding Alignment}">
-                            <StackPanel>
-                                <TextBlock Text="{Binding SenderShort}" Foreground="{StaticResource AppAccentBrush}"
-                                           FontSize="12" FontWeight="SemiBold"
-                                           Visibility="{Binding SenderVisibility}" Margin="0,0,0,2" />
-                                <TextBlock Text="{Binding Body}" Foreground="White" FontSize="15"
-                                           TextWrapping="Wrap" Visibility="{Binding TextVisibility}" />
-                                <Image Source="{Binding MediaUrl}" Stretch="Uniform" MaxHeight="220"
-                                       Visibility="{Binding ImageVisibility}" Margin="0,2,0,0" />
-                                <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
-                                           FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
-                            </StackPanel>
-                        </Border>
+                        <StackPanel HorizontalAlignment="Stretch">
+                            <!-- Telegram-style date separator pill, shown when the day changes. -->
+                            <Border HorizontalAlignment="Center" Margin="0,8,0,8"
+                                    Background="{StaticResource AppPanelBrush}" CornerRadius="10"
+                                    Padding="12,4" Visibility="{Binding DateSeparatorVisibility}">
+                                <TextBlock Text="{Binding DateSeparatorText}"
+                                           Foreground="{StaticResource AppSubtleTextBrush}"
+                                           FontSize="12" FontWeight="SemiBold" />
+                            </Border>
+                            <Border Background="{Binding BubbleBrush}" CornerRadius="10"
+                                    Padding="10,7" MaxWidth="300"
+                                    HorizontalAlignment="{Binding Alignment}">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding SenderShort}" Foreground="{StaticResource AppAccentBrush}"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Visibility="{Binding SenderVisibility}" Margin="0,0,0,2" />
+                                    <TextBlock Text="{Binding Body}" Foreground="White" FontSize="15"
+                                               TextWrapping="Wrap" Visibility="{Binding TextVisibility}" />
+                                    <Image Source="{Binding MediaUrl}" Stretch="Uniform" MaxHeight="220"
+                                           Visibility="{Binding ImageVisibility}" Margin="0,2,0,0" />
+                                    <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
+                                               FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
                     </DataTemplate>
                 </ListView.ItemTemplate>
             </ListView>
@@ -440,6 +450,9 @@
 
                     <TextBlock Text="MAINTENANCE" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                    <TextBlock x:Name="StorageUsage" Text="Calculating storage…"
+                               Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                               Margin="0,0,0,12" TextWrapping="Wrap" />
                     <Button x:Name="WipeCacheButton" Content="Wipe cache &amp; resync"
                             Click="WipeCacheButton_Click"
                             HorizontalAlignment="Stretch" Padding="0,12"
@@ -491,9 +504,19 @@
         <StackPanel x:Name="SyncProgressPanel" VerticalAlignment="Bottom"
                     Background="{StaticResource AppPanelBrush}" Padding="14,8"
                     Visibility="Collapsed">
-            <TextBlock x:Name="SyncProgressText" Text="Syncing your account…"
-                       Foreground="{StaticResource AppSubtleTextBrush}"
-                       FontSize="12" Margin="0,0,0,4" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="SyncProgressText" Grid.Column="0" Text="Syncing your account…"
+                           Foreground="{StaticResource AppSubtleTextBrush}"
+                           FontSize="12" Margin="0,0,0,4" VerticalAlignment="Center" />
+                <Button x:Name="SyncCancelButton" Grid.Column="1" Content="Cancel"
+                        Click="SyncCancelButton_Click" Visibility="Collapsed"
+                        Background="Transparent" Foreground="{StaticResource AppAccentBrush}"
+                        BorderThickness="0" Padding="10,2" FontSize="12" VerticalAlignment="Center" />
+            </Grid>
             <ProgressBar x:Name="SyncProgressBar" IsIndeterminate="True"
                          Foreground="{StaticResource AppAccentBrush}" />
         </StackPanel>

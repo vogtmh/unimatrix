@@ -49,6 +49,9 @@ namespace UniMatrix
         private int _bfDone, _bfTotal;
         private long _bfMessages;
         private DispatcherTimer _bfTimer;
+        // Set when the user cancels the backfill; prevents sync passes from auto-restarting it
+        // until they change the history setting, wipe the cache, or relaunch.
+        private bool _backfillSuppressed;
 
         // Bound collections.
         public ObservableCollection<Room> Rooms { get; } = new ObservableCollection<Room>();
@@ -333,9 +336,13 @@ namespace UniMatrix
             var msgs = _db.GetMessagesSince(roomId, sinceTs, fallback);
 
             Messages.Clear();
+            DateTime? prevDay = null;
             foreach (var m in msgs)
             {
                 DecorateMessage(m, names);
+                var day = DateTimeOffset.FromUnixTimeMilliseconds(m.Timestamp).LocalDateTime.Date;
+                m.ShowDateSeparator = prevDay == null || day != prevDay.Value;
+                prevDay = day;
                 Messages.Add(m);
             }
 
@@ -535,6 +542,12 @@ namespace UniMatrix
                 IsMine = true
             };
             _db.UpsertMessage(echo);
+            // Show a date separator if this echo starts a new day (or the timeline is empty).
+            var echoDay = DateTimeOffset.FromUnixTimeMilliseconds(echo.Timestamp).LocalDateTime.Date;
+            DateTime? lastDay = Messages.Count > 0
+                ? (DateTime?)DateTimeOffset.FromUnixTimeMilliseconds(Messages[Messages.Count - 1].Timestamp).LocalDateTime.Date
+                : null;
+            echo.ShowDateSeparator = lastDay == null || echoDay != lastDay.Value;
             Messages.Add(echo);
             ScrollMessagesToBottom();
 
@@ -701,7 +714,7 @@ namespace UniMatrix
         private void StartBackfillAll()
         {
             // All callers run on the UI thread, so this check-and-set is race-free.
-            if (_backfillAllActive) return;
+            if (_backfillAllActive || _backfillSuppressed) return;
             _backfillAllActive = true;
             _backfillCts = new CancellationTokenSource();
             var ct = _backfillCts.Token;
@@ -712,6 +725,24 @@ namespace UniMatrix
         {
             try { _backfillCts?.Cancel(); } catch { }
             _backfillCts = null;
+        }
+
+        private void SyncCancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            // User wants to stop a long-running history download (e.g. they picked
+            // "unlimited" by mistake). Stop it and don't auto-restart until they change the
+            // history setting or wipe the cache. Per-room tokens are persisted, so resuming
+            // later picks up where it left off rather than restarting.
+            _backfillSuppressed = true;
+            StopBackfillAll();
+            if (SyncCancelButton != null) SyncCancelButton.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>Re-enables background backfill after a cancel (e.g. when history settings change).</summary>
+        private void ResumeBackfillAll()
+        {
+            _backfillSuppressed = false;
+            StartBackfillAll();
         }
 
         private async Task BackfillAllRoomsAsync(CancellationToken ct)
@@ -801,6 +832,7 @@ namespace UniMatrix
                 SyncProgressBar.Maximum = Math.Max(1, total);
                 SyncProgressBar.Value = done;
             }
+            if (SyncCancelButton != null) SyncCancelButton.Visibility = Visibility.Visible;
             SyncProgressPanel.Visibility = Visibility.Visible;
         }
 
@@ -809,6 +841,7 @@ namespace UniMatrix
             if (SyncProgressPanel == null) return;
             SyncProgressPanel.Visibility = Visibility.Collapsed;
             if (SyncProgressBar != null) SyncProgressBar.IsIndeterminate = true;
+            if (SyncCancelButton != null) SyncCancelButton.Visibility = Visibility.Collapsed;
         }
 
         /// <summary>Keeps the display on while a long backfill runs, so it isn't paused by sleep.</summary>
