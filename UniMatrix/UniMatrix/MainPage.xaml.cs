@@ -602,21 +602,41 @@ namespace UniMatrix
 
         private void MessagesList_Loaded(object sender, RoutedEventArgs e)
         {
+            EnsureMessagesScrollViewer();
+        }
+
+        /// <summary>
+        /// Finds the ListView's inner ScrollViewer and subscribes the scroll-up trigger, if not
+        /// already done. Robust against virtualization timing: the ScrollViewer template part is
+        /// often NOT realized when MessagesList_Loaded first fires, so a single attempt there can
+        /// silently fail and leave scroll-up dead forever. We therefore also call this from the
+        /// room-open path (after layout), so the wiring always gets established.
+        /// </summary>
+        private void EnsureMessagesScrollViewer()
+        {
             if (_messagesScrollViewer != null) return;
-            _messagesScrollViewer = FindDescendant<ScrollViewer>(MessagesList);
-            if (_messagesScrollViewer != null)
+            var sv = FindDescendant<ScrollViewer>(MessagesList);
+            if (sv == null)
             {
-                _messagesScrollViewer.ViewChanged += MessagesScrollViewer_ViewChanged;
+                App.Log("ScrollViewer NOT found yet (will retry on open)");
+                return;
             }
+            _messagesScrollViewer = sv;
+            _messagesScrollViewer.ViewChanged += MessagesScrollViewer_ViewChanged;
+            App.Log("ScrollViewer wired up for scroll-up trigger");
         }
 
         private void MessagesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
         {
             // Near the top -> pull in the next older page.
-            if (_messagesScrollViewer != null && _messagesScrollViewer.VerticalOffset <= 60 &&
-                _hasMoreOlder && !_loadingOlder)
+            if (_messagesScrollViewer != null && _messagesScrollViewer.VerticalOffset <= 60)
             {
-                var _ = LoadOlderMessagesAsync();
+                App.Log("SCROLL near-top offset=" + (int)_messagesScrollViewer.VerticalOffset
+                    + " hasMoreOlder=" + _hasMoreOlder + " loadingOlder=" + _loadingOlder);
+                if (_hasMoreOlder && !_loadingOlder)
+                {
+                    var _ = LoadOlderMessagesAsync();
+                }
             }
         }
 
@@ -911,6 +931,10 @@ namespace UniMatrix
             {
                 try
                 {
+                    // The list is laid out by now, so this is a reliable place to (re)wire the
+                    // scroll-up trigger if MessagesList_Loaded fired before the ScrollViewer existed.
+                    EnsureMessagesScrollViewer();
+
                     MessagesList.ScrollIntoView(last);
                     if (_messagesScrollViewer != null)
                     {
