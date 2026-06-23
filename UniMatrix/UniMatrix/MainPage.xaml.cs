@@ -35,6 +35,14 @@ namespace UniMatrix
         /// <summary>Signals completion of the first /sync pass so the splash can dismiss.</summary>
         private TaskCompletionSource<bool> _firstSyncTcs;
 
+        // Background history backfill (pulls full history for every room without the
+        // user having to open each one). Self-guarding so it never double-starts.
+        private bool _backfillAllActive;
+        private CancellationTokenSource _backfillCts;
+        private Windows.System.Display.DisplayRequest _displayRequest;
+        private readonly object _bfLock = new object();
+        private readonly HashSet<string> _backfillInFlight = new HashSet<string>();
+
         // Bound collections.
         public ObservableCollection<Room> Rooms { get; } = new ObservableCollection<Room>();
         public ObservableCollection<Message> Messages { get; } = new ObservableCollection<Message>();
@@ -287,29 +295,66 @@ namespace UniMatrix
                 : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
             int fallback = PreferencesService.FallbackMessageCount;
 
+            // Render whatever is already cached immediately so the room opens instantly.
+            RenderMessages(roomId, sinceTs, fallback);
+
+            // The /sync filter only caches a handful of recent messages per room, so the
+            // cache rarely covers the requested window on first open. Backfill from the
+            // server when needed, then re-render. This is what makes the day window and
+            // "unlimited" actually load older history instead of just the last few.
+            if (NeedsBackfill(roomId, sinceTs))
+            {
+                ShowSyncProgress(true, "Loading messages…");
+                try
+                {
+                    await TryBackfillAsync(roomId, sinceTs, _syncCts?.Token ?? CancellationToken.None);
+                }
+                finally
+                {
+                    ShowSyncProgress(false);
+                }
+
+                // The user may have navigated away while we paged history.
+                if (_currentRoomId == roomId)
+                    RenderMessages(roomId, sinceTs, fallback);
+            }
+        }
+
+        private void RenderMessages(string roomId, long sinceTs, int fallback)
+        {
             var names = _db.GetMemberNames(roomId);
             var msgs = _db.GetMessagesSince(roomId, sinceTs, fallback);
 
-            // Backfill from the server if we have no cached history yet.
-            if (msgs.Count == 0)
-            {
-                await TryBackfillAsync(roomId, sinceTs);
-                msgs = _db.GetMessagesSince(roomId, sinceTs, fallback);
-                names = _db.GetMemberNames(roomId);
-            }
-
+            Messages.Clear();
             foreach (var m in msgs)
             {
                 DecorateMessage(m, names);
                 Messages.Add(m);
             }
 
-            // Resolve image thumbnails asynchronously.
+            // Resolve image thumbnails asynchronously (fire and forget).
             foreach (var m in msgs.Where(x => x.IsImage && !string.IsNullOrEmpty(x.Mxc)))
             {
-                await ResolveMessageImageAsync(m);
+                var _ = ResolveMessageImageAsync(m);
             }
         }
+
+        /// <summary>
+        /// True when the cached history doesn't yet reach back to <paramref name="sinceTs"/>
+        /// (or, for unlimited, to the start of the room). A per-room "done" flag stops us from
+        /// re-paging a room whose history we've already fetched to the beginning.
+        /// </summary>
+        private bool NeedsBackfill(string roomId, long sinceTs)
+        {
+            if (_db.GetMeta(BackfillDoneKey(roomId)) == "1") return false;
+
+            long oldest = _db.GetOldestMessageTs(roomId);
+            if (oldest == 0) return true;            // nothing cached yet
+            return oldest > sinceTs;                 // cache starts after the window -> fetch older
+        }
+
+        private static string BackfillDoneKey(string roomId) { return "bf_done_" + roomId; }
+        private static string BackfillTokenKey(string roomId) { return "bf_token_" + roomId; }
 
         private void DecorateMessage(Message m, Dictionary<string, string> names)
         {
@@ -329,26 +374,40 @@ namespace UniMatrix
             catch { }
         }
 
-        private async Task TryBackfillAsync(string roomId, long sinceTs)
+        private async Task<int> TryBackfillAsync(string roomId, long sinceTs, CancellationToken ct)
         {
             // The /messages limit counts ALL events (state, membership, etc.), so a single
             // page rarely yields enough real messages. Page backward until we've crossed the
-            // requested time window (and have at least one message) or run out of history.
-            // The page cap is just a safety net against a server that never returns the
-            // window boundary; on a busy room this can take a couple of minutes, which is
-            // expected for an initial backfill.
+            // requested time window, reach the start of the room, or hit a safety cap. The
+            // pagination token is persisted so an interrupted backfill (offline / suspend)
+            // resumes instead of re-fetching from the top, and a per-room "done" flag prevents
+            // re-paging a room whose history we already have in full. Returns the number of
+            // new messages stored. Network/DB work runs off the UI thread (ConfigureAwait)
+            // since this can run for minutes during the initial all-rooms backfill.
             const int pageSize = 100;
             const int maxPages = 200;
+            int fetched = 0;
+
+            // Never backfill the same room from two places at once (e.g. the user opening a
+            // room while the background loop is already paging it) — they'd share the token.
+            lock (_bfLock) { if (!_backfillInFlight.Add(roomId)) return 0; }
             try
             {
-                string from = null;
-                int realMessages = 0;
+                // Resume from where a previous backfill left off, if any.
+                string from = _db.GetMeta(BackfillTokenKey(roomId));
 
                 for (int page = 0; page < maxPages; page++)
                 {
-                    var resp = await _client.GetRoomMessagesAsync(roomId, pageSize, from, CancellationToken.None);
+                    if (ct.IsCancellationRequested) break;
+
+                    var resp = await _client.GetRoomMessagesAsync(roomId, pageSize, from, ct).ConfigureAwait(false);
                     var chunk = resp != null && resp.ContainsKey("chunk") ? resp.GetNamedArray("chunk") : null;
-                    if (chunk == null || chunk.Count == 0) break;
+                    if (chunk == null || chunk.Count == 0)
+                    {
+                        // Reached the start of the room's history.
+                        _db.SetMeta(BackfillDoneKey(roomId), "1");
+                        break;
+                    }
 
                     long oldestTs = long.MaxValue;
                     foreach (var evVal in chunk)
@@ -368,7 +427,6 @@ namespace UniMatrix
                         string msgType = MatrixClient.GetString(content, "msgtype");
                         if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image") continue;
 
-                        realMessages++;
                         if (_db.MessageExists(eventId)) continue;
 
                         _db.UpsertMessage(new Message
@@ -382,19 +440,31 @@ namespace UniMatrix
                             Mxc = msgType == "m.image" ? MatrixClient.GetString(content, "url") : null,
                             IsLocalEcho = false
                         });
+                        fetched++;
                     }
 
-                    // Stop once we've covered the time window and have something to show.
-                    bool coveredWindow = oldestTs != long.MaxValue && oldestTs < sinceTs;
-                    if (coveredWindow && realMessages > 0) break;
-
-                    // Otherwise page further back; "end" is the token for older events (dir=b).
+                    // "end" is the token for the next (older) page when paging backward.
                     string end = MatrixClient.GetString(resp, "end");
-                    if (string.IsNullOrEmpty(end) || end == from) break;
+                    if (string.IsNullOrEmpty(end) || end == from)
+                    {
+                        // No further pages available -> we've reached the start.
+                        _db.SetMeta(BackfillDoneKey(roomId), "1");
+                        break;
+                    }
                     from = end;
+                    _db.SetMeta(BackfillTokenKey(roomId), from);
+
+                    // Stop once we've paged past the requested window (unless unlimited).
+                    if (sinceTs > 0 && oldestTs != long.MaxValue && oldestTs < sinceTs) break;
                 }
             }
-            catch { /* Offline or error: show whatever is cached. */ }
+            catch (OperationCanceledException) { /* suspended/cancelled: resume next time. */ }
+            catch { /* Offline or error: show whatever is cached; resume next time. */ }
+            finally
+            {
+                lock (_bfLock) { _backfillInFlight.Remove(roomId); }
+            }
+            return fetched;
         }
 
         private async Task RefreshCurrentRoomMessagesAsync()
@@ -546,7 +616,7 @@ namespace UniMatrix
 
             // Show the bottom progress bar only for a full initial sync (no token yet),
             // since that's the long one. Incremental long-polls don't need it.
-            if (string.IsNullOrEmpty(since)) ShowSyncProgress(true);
+            if (string.IsNullOrEmpty(since)) ShowSyncProgress(true, "Syncing your account…");
 
             while (!ct.IsCancellationRequested)
             {
@@ -578,7 +648,13 @@ namespace UniMatrix
                     }
 
                     ShowSyncProgress(false);
-                    _firstSyncTcs?.TrySetResult(true);
+                    bool wasFirst = _firstSyncTcs?.TrySetResult(true) ?? false;
+
+                    // After the first /sync (or whenever sync brings changes), continue
+                    // pulling full history for every room in the background so the user
+                    // doesn't have to open each one. Self-guards against double-starting.
+                    if (wasFirst || result.HasChanges)
+                        StartBackfillAll();
                 }
                 catch (OperationCanceledException)
                 {
@@ -597,10 +673,127 @@ namespace UniMatrix
             }
         }
 
-        private void ShowSyncProgress(bool show)
+        private void ShowSyncProgress(bool show, string message = null)
         {
             if (SyncProgressPanel == null) return;
+            // While the background backfill is running it owns the bottom progress bar;
+            // ignore hide requests from individual sync passes / room opens.
+            if (!show && _backfillAllActive) return;
+            if (show && message != null && SyncProgressText != null)
+                SyncProgressText.Text = message;
             SyncProgressPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        // ---- Background history backfill (all rooms) ----
+
+        private void StartBackfillAll()
+        {
+            // All callers run on the UI thread, so this check-and-set is race-free.
+            if (_backfillAllActive) return;
+            _backfillAllActive = true;
+            _backfillCts = new CancellationTokenSource();
+            var ct = _backfillCts.Token;
+            var _ = BackfillAllRoomsAsync(ct);
+        }
+
+        private void StopBackfillAll()
+        {
+            try { _backfillCts?.Cancel(); } catch { }
+            _backfillCts = null;
+        }
+
+        private async Task BackfillAllRoomsAsync(CancellationToken ct)
+        {
+            KeepScreenAwake(true);
+            try
+            {
+                var rooms = _db.GetRooms();
+                int total = rooms.Count;
+
+                var pending = new List<string>();
+                foreach (var r in rooms)
+                    if (NeedsBackfill(r.Id, CurrentHistoryWindow())) pending.Add(r.Id);
+
+                if (pending.Count == 0) return;
+
+                int done = total - pending.Count;
+                long messages = 0;
+                UpdateBackfillUi(done, total, messages);
+
+                foreach (var roomId in pending)
+                {
+                    if (ct.IsCancellationRequested) break;
+
+                    long since = CurrentHistoryWindow();
+                    int got = await TryBackfillAsync(roomId, since, ct);
+                    messages += got;
+                    done++;
+                    UpdateBackfillUi(done, total, messages);
+
+                    // Keep previews fresh, and refresh the open room if we just filled it.
+                    if (_activeView == View.RoomList) RefreshRooms();
+                    if (_currentRoomId == roomId)
+                        RenderMessages(roomId, since, PreferencesService.FallbackMessageCount);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { App.Log("Backfill-all error: " + ex.Message); }
+            finally
+            {
+                _backfillAllActive = false;
+                KeepScreenAwake(false);
+                HideSyncProgress();
+            }
+        }
+
+        private long CurrentHistoryWindow()
+        {
+            return _settings.HistoryUnlimited
+                ? 0
+                : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
+        }
+
+        private void UpdateBackfillUi(int done, int total, long messages)
+        {
+            if (SyncProgressPanel == null) return;
+            if (SyncProgressText != null)
+                SyncProgressText.Text = "Syncing channels " + done + "/" + total +
+                                        " · " + messages + " messages so far";
+            if (SyncProgressBar != null)
+            {
+                SyncProgressBar.IsIndeterminate = false;
+                SyncProgressBar.Minimum = 0;
+                SyncProgressBar.Maximum = Math.Max(1, total);
+                SyncProgressBar.Value = done;
+            }
+            SyncProgressPanel.Visibility = Visibility.Visible;
+        }
+
+        private void HideSyncProgress()
+        {
+            if (SyncProgressPanel == null) return;
+            SyncProgressPanel.Visibility = Visibility.Collapsed;
+            if (SyncProgressBar != null) SyncProgressBar.IsIndeterminate = true;
+        }
+
+        /// <summary>Keeps the display on while a long backfill runs, so it isn't paused by sleep.</summary>
+        private void KeepScreenAwake(bool on)
+        {
+            try
+            {
+                if (on)
+                {
+                    if (_displayRequest == null)
+                        _displayRequest = new Windows.System.Display.DisplayRequest();
+                    _displayRequest.RequestActive();
+                }
+                else if (_displayRequest != null)
+                {
+                    _displayRequest.RequestRelease();
+                    _displayRequest = null;
+                }
+            }
+            catch { }
         }
 
         private void SetSyncLed(Color color)
@@ -670,7 +863,21 @@ namespace UniMatrix
 
         internal void OnAppSuspending()
         {
+            // Pause background work and flush so cached history survives termination.
+            // Per-room pagination tokens are persisted, so backfill resumes on relaunch.
+            try { StopBackfillAll(); } catch { }
+            try { StopSync(); } catch { }
+            try { KeepScreenAwake(false); } catch { }
             try { _db?.Checkpoint(); } catch { }
+        }
+
+        internal void OnAppResuming()
+        {
+            // Resume sync and pick the background backfill back up where it left off.
+            if (!_initialized || _syncProcessor == null) return;
+            if (string.IsNullOrEmpty(_settings?.GetAccessToken())) return;
+            StartSync();
+            StartBackfillAll();
         }
 
         private async Task ShowErrorAsync(string message)

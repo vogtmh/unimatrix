@@ -14,6 +14,10 @@ namespace UniMatrix.Data
     {
         private SqliteConnection _connection;
         private readonly string _dbPath;
+        // Serializes all access to the single SQLite connection. The sync processor,
+        // the background history backfill, and UI-thread reads can all touch the
+        // connection concurrently, and SqliteConnection is not thread-safe.
+        private readonly object _gate = new object();
 
         public string DbPath => _dbPath;
 
@@ -92,6 +96,7 @@ namespace UniMatrix.Data
 
         public string GetMeta(string key)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "SELECT value FROM meta WHERE key = @k";
@@ -102,6 +107,7 @@ namespace UniMatrix.Data
 
         public void SetMeta(string key, string value)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "INSERT OR REPLACE INTO meta(key, value) VALUES(@k, @v)";
@@ -120,6 +126,7 @@ namespace UniMatrix.Data
             // portable insert-then-update. INSERT OR IGNORE creates the row if missing;
             // the UPDATE then merges, preserving existing name/avatar/topic when the
             // incoming value is null so state-light sync updates don't wipe details.
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"
@@ -129,6 +136,7 @@ namespace UniMatrix.Data
                 cmd.ExecuteNonQuery();
             }
 
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"
@@ -160,6 +168,7 @@ namespace UniMatrix.Data
 
         public void SetRoomUnread(string roomId, int unread)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "UPDATE rooms SET unread = @u WHERE id = @id";
@@ -172,6 +181,7 @@ namespace UniMatrix.Data
         public List<Room> GetRooms()
         {
             var result = new List<Room>();
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview
@@ -201,6 +211,7 @@ namespace UniMatrix.Data
 
         public void UpsertMessage(Message m)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"
@@ -221,6 +232,7 @@ namespace UniMatrix.Data
         /// <summary>Removes a local-echo placeholder once the real event arrives via sync.</summary>
         public void DeleteMessage(string eventId)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "DELETE FROM messages WHERE event_id = @id";
@@ -231,6 +243,7 @@ namespace UniMatrix.Data
 
         public bool MessageExists(string eventId)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "SELECT COUNT(*) FROM messages WHERE event_id = @id";
@@ -240,9 +253,9 @@ namespace UniMatrix.Data
         }
 
         /// <summary>Returns the most recent messages for a room in chronological (oldest-first) order.</summary>
-        public List<Message> GetMessages(string roomId, int limit)
-        {
+        public List<Message> GetMessages(string roomId, int limit)        {
             var result = new List<Message>();
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
@@ -257,6 +270,20 @@ namespace UniMatrix.Data
             return result;
         }
 
+        /// <summary>Oldest stored message timestamp for a room, or 0 if the room has none.</summary>
+        public long GetOldestMessageTs(string roomId)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "SELECT MIN(ts) FROM messages WHERE room_id = @room";
+                cmd.Parameters.AddWithValue("@room", roomId);
+                var v = cmd.ExecuteScalar();
+                if (v == null || v == DBNull.Value) return 0;
+                return Convert.ToInt64(v);
+            }
+        }
+
         /// <summary>
         /// Returns all messages with a timestamp at or after <paramref name="sinceTs"/>
         /// (oldest-first). If the room had no activity in that window, falls back to the most
@@ -266,6 +293,7 @@ namespace UniMatrix.Data
         public List<Message> GetMessagesSince(string roomId, long sinceTs, int fallbackCount)
         {
             var result = new List<Message>();
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
@@ -278,6 +306,7 @@ namespace UniMatrix.Data
 
             if (result.Count == 0)
             {
+                lock (_gate)
                 using (var cmd = _connection.CreateCommand())
                 {
                     cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
@@ -319,6 +348,7 @@ namespace UniMatrix.Data
 
         public void UpsertMember(Member m)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"
@@ -335,6 +365,7 @@ namespace UniMatrix.Data
         public Dictionary<string, string> GetMemberNames(string roomId)
         {
             var map = new Dictionary<string, string>();
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "SELECT user_id, display_name FROM members WHERE room_id = @room";
@@ -353,6 +384,7 @@ namespace UniMatrix.Data
 
         public int CountMembers(string roomId)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "SELECT COUNT(*) FROM members WHERE room_id = @room";
@@ -365,6 +397,7 @@ namespace UniMatrix.Data
 
         public string GetCachedMedia(string mxc)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = "SELECT local_path FROM media_cache WHERE mxc = @mxc";
@@ -375,6 +408,7 @@ namespace UniMatrix.Data
 
         public void SetCachedMedia(string mxc, string localPath)
         {
+            lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"INSERT OR REPLACE INTO media_cache(mxc, local_path, fetched_ts)
@@ -396,19 +430,25 @@ namespace UniMatrix.Data
         /// <summary>Flushes the write-ahead log into the main database file.</summary>
         public void Checkpoint()
         {
-            try { Execute("PRAGMA wal_checkpoint(TRUNCATE)"); }
-            catch { }
+            lock (_gate)
+            {
+                try { Execute("PRAGMA wal_checkpoint(TRUNCATE)"); }
+                catch { }
+            }
         }
 
         /// <summary>Drops all cached data on logout.</summary>
         public void ClearAll()
         {
-            Execute("DELETE FROM messages");
-            Execute("DELETE FROM rooms");
-            Execute("DELETE FROM members");
-            Execute("DELETE FROM media_cache");
-            Execute("DELETE FROM meta");
-            Checkpoint();
+            lock (_gate)
+            {
+                Execute("DELETE FROM messages");
+                Execute("DELETE FROM rooms");
+                Execute("DELETE FROM members");
+                Execute("DELETE FROM media_cache");
+                Execute("DELETE FROM meta");
+                Checkpoint();
+            }
         }
 
         private void Execute(string sql)

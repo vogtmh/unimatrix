@@ -17,6 +17,7 @@ namespace UniMatrix
             LogStartup("App constructor");
             this.InitializeComponent();
             this.Suspending += OnSuspending;
+            this.Resuming += OnResuming;
             this.UnhandledException += OnUnhandledException;
 
             // Catch background thread exceptions that bypass UnhandledException
@@ -120,6 +121,13 @@ namespace UniMatrix
             }
             catch { }
             deferral.Complete();
+        }
+
+        private void OnResuming(object sender, object e)
+        {
+            // App came back from suspend without termination: resume sync + backfill.
+            try { MainPage.Current?.OnAppResuming(); }
+            catch { }
         }
     }
 }

@@ -481,7 +481,8 @@
         <StackPanel x:Name="SyncProgressPanel" VerticalAlignment="Bottom"
                     Background="{StaticResource AppPanelBrush}" Padding="14,8"
                     Visibility="Collapsed">
-            <TextBlock Text="Syncing your account…" Foreground="{StaticResource AppSubtleTextBrush}"
+            <TextBlock x:Name="SyncProgressText" Text="Syncing your account…"
+                       Foreground="{StaticResource AppSubtleTextBrush}"
                        FontSize="12" Margin="0,0,0,4" />
             <ProgressBar x:Name="SyncProgressBar" IsIndeterminate="True"
                          Foreground="{StaticResource AppAccentBrush}" />
