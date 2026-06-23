@@ -337,6 +337,23 @@ namespace UniMatrix
             if (room != null) OpenRoom(room);
         }
 
+        /// <summary>
+        /// Opens a room with a short entrance animation. Used when jumping straight into a freshly
+        /// created direct chat so the transition from the Add Room panel feels intentional rather
+        /// than an instant cut. OpenRoom runs ShowView(Chat) synchronously before its first await,
+        /// so the chat view is already visible when we start the storyboard.
+        /// </summary>
+        private void OpenRoomAnimated(Room room)
+        {
+            OpenRoom(room);
+            try
+            {
+                ChatView.Opacity = 0;
+                ChatEnter.Begin();
+            }
+            catch { }
+        }
+
         // ---- Chat ----
 
         private async void OpenRoom(Room room)

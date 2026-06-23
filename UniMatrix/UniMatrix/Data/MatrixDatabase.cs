@@ -178,6 +178,24 @@ namespace UniMatrix.Data
             }
         }
 
+        /// <summary>
+        /// Sets a room's name ONLY when it doesn't already have one. Used to give nameless rooms
+        /// (notably direct messages) a sensible fallback derived from their members, without ever
+        /// overwriting a real m.room.name that was set by the room.
+        /// </summary>
+        public void SetRoomNameIfEmpty(string roomId, string name)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE rooms SET name = @name WHERE id = @id AND (name IS NULL OR name = '')";
+                cmd.Parameters.AddWithValue("@name", name);
+                cmd.Parameters.AddWithValue("@id", roomId);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
         public List<Room> GetRooms()
         {
             var result = new List<Room>();

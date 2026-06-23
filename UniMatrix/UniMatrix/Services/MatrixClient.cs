@@ -267,9 +267,71 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Leaves a room and then forgets it, so it disappears from the room list and the
-        /// server can eventually purge our copy of its history.
+        /// Starts a direct 1:1 chat with the given user (e.g. "@alice:matrix.org"). Creates an
+        /// invite-only room with is_direct=true (so the invitee's client treats it as a DM), then
+        /// records the room in the user's m.direct account-data map so every client — ours and
+        /// theirs — recognizes it as a direct chat. Returns the new room id.
         /// </summary>
+        public async Task<string> CreateDirectChatAsync(string userId)
+        {
+            userId = (userId ?? "").Trim();
+            var body = new JsonObject
+            {
+                // trusted_private_chat = invite-only, and invitees get the creator's power level
+                // (the usual preset for a peer-to-peer DM).
+                ["preset"] = JsonValue.CreateStringValue("trusted_private_chat"),
+                ["is_direct"] = JsonValue.CreateBooleanValue(true),
+                ["invite"] = new JsonArray { JsonValue.CreateStringValue(userId) }
+            };
+            var resp = await PostAsync("/_matrix/client/r0/createRoom", body, requireAuth: true);
+            string roomId = GetString(resp, "room_id");
+
+            if (!string.IsNullOrEmpty(roomId))
+            {
+                // Best-effort: the room already works as a DM; flagging it in m.direct just lets
+                // clients label/sort it as one. Don't fail the whole operation if this PUT fails.
+                try { await AddDirectRoomAsync(userId, roomId); }
+                catch { }
+            }
+            return roomId;
+        }
+
+        /// <summary>
+        /// Merges a (userId -&gt; roomId) entry into the m.direct account-data map, preserving any
+        /// existing direct rooms for other users (and for this user).
+        /// </summary>
+        private async Task AddDirectRoomAsync(string userId, string roomId)
+        {
+            if (string.IsNullOrEmpty(UserId)) return;
+            string basePath = "/_matrix/client/r0/user/" + Uri.EscapeDataString(UserId) +
+                              "/account_data/m.direct";
+
+            // Read the current map. A 404 (never set) surfaces as an exception from EnsureSuccess;
+            // treat that as an empty map.
+            JsonObject map = null;
+            try
+            {
+                string getPath = basePath + "?access_token=" + Uri.EscapeDataString(_accessToken);
+                map = await GetAsync(getPath, CancellationToken.None);
+            }
+            catch { map = null; }
+            if (map == null) map = new JsonObject();
+
+            JsonArray list = (map.ContainsKey(userId) && map[userId].ValueType == JsonValueType.Array)
+                ? map.GetNamedArray(userId)
+                : new JsonArray();
+
+            bool exists = false;
+            foreach (var item in list)
+            {
+                if (item.ValueType == JsonValueType.String && item.GetString() == roomId) { exists = true; break; }
+            }
+            if (!exists) list.Add(JsonValue.CreateStringValue(roomId));
+            map[userId] = list;
+
+            await PutAsync(basePath, map);
+        }
+
         public async Task LeaveRoomAsync(string roomId)
         {
             string id = Uri.EscapeDataString(roomId);

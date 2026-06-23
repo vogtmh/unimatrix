@@ -155,8 +155,60 @@ namespace UniMatrix.Services
             // sync window carried no name/message for it (UpsertRoom merges via
             // COALESCE, so null fields never overwrite existing data).
             _db.UpsertRoom(room);
+
+            // Nameless rooms (notably direct messages) have no m.room.name, so without help they'd
+            // show as a raw room id. Matrix names such rooms after their "heroes" (the other
+            // members the server picks out in the summary). Fill in that fallback only when the room
+            // still has no name — SetRoomNameIfEmpty never overwrites a real m.room.name.
+            if (string.IsNullOrEmpty(room.Name))
+            {
+                string heroName = BuildHeroName(roomId, summary);
+                if (!string.IsNullOrEmpty(heroName))
+                    _db.SetRoomNameIfEmpty(roomId, heroName);
+            }
+
             result.ChangedRooms.Add(roomId);
         }
+
+        /// <summary>
+        /// Builds a display name for a nameless room from the summary's m.heroes (the other
+        /// members), resolving each to a known display name where possible and otherwise to the
+        /// localpart of the Matrix id. Returns null if there are no heroes to name it after.
+        /// </summary>
+        private string BuildHeroName(string roomId, JsonObject summary)
+        {
+            JsonArray heroes = GetArray(summary, "m.heroes");
+            if (heroes == null || heroes.Count == 0) return null;
+
+            var names = _db.GetMemberNames(roomId);
+            var parts = new List<string>();
+            foreach (var h in heroes)
+            {
+                if (h.ValueType != JsonValueType.String) continue;
+                string id = h.GetString();
+                if (string.IsNullOrEmpty(id) || id == _myUserId) continue;
+
+                string display = null;
+                if (names != null) names.TryGetValue(id, out display);
+                if (string.IsNullOrEmpty(display)) display = LocalPart(id);
+                if (!string.IsNullOrEmpty(display)) parts.Add(display);
+
+                if (parts.Count >= 3) break; // keep the title short
+            }
+
+            if (parts.Count == 0) return null;
+            return string.Join(", ", parts);
+        }
+
+        /// <summary>"@alice:matrix.org" -&gt; "alice"; returns the input unchanged if not a Matrix id.</summary>
+        private static string LocalPart(string userId)
+        {
+            if (string.IsNullOrEmpty(userId)) return userId;
+            string s = userId[0] == '@' ? userId.Substring(1) : userId;
+            int colon = s.IndexOf(':');
+            return colon > 0 ? s.Substring(0, colon) : s;
+        }
+
 
         /// <summary>Applies a single state event; returns true if room metadata changed.</summary>
         private bool ApplyStateEvent(string roomId, JsonObject ev, Room room)

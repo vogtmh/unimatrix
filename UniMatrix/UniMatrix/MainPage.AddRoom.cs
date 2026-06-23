@@ -15,6 +15,7 @@ namespace UniMatrix
         private void OpenAddRoom()
         {
             JoinAddressBox.Text = "";
+            DirectMessageBox.Text = "";
             DirectorySearchBox.Text = "";
             PublicRooms.Clear();
             SetAddRoomStatus(null, false);
@@ -27,6 +28,72 @@ namespace UniMatrix
         private void AddRoomCloseButton_Click(object sender, RoutedEventArgs e)
         {
             ShowView(View.RoomList);
+        }
+
+        private void DirectMessageBox_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key == VirtualKey.Enter)
+            {
+                e.Handled = true;
+                StartDirectChatButton_Click(sender, null);
+            }
+        }
+
+        private async void StartDirectChatButton_Click(object sender, RoutedEventArgs e)
+        {
+            string userId = DirectMessageBox.Text?.Trim();
+            if (string.IsNullOrEmpty(userId))
+            {
+                SetAddRoomStatus("Enter a user ID, e.g. @alice:matrix.org", true);
+                return;
+            }
+            if (userId[0] != '@' || !userId.Contains(":"))
+            {
+                SetAddRoomStatus("User ID must look like @alice:matrix.org", true);
+                return;
+            }
+
+            AddRoomProgress.IsActive = true;
+            SetAddRoomStatus("Starting chat with " + userId + "\u2026", false);
+            try
+            {
+                string roomId = await _client.CreateDirectChatAsync(userId);
+                if (string.IsNullOrEmpty(roomId))
+                {
+                    SetAddRoomStatus("Could not start chat: no room was created.", true);
+                    return;
+                }
+
+                // The room normally appears on the next /sync, but jump straight in: persist a
+                // minimal placeholder (named after the invitee until membership syncs) so it shows
+                // in the list and can be opened now, then refresh + open it with a short animation.
+                var placeholder = new Room { Id = roomId, Name = DirectChatLocalPart(userId) };
+                _db.UpsertRoom(placeholder);
+                RefreshRooms();
+
+                Room room = null;
+                foreach (var r in Rooms) { if (r.Id == roomId) { room = r; break; } }
+                if (room == null) room = placeholder;
+
+                OpenRoomAnimated(room);
+            }
+            catch (Exception ex)
+            {
+                SetAddRoomStatus("Could not start chat: " + ex.Message, true);
+            }
+            finally
+            {
+                AddRoomProgress.IsActive = false;
+            }
+        }
+
+        /// <summary>"@alice:matrix.org" -&gt; "alice" for a provisional direct-chat title.</summary>
+        private static string DirectChatLocalPart(string userId)
+        {
+            if (string.IsNullOrEmpty(userId)) return userId;
+            string s = userId[0] == '@' ? userId.Substring(1) : userId;
+            int colon = s.IndexOf(':');
+            return colon > 0 ? s.Substring(0, colon) : s;
         }
 
         private void DirectorySearchBox_KeyDown(object sender, KeyRoutedEventArgs e)

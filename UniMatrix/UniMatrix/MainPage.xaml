@@ -233,6 +233,25 @@
 
         <!-- =========================== CHAT =========================== -->
         <Grid x:Name="ChatView" Visibility="Collapsed">
+            <Grid.Resources>
+                <!-- Short entrance used when jumping straight into a freshly created direct chat
+                     (see PlayChatEnterAnimation). Normal room opens don't trigger it. -->
+                <Storyboard x:Name="ChatEnter">
+                    <DoubleAnimation Storyboard.TargetName="ChatView"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0" To="1" Duration="0:0:0.25" />
+                    <DoubleAnimation Storyboard.TargetName="ChatViewTransform"
+                                     Storyboard.TargetProperty="Y"
+                                     From="14" To="0" Duration="0:0:0.25">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut" />
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+            </Grid.Resources>
+            <Grid.RenderTransform>
+                <TranslateTransform x:Name="ChatViewTransform" />
+            </Grid.RenderTransform>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -447,6 +466,23 @@
                         <TextBlock Text="Create a new room" Margin="8,0,0,0" VerticalAlignment="Center" />
                     </StackPanel>
                 </Button>
+
+                <TextBlock Text="DIRECT MESSAGE" Foreground="{StaticResource AppFaintTextBrush}"
+                           FontSize="11" FontWeight="SemiBold" Margin="2,20,0,4" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox Grid.Column="0" x:Name="DirectMessageBox"
+                             PlaceholderText="@user:server.org"
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                             VerticalAlignment="Center" KeyDown="DirectMessageBox_KeyDown" />
+                    <Button Grid.Column="1" Content="Message" Click="StartDirectChatButton_Click"
+                            Margin="8,0,0,0" Padding="14,9"
+                            Background="{StaticResource AppAccentBrush}" Foreground="White"
+                            BorderThickness="0" />
+                </Grid>
 
                 <TextBlock Text="JOIN BY ADDRESS" Foreground="{StaticResource AppFaintTextBrush}"
                            FontSize="11" FontWeight="SemiBold" Margin="2,20,0,4" />
