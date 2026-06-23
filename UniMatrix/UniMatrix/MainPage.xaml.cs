@@ -564,11 +564,7 @@ namespace UniMatrix
             };
             _db.UpsertMessage(echo);
             // Show a date separator if this echo starts a new day (or the timeline is empty).
-            var echoDay = DateTimeOffset.FromUnixTimeMilliseconds(echo.Timestamp).LocalDateTime.Date;
-            DateTime? lastDay = Messages.Count > 0
-                ? (DateTime?)DateTimeOffset.FromUnixTimeMilliseconds(Messages[Messages.Count - 1].Timestamp).LocalDateTime.Date
-                : null;
-            echo.ShowDateSeparator = lastDay == null || echoDay != lastDay.Value;
+            SetEchoDateSeparator(echo);
             Messages.Add(echo);
             ScrollMessagesToBottom();
 

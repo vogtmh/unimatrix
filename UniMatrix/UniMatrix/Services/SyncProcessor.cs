@@ -216,7 +216,7 @@ namespace UniMatrix.Services
             // Remove the optimistic local echo for our own just-sent message, if present.
             if (sender == _myUserId)
             {
-                RemoveMatchingLocalEcho(roomId, body);
+                RemoveMatchingLocalEcho(roomId, msgType, body);
             }
 
             _db.UpsertMessage(msg);
@@ -227,11 +227,11 @@ namespace UniMatrix.Services
         /// Deletes a pending local-echo placeholder that matches a confirmed message
         /// of ours, preventing a brief duplicate after sending.
         /// </summary>
-        private void RemoveMatchingLocalEcho(string roomId, string body)
+        private void RemoveMatchingLocalEcho(string roomId, string msgType, string body)
         {
             foreach (var m in _db.GetMessages(roomId, 20))
             {
-                if (m.IsLocalEcho && m.Sender == _myUserId && m.Body == body)
+                if (m.IsLocalEcho && m.Sender == _myUserId && m.MsgType == msgType && m.Body == body)
                 {
                     _db.DeleteMessage(m.EventId);
                     break;

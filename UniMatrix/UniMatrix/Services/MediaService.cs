@@ -75,6 +75,53 @@ namespace UniMatrix.Services
             }
         }
 
+        /// <summary>
+        /// Copies an already-picked local file into the media cache under the freshly-assigned
+        /// mxc's filename, and registers it in the DB. After uploading a picture we call this so
+        /// that when the same m.image event comes back through /sync the thumbnail is an instant
+        /// cache hit instead of being re-downloaded from the server.
+        /// </summary>
+        public async Task CacheLocalFileForMxcAsync(StorageFile source, string mxc)
+        {
+            if (source == null || string.IsNullOrEmpty(mxc) ||
+                !mxc.StartsWith("mxc://", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            try
+            {
+                var folder = await GetFolderAsync();
+                string fileName = SafeFileName(mxc) + ".img";
+                await source.CopyAsync(folder, fileName, NameCollisionOption.ReplaceExisting);
+                _db.SetCachedMedia(mxc, "ms-appdata:///local/media/" + fileName);
+            }
+            catch (Exception ex)
+            {
+                App.Log("CacheLocalFileForMxc EXC: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Copies a picked file into the media folder under a unique temp name and returns its
+        /// ms-appdata URI. Used to show an instant local-echo preview bubble before the upload
+        /// completes (we don't yet know the mxc URI at echo time).
+        /// </summary>
+        public async Task<string> CacheLocalPreviewAsync(StorageFile source)
+        {
+            if (source == null) return null;
+            try
+            {
+                var folder = await GetFolderAsync();
+                string fileName = "echo_" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ".img";
+                await source.CopyAsync(folder, fileName, NameCollisionOption.ReplaceExisting);
+                return "ms-appdata:///local/media/" + fileName;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CacheLocalPreview EXC: " + ex.Message);
+                return null;
+            }
+        }
+
         private static string SafeFileName(string mxc)
         {
             // mxc://server/mediaId -> server_mediaId with non-alphanumerics stripped.

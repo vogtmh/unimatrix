@@ -314,14 +314,20 @@
             <!-- Composer -->
             <Grid Grid.Row="2" Background="{StaticResource AppPanelBrush}" Padding="8,6">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBox Grid.Column="0" x:Name="MessageBox" PlaceholderText="Message"
+                <Button Grid.Column="0" x:Name="AttachButton" Click="AttachButton_Click"
+                        Background="Transparent" BorderThickness="0"
+                        Margin="0,0,4,0" Padding="10,10" VerticalAlignment="Stretch">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE723;" FontSize="18" Foreground="#CCFFFFFF" />
+                </Button>
+                <TextBox Grid.Column="1" x:Name="MessageBox" PlaceholderText="Message"
                          Background="{StaticResource AppCardBrush}" BorderThickness="0"
                          TextWrapping="Wrap" AcceptsReturn="False" VerticalAlignment="Center"
                          KeyDown="MessageBox_KeyDown" />
-                <Button Grid.Column="1" x:Name="SendButton" Click="SendButton_Click"
+                <Button Grid.Column="2" x:Name="SendButton" Click="SendButton_Click"
                         Background="{StaticResource AppAccentBrush}" BorderThickness="0"
                         Margin="8,0,0,0" Padding="14,10" VerticalAlignment="Stretch">
                     <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE724;" FontSize="18" Foreground="White" />

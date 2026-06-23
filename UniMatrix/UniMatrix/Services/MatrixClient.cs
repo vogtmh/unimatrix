@@ -174,7 +174,84 @@ namespace UniMatrix.Services
             return GetString(resp, "event_id");
         }
 
-        public async Task<string> CreateRoomAsync(string name, bool isPublic)
+        /// <summary>
+        /// Uploads raw media bytes to the homeserver's content repository and returns the
+        /// resulting mxc:// URI (null on failure). Tries the current v3 endpoint first, then
+        /// falls back to the legacy r0 one for older servers. Authentication uses ONLY the
+        /// access_token query parameter (never an Authorization header), matching the rest of
+        /// the client and avoiding matrix.org's M_MISSING_TOKEN "mixing" rejection.
+        /// </summary>
+        public async Task<string> UploadMediaAsync(Windows.Storage.Streams.IBuffer bytes, string contentType, string filename)
+        {
+            if (bytes == null) return null;
+            if (string.IsNullOrEmpty(contentType)) contentType = "application/octet-stream";
+            string tok = Uri.EscapeDataString(_accessToken);
+            string nameQuery = string.IsNullOrEmpty(filename) ? "" : "&filename=" + Uri.EscapeDataString(filename);
+
+            var candidates = new[]
+            {
+                _baseUrl + "/_matrix/media/v3/upload?access_token=" + tok + nameQuery,
+                _baseUrl + "/_matrix/media/r0/upload?access_token=" + tok + nameQuery,
+            };
+
+            foreach (var url in candidates)
+            {
+                try
+                {
+                    var content = new HttpBufferContent(bytes);
+                    content.Headers.ContentType = new Windows.Web.Http.Headers.HttpMediaTypeHeaderValue(contentType);
+                    using (var resp = await _http.PostAsync(new Uri(url), content))
+                    {
+                        string text = await resp.Content.ReadAsStringAsync();
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            string mxc = GetString(Parse(text), "content_uri");
+                            if (!string.IsNullOrEmpty(mxc)) return mxc;
+                        }
+                        else
+                        {
+                            string snippet = text != null && text.Length > 160 ? text.Substring(0, 160) : text;
+                            App.Log("Upload " + (int)resp.StatusCode + " :: " + snippet);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log("Upload EXC: " + ex.Message);
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Sends an m.image message referencing an already-uploaded mxc:// URI. The info block
+        /// (mimetype/size/dimensions) is optional metadata that other clients use for layout.
+        /// </summary>
+        public async Task<string> SendImageMessageAsync(string roomId, string mxc, string filename,
+            string mimetype, int width, int height, ulong size)
+        {
+            string txnId = "m" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
+                          "/send/m.room.message/" + Uri.EscapeDataString(txnId);
+
+            var info = new JsonObject();
+            if (!string.IsNullOrEmpty(mimetype)) info["mimetype"] = JsonValue.CreateStringValue(mimetype);
+            if (width > 0) info["w"] = JsonValue.CreateNumberValue(width);
+            if (height > 0) info["h"] = JsonValue.CreateNumberValue(height);
+            if (size > 0) info["size"] = JsonValue.CreateNumberValue(size);
+
+            var content = new JsonObject
+            {
+                ["msgtype"] = JsonValue.CreateStringValue("m.image"),
+                ["body"] = JsonValue.CreateStringValue(string.IsNullOrEmpty(filename) ? "image" : filename),
+                ["url"] = JsonValue.CreateStringValue(mxc),
+                ["info"] = info
+            };
+
+            var resp = await PutAsync(path, content);
+            return GetString(resp, "event_id");
+        }
+
         {
             var body = new JsonObject
             {
