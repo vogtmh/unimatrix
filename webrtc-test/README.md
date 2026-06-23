@@ -98,6 +98,12 @@ If you prefer the GUI for the first run (often easier to read errors):
 
 ## Known failure modes (and what they mean)
 
+- **`This project references NuGet package(s) that are missing ... Microsoft.Windows.CppWinRT...props`**
+  → the solution's NuGet packages weren't restored. These projects use `packages.config`, so
+  `msbuild /t:Restore` is not enough - run `nuget.exe restore` on the .sln. The script now does
+  this automatically before building; if you build by hand, run
+  `nuget restore C:\webrtc-uwp\webrtc\windows\solutions\WebRtc.Universal.sln` first. The native
+  lib is cached, so re-building after a restore is fast.
 - **`Windows SDK debug tools are missing!`** (run.py aborts in ~2 s, MSB3073 / exit code 4) → the
   **Debugging Tools for Windows** SDK feature isn't installed. Fix: *Settings → Apps → "Windows
   Software Development Kit" → Modify → check "Debugging Tools for Windows"* — for **both** the

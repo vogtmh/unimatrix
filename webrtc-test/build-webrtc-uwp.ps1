@@ -222,6 +222,38 @@ function Invoke-Clone {
     Ok "Clone complete."
 }
 
+# Finds nuget.exe on PATH, else downloads it next to this script.
+function Get-NuGet {
+    $onPath = Get-Command nuget.exe -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    $local = Join-Path $PSScriptRoot "nuget.exe"
+    if (Test-Path $local) { return $local }
+    Write-Host "  nuget.exe not found - downloading to $local ..." -ForegroundColor Gray
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe" -OutFile $local
+        return $local
+    } catch {
+        Warn "Could not download nuget.exe ($($_.Exception.Message))."
+        return $null
+    }
+}
+
+# Restores the solution's NuGet packages. These projects use packages.config
+# (e.g. Microsoft.Windows.CppWinRT), so 'msbuild /t:Restore' is NOT enough - use nuget.exe.
+function Restore-Packages($sln) {
+    Write-Section "Restore NuGet packages"
+    $nuget = Get-NuGet
+    if (-not $nuget) {
+        Warn "Skipping restore - nuget.exe unavailable. Build may fail on missing CppWinRT package."
+        return
+    }
+    Write-Host "  $nuget restore $sln" -ForegroundColor Gray
+    & $nuget restore $sln
+    if ($LASTEXITCODE -ne 0) { Warn "nuget restore returned $LASTEXITCODE (continuing; build will report if packages are still missing)." }
+    else { Ok "Packages restored." }
+}
+
 # --------------------------------------------------------------------------------------
 function Invoke-Build {
     Write-Section "Build WebRtc.Universal.sln ($Configuration | $Platform)"
@@ -233,6 +265,8 @@ function Invoke-Build {
 
     $msbuild = Find-MsBuild
     if (-not $msbuild) { throw "MSBuild 15.0 (VS2017) not found; cannot build." }
+
+    Restore-Packages $sln
 
     Write-Host "  Solution : $sln" -ForegroundColor Gray
     Write-Host "  MSBuild  : $msbuild" -ForegroundColor Gray
