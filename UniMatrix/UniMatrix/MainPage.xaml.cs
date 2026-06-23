@@ -42,7 +42,7 @@ namespace UniMatrix
         private const int AvatarThumbSize = 96;
         private const int ImageThumbSize = 320;
 
-        private enum View { Splash, Login, RoomList, Chat, RoomInfo, Settings }
+        private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings }
 
         public MainPage()
         {
@@ -119,6 +119,7 @@ namespace UniMatrix
             _activeView = view;
             SplashPanel.Visibility = view == View.Splash ? Visibility.Visible : Visibility.Collapsed;
             LoginPanel.Visibility = view == View.Login ? Visibility.Visible : Visibility.Collapsed;
+            SetupPanel.Visibility = view == View.Setup ? Visibility.Visible : Visibility.Collapsed;
             RoomListView.Visibility = view == View.RoomList ? Visibility.Visible : Visibility.Collapsed;
             ChatView.Visibility = view == View.Chat ? Visibility.Visible : Visibility.Collapsed;
             RoomInfoPanel.Visibility = view == View.RoomInfo ? Visibility.Visible : Visibility.Collapsed;
@@ -280,19 +281,20 @@ namespace UniMatrix
         {
             Messages.Clear();
 
-            long sinceTs = DateTimeOffset.UtcNow
-                .AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
+            // Unlimited history -> sinceTs 0 loads everything; otherwise the day window.
+            long sinceTs = _settings.HistoryUnlimited
+                ? 0
+                : DateTimeOffset.UtcNow.AddDays(-_settings.HistoryDays).ToUnixTimeMilliseconds();
             int fallback = PreferencesService.FallbackMessageCount;
-            int maxCount = PreferencesService.MaxMessagesPerRoom;
 
             var names = _db.GetMemberNames(roomId);
-            var msgs = _db.GetMessagesSince(roomId, sinceTs, fallback, maxCount);
+            var msgs = _db.GetMessagesSince(roomId, sinceTs, fallback);
 
             // Backfill from the server if we have no cached history yet.
             if (msgs.Count == 0)
             {
                 await TryBackfillAsync(roomId, sinceTs);
-                msgs = _db.GetMessagesSince(roomId, sinceTs, fallback, maxCount);
+                msgs = _db.GetMessagesSince(roomId, sinceTs, fallback);
                 names = _db.GetMemberNames(roomId);
             }
 
@@ -331,10 +333,12 @@ namespace UniMatrix
         {
             // The /messages limit counts ALL events (state, membership, etc.), so a single
             // page rarely yields enough real messages. Page backward until we've crossed the
-            // requested time window (and have at least one message), run out of history, or
-            // hit a safety cap that protects memory on quiet rooms with old-only history.
-            const int pageSize = 60;
-            const int maxPages = 12;
+            // requested time window (and have at least one message) or run out of history.
+            // The page cap is just a safety net against a server that never returns the
+            // window boundary; on a busy room this can take a couple of minutes, which is
+            // expected for an initial backfill.
+            const int pageSize = 100;
+            const int maxPages = 200;
             try
             {
                 string from = null;
@@ -539,6 +543,11 @@ namespace UniMatrix
             // long-poll that holds the connection open until something changes, which
             // is normal and means we are connected, not busy.
             SetSyncLed(Colors.Orange);
+
+            // Show the bottom progress bar only for a full initial sync (no token yet),
+            // since that's the long one. Incremental long-polls don't need it.
+            if (string.IsNullOrEmpty(since)) ShowSyncProgress(true);
+
             while (!ct.IsCancellationRequested)
             {
                 try
@@ -568,6 +577,7 @@ namespace UniMatrix
                             await RefreshCurrentRoomMessagesAsync();
                     }
 
+                    ShowSyncProgress(false);
                     _firstSyncTcs?.TrySetResult(true);
                 }
                 catch (OperationCanceledException)
@@ -579,11 +589,18 @@ namespace UniMatrix
                     App.Log("SYNC ERROR (since=" + (since ?? "<initial>") + "): " + ex);
                     SetSyncLed(Color.FromArgb(255, 0xFF, 0x6B, 0x6B)); // red
                     ShowSyncError(ex.Message);
+                    ShowSyncProgress(false);
                     _firstSyncTcs?.TrySetResult(false);
                     try { await Task.Delay(5000, ct); }
                     catch (OperationCanceledException) { break; }
                 }
             }
+        }
+
+        private void ShowSyncProgress(bool show)
+        {
+            if (SyncProgressPanel == null) return;
+            SyncProgressPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void SetSyncLed(Color color)

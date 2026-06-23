@@ -258,22 +258,21 @@ namespace UniMatrix.Data
         }
 
         /// <summary>
-        /// Returns messages with a timestamp at or after <paramref name="sinceTs"/> (oldest-first),
-        /// capped at <paramref name="maxCount"/>. If the room had no activity in that window,
-        /// falls back to the most recent <paramref name="fallbackCount"/> messages so the chat
-        /// is never empty (e.g. quiet rooms whose last message is older than the window).
+        /// Returns all messages with a timestamp at or after <paramref name="sinceTs"/>
+        /// (oldest-first). If the room had no activity in that window, falls back to the most
+        /// recent <paramref name="fallbackCount"/> messages so the chat is never empty
+        /// (e.g. quiet rooms whose last message is older than the window).
         /// </summary>
-        public List<Message> GetMessagesSince(string roomId, long sinceTs, int fallbackCount, int maxCount)
+        public List<Message> GetMessagesSince(string roomId, long sinceTs, int fallbackCount)
         {
             var result = new List<Message>();
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
                                     FROM messages WHERE room_id = @room AND ts >= @since
-                                    ORDER BY ts DESC LIMIT @limit";
+                                    ORDER BY ts DESC";
                 cmd.Parameters.AddWithValue("@room", roomId);
                 cmd.Parameters.AddWithValue("@since", sinceTs);
-                cmd.Parameters.AddWithValue("@limit", maxCount);
                 ReadMessages(cmd, result);
             }
 
@@ -290,7 +289,7 @@ namespace UniMatrix.Data
                 }
             }
 
-            // Stored newest-first for the LIMIT; reverse to oldest-first for display.
+            // Stored newest-first; reverse to oldest-first for display.
             result.Reverse();
             return result;
         }
