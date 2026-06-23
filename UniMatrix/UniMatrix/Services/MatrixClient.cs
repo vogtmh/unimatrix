@@ -260,6 +260,7 @@ namespace UniMatrix.Services
             if (resp.IsSuccessStatusCode) return;
 
             string message = "HTTP " + (int)resp.StatusCode;
+            bool parsedStructured = false;
             try
             {
                 JsonObject err;
@@ -268,10 +269,21 @@ namespace UniMatrix.Services
                     string code = GetString(err, "errcode");
                     string detail = GetString(err, "error");
                     if (!string.IsNullOrEmpty(detail))
+                    {
                         message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
+                        parsedStructured = true;
+                    }
                 }
             }
             catch { }
+
+            // For non-Matrix errors (e.g. proxy HTML pages) include a snippet of the body.
+            if (!parsedStructured && !string.IsNullOrEmpty(text))
+            {
+                string snippet = text.Length > 200 ? text.Substring(0, 200) : text;
+                message += ": " + snippet;
+            }
+
             throw new MatrixException(message, (int)resp.StatusCode);
         }
 

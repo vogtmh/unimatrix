@@ -52,6 +52,12 @@ namespace UniMatrix
             catch { }
         }
 
+        /// <summary>Appends a diagnostic line to startup.log (shared app log).</summary>
+        internal static void Log(string message)
+        {
+            LogStartup(message);
+        }
+
         private async void OnUnhandledException(object sender, Windows.UI.Xaml.UnhandledExceptionEventArgs e)
         {
             e.Handled = true;

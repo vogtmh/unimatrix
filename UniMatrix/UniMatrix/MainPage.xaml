@@ -141,6 +141,9 @@
                           Foreground="{StaticResource AppFaintTextBrush}" HorizontalAlignment="Center" />
                 <TextBlock Text="No rooms yet" Foreground="{StaticResource AppSubtleTextBrush}"
                            FontSize="16" HorizontalAlignment="Center" Margin="0,12,0,0" />
+                <TextBlock x:Name="SyncErrorText" Foreground="#FF6B6B" TextWrapping="Wrap"
+                           FontSize="12" HorizontalAlignment="Center" TextAlignment="Center"
+                           Margin="24,12,24,0" Visibility="Collapsed" />
             </StackPanel>
         </Grid>
 

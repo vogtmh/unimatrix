@@ -456,6 +456,7 @@ namespace UniMatrix
                     }
 
                     SetSyncLed(Color.FromArgb(255, 0x4C, 0xD9, 0x64)); // green
+                    ClearSyncError();
 
                     if (result.HasChanges)
                     {
@@ -469,9 +470,11 @@ namespace UniMatrix
                 {
                     break;
                 }
-                catch
+                catch (Exception ex)
                 {
+                    App.Log("SYNC ERROR (since=" + (since ?? "<initial>") + "): " + ex);
                     SetSyncLed(Color.FromArgb(255, 0xFF, 0x6B, 0x6B)); // red
+                    ShowSyncError(ex.Message);
                     try { await Task.Delay(5000, ct); }
                     catch (OperationCanceledException) { break; }
                 }
@@ -481,6 +484,23 @@ namespace UniMatrix
         private void SetSyncLed(Color color)
         {
             SyncLed.Fill = new SolidColorBrush(color);
+        }
+
+        private void ShowSyncError(string message)
+        {
+            if (SyncErrorText == null) return;
+            // Only useful while the list is empty; otherwise the LED conveys the state.
+            if (Rooms.Count == 0)
+            {
+                SyncErrorText.Text = "Sync failed: " + message;
+                SyncErrorText.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void ClearSyncError()
+        {
+            if (SyncErrorText == null) return;
+            SyncErrorText.Visibility = Visibility.Collapsed;
         }
 
         // ---- Lifecycle ----

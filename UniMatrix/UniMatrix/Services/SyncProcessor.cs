@@ -44,9 +44,17 @@ namespace UniMatrix.Services
 
             foreach (var roomId in join.Keys)
             {
-                JsonObject roomObj = GetObject(join, roomId);
-                if (roomObj == null) continue;
-                ProcessJoinedRoom(roomId, roomObj, result);
+                try
+                {
+                    JsonObject roomObj = GetObject(join, roomId);
+                    if (roomObj == null) continue;
+                    ProcessJoinedRoom(roomId, roomObj, result);
+                }
+                catch (Exception ex)
+                {
+                    // Don't let one malformed room abort the entire sync.
+                    App.Log("SYNC room parse error (" + roomId + "): " + ex.Message);
+                }
             }
 
             return result;
