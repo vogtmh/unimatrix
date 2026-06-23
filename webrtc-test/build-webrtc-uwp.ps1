@@ -1,4 +1,4 @@
-# WebRTC-for-UWP build script (Windows 10 Mobile / ARM32 — Lumia 930)
+# WebRTC-for-UWP build script (Windows 10 Mobile / ARM32 - Lumia 930)
 #
 # PURPOSE
 #   "Test first" harness to BUILD the WebRTC dependency for UWP ARM and the bundled
@@ -11,7 +11,7 @@
 #
 # WHY THIS SDK (and not Microsoft WinRTC)
 #   - webrtc-uwp-sdk (this script) is the ONLY one that ever targeted ARM32 + Win10 Mobile.
-#     It is DEPRECATED (~2018, last branch M71). Expect bitrot — this is an experiment.
+#     It is DEPRECATED (~2018, last branch M71). Expect bitrot - this is an experiment.
 #   - microsoft/winrtc is the successor but targets modern Windows / Win32 / ARM64 only,
 #     so it cannot produce an ARM32 Win10 Mobile binary for the Lumia 930.
 #
@@ -30,7 +30,7 @@
 
 [CmdletBinding()]
 param(
-    # Keep the path SHORT — the WebRTC build hits the Windows MAX_PATH limit otherwise.
+    # Keep the path SHORT - the WebRTC build hits the Windows MAX_PATH limit otherwise.
     [string]$RepoRoot   = "C:\webrtc-uwp",
     [ValidateSet("ARM","x86","x64")]
     [string]$Platform   = "ARM",
@@ -102,7 +102,7 @@ function Invoke-PrereqCheck {
     # OS
     Require ($env:OS -eq "Windows_NT") "Running on Windows" "This build MUST run on Windows (you are not on Windows)."
 
-    # Path length — the single most common reason this build fails.
+    # Path length - the single most common reason this build fails.
     Require ($RepoRoot.Length -le 24) `
         "Repo root path is short enough ('$RepoRoot')" `
         "Repo root '$RepoRoot' is long ($($RepoRoot.Length) chars). Use something like C:\webrtc-uwp; the build hits MAX_PATH."
@@ -118,13 +118,13 @@ function Invoke-PrereqCheck {
     $msbuild = Find-MsBuild
     Require ($msbuild -ne $null) "MSBuild 15.0 found" "MSBuild 15.0 (VS2017) not found."
 
-    # Windows SDKs — BOTH are required by webrtc-uwp-sdk.
+    # Windows SDKs - BOTH are required by webrtc-uwp-sdk.
     Require (Test-WindowsSdk "10.0.17134.0") "Windows SDK 10.0.17134 present" `
         "Windows SDK 10.0.17134 missing. Hard-coded in the Google sources. Install it (with 'Debugging Tools for Windows') from the SDK archive page."
     Require (Test-WindowsSdk "10.0.17763.0") "Windows SDK 10.0.17763 present" `
         "Windows SDK 10.0.17763 missing. Used by the UWP wrappers. Install it (with 'Debugging Tools for Windows') from the SDK archive page."
 
-    # Python 2.7 — depot_tools/gn era. Python 3 will break the prepare scripts.
+    # Python 2.7 - depot_tools/gn era. Python 3 will break the prepare scripts.
     $py = Get-Command python -ErrorAction SilentlyContinue
     if ($py) {
         $ver = (& python --version 2>&1) -join ""
@@ -134,11 +134,11 @@ function Invoke-PrereqCheck {
         Bad "python not on PATH. Install Python 2.7.15 and put C:\Python27 first on PATH."; $script:Problems++
     }
 
-    # Strawberry Perl — used by BoringSSL build.
+    # Strawberry Perl - used by BoringSSL build.
     $perl = Get-Command perl -ErrorAction SilentlyContinue
     Require ($perl -ne $null) "perl found" "Strawberry Perl not on PATH (needed by BoringSSL). Install from strawberryperl.com."
 
-    # Disk space — a full WebRTC tree + build output is large.
+    # Disk space - a full WebRTC tree + build output is large.
     try {
         $drive = (Split-Path -Qualifier $RepoRoot)
         $free  = (Get-PSDrive ($drive.TrimEnd(':'))).Free
@@ -162,7 +162,7 @@ function Invoke-Clone {
     Write-Section "Clone webrtc-uwp-sdk"
 
     if (Test-Path (Join-Path $RepoRoot ".git")) {
-        Ok "Repo already present at $RepoRoot — skipping clone."
+        Ok "Repo already present at $RepoRoot - skipping clone."
         Warn "If you want a clean tree, delete $RepoRoot first and re-run with -Clone."
         return
     }
@@ -170,7 +170,7 @@ function Invoke-Clone {
     $parent = Split-Path -Parent $RepoRoot
     if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
 
-    Write-Host "  Cloning (recursive, this pulls ALL submodules — can take a long time)..." -ForegroundColor Gray
+    Write-Host "  Cloning (recursive, this pulls ALL submodules - can take a long time)..." -ForegroundColor Gray
     Write-Host "  git clone --recursive $RepoUrl $RepoRoot" -ForegroundColor Gray
     & git clone --recursive $RepoUrl $RepoRoot
     if ($LASTEXITCODE -ne 0) { throw "git clone failed (exit $LASTEXITCODE)." }
@@ -220,7 +220,7 @@ function Invoke-Build {
         foreach ($a in $artifacts) { Ok $a.FullName }
         Write-Host ""
         Write-Host "  These are the files UniMatrix would later reference (Org.WebRtc.winmd + .dll +" -ForegroundColor Gray
-        Write-Host "  WebRtcScheme.dll). For THIS test, deploy the PeerCC sample instead — see README.md." -ForegroundColor Gray
+        Write-Host "  WebRtcScheme.dll). For THIS test, deploy the PeerCC sample instead - see README.md." -ForegroundColor Gray
     } else {
         Warn "Build reported success but no Org.WebRtc.winmd/.dll was found for $Platform. Inspect $log."
     }
