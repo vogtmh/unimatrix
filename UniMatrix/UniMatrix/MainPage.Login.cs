@@ -1,11 +1,22 @@
 using System;
+using Windows.System;
 using Windows.UI.Xaml;
+using Windows.UI.Xaml.Input;
 using UniMatrix.Services;
 
 namespace UniMatrix
 {
     public sealed partial class MainPage
     {
+        private void LoginField_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key == VirtualKey.Enter)
+            {
+                e.Handled = true;
+                LoginButton_Click(sender, null);
+            }
+        }
+
         private async void LoginButton_Click(object sender, RoutedEventArgs e)
         {
             string server = LoginServerBox.Text?.Trim();
@@ -43,9 +54,9 @@ namespace UniMatrix
 
                 _syncProcessor = new SyncProcessor(_db, _settings.UserId);
                 SetLoginBusy(false);
-                ShowView(View.RoomList);
-                LoadRoomsFromCache();
-                StartSync();
+
+                // Fresh login: capture initial preferences before entering the app.
+                ShowSetup();
             }
             catch (MatrixException mex)
             {

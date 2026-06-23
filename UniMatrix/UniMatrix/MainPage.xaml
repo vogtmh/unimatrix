@@ -36,7 +36,7 @@
                 </Storyboard>
             </Grid.Resources>
             <StackPanel x:Name="SplashContent" HorizontalAlignment="Center"
-                        VerticalAlignment="Center" MaxWidth="320" Padding="24">
+                        VerticalAlignment="Center" MaxWidth="320" Padding="24" Opacity="0">
                 <StackPanel.RenderTransform>
                     <TranslateTransform x:Name="SplashContentTransform" />
                 </StackPanel.RenderTransform>
@@ -64,17 +64,20 @@
                     <TextBlock Text="HOMESERVER" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="2,0,0,4" />
                     <TextBox x:Name="LoginServerBox" Text="matrix.org" Margin="0,0,0,16"
-                             Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                             KeyDown="LoginField_KeyDown" />
 
                     <TextBlock Text="USERNAME" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="2,0,0,4" />
                     <TextBox x:Name="LoginUserBox" PlaceholderText="user" Margin="0,0,0,16"
-                             Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+                             Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                             KeyDown="LoginField_KeyDown" />
 
                     <TextBlock Text="PASSWORD" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="2,0,0,4" />
                     <PasswordBox x:Name="LoginPassBox" Margin="0,0,0,24"
-                                 Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+                                 Background="{StaticResource AppCardBrush}" BorderThickness="0"
+                                 KeyDown="LoginField_KeyDown" />
 
                     <Button x:Name="LoginButton" Content="Sign in" Click="LoginButton_Click"
                             HorizontalAlignment="Stretch" Padding="0,12"
@@ -85,6 +88,45 @@
                                TextWrapping="Wrap" Margin="0,16,0,0" Visibility="Collapsed" />
                     <ProgressRing x:Name="LoginProgress" Width="32" Height="32" Margin="0,16,0,0"
                                   Foreground="{StaticResource AppAccentBrush}" IsActive="False" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============================ SETUP ============================ -->
+        <!-- Shown once after a fresh login to capture initial preferences. -->
+        <Grid x:Name="SetupPanel" Background="{StaticResource AppBackgroundBrush}"
+              Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                            MaxWidth="420" Padding="24,48">
+                    <Image Source="ms-appx:///Assets/unimatrix_banner.png" Stretch="Uniform"
+                           MaxWidth="240" HorizontalAlignment="Center" />
+                    <TextBlock Text="Let's set things up" Foreground="White" FontSize="20"
+                               FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,16,0,4" />
+                    <TextBlock Text="You can change these later in Settings."
+                               Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                               HorizontalAlignment="Center" Margin="0,0,0,32" TextAlignment="Center" />
+
+                    <TextBlock Text="MESSAGE HISTORY" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="How many days of history to load per room" Foreground="White"
+                               FontSize="14" TextWrapping="Wrap" />
+                    <Slider x:Name="SetupHistorySlider" Minimum="7" Maximum="365" StepFrequency="1"
+                            TickFrequency="30" ValueChanged="SetupHistorySlider_ValueChanged"
+                            Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
+                    <TextBlock x:Name="SetupHistoryValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="13" />
+                    <CheckBox x:Name="SetupUnlimitedCheck" Content="Load all history (unlimited)"
+                              Foreground="White" Margin="0,12,0,0" Checked="SetupUnlimitedCheck_Changed"
+                              Unchecked="SetupUnlimitedCheck_Changed" />
+                    <TextBlock Text="Unlimited can make the first load take several minutes on large rooms."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,4,0,0" TextWrapping="Wrap" />
+
+                    <Button x:Name="SetupContinueButton" Content="Continue" Click="SetupContinueButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12" Margin="0,32,0,0"
+                            Background="{StaticResource AppAccentBrush}" Foreground="White"
+                            FontSize="16" FontWeight="SemiBold" />
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -378,11 +420,14 @@
                     <TextBlock Text="HISTORY" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
                     <TextBlock Text="Days of history to load per room" Foreground="White" FontSize="14" />
-                    <Slider x:Name="HistoryDaysSlider" Minimum="7" Maximum="90" StepFrequency="1"
-                            TickFrequency="7" ValueChanged="HistoryDaysSlider_ValueChanged"
+                    <Slider x:Name="HistoryDaysSlider" Minimum="7" Maximum="365" StepFrequency="1"
+                            TickFrequency="30" ValueChanged="HistoryDaysSlider_ValueChanged"
                             Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
                     <TextBlock x:Name="HistoryDaysValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="13" />
+                    <CheckBox x:Name="HistoryUnlimitedCheck" Content="Load all history (unlimited)"
+                              Foreground="White" Margin="0,12,0,0" Checked="HistoryUnlimitedCheck_Changed"
+                              Unchecked="HistoryUnlimitedCheck_Changed" />
                     <TextBlock Text="Quiet rooms fall back to the last 50 messages."
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,4,0,0" TextWrapping="Wrap" />
@@ -431,6 +476,16 @@
                            FontSize="12" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
             </ScrollViewer>
         </Grid>
+
+        <!-- Initial-sync progress bar, pinned to the bottom of the screen. -->
+        <StackPanel x:Name="SyncProgressPanel" VerticalAlignment="Bottom"
+                    Background="{StaticResource AppPanelBrush}" Padding="14,8"
+                    Visibility="Collapsed">
+            <TextBlock Text="Syncing your account…" Foreground="{StaticResource AppSubtleTextBrush}"
+                       FontSize="12" Margin="0,0,0,4" />
+            <ProgressBar x:Name="SyncProgressBar" IsIndeterminate="True"
+                         Foreground="{StaticResource AppAccentBrush}" />
+        </StackPanel>
 
     </Grid>
 </Page>

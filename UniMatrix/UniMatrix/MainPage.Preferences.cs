@@ -16,7 +16,8 @@ namespace UniMatrix
             SettingsHomeserver.Text = "Homeserver: " + _settings.Homeserver;
 
             HistoryDaysSlider.Value = _settings.HistoryDays;
-            HistoryDaysValue.Text = _settings.HistoryDays + " days";
+            HistoryUnlimitedCheck.IsChecked = _settings.HistoryUnlimited;
+            UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
 
             UseAccentToggle.IsOn = _settings.UseSystemAccent;
 
@@ -30,7 +31,55 @@ namespace UniMatrix
             if (_settings == null) return;
             int value = (int)e.NewValue;
             _settings.HistoryDays = value;
-            if (HistoryDaysValue != null) HistoryDaysValue.Text = value + " days";
+            UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
+        }
+
+        private void HistoryUnlimitedCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.HistoryUnlimited = HistoryUnlimitedCheck.IsChecked == true;
+            UpdateHistoryControls(HistoryDaysSlider, HistoryUnlimitedCheck, HistoryDaysValue);
+        }
+
+        /// <summary>Shared display logic for a history slider + unlimited checkbox + label.</summary>
+        private static void UpdateHistoryControls(Slider slider, CheckBox unlimited, TextBlock label)
+        {
+            if (slider == null || unlimited == null || label == null) return;
+            bool isUnlimited = unlimited.IsChecked == true;
+            slider.IsEnabled = !isUnlimited;
+            label.Text = isUnlimited ? "Unlimited" : (int)slider.Value + " days";
+        }
+
+        // ---- Initial setup (shown once after a fresh login) ----
+
+        private void ShowSetup()
+        {
+            SetupHistorySlider.Value = _settings.HistoryDays;
+            SetupUnlimitedCheck.IsChecked = _settings.HistoryUnlimited;
+            UpdateHistoryControls(SetupHistorySlider, SetupUnlimitedCheck, SetupHistoryValue);
+            ShowView(View.Setup);
+        }
+
+        private void SetupHistorySlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.HistoryDays = (int)e.NewValue;
+            UpdateHistoryControls(SetupHistorySlider, SetupUnlimitedCheck, SetupHistoryValue);
+        }
+
+        private void SetupUnlimitedCheck_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.HistoryUnlimited = SetupUnlimitedCheck.IsChecked == true;
+            UpdateHistoryControls(SetupHistorySlider, SetupUnlimitedCheck, SetupHistoryValue);
+        }
+
+        private void SetupContinueButton_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.SetupComplete = true;
+            ShowView(View.RoomList);
+            LoadRoomsFromCache();
+            StartSync();
         }
 
         private void UseAccentToggle_Toggled(object sender, RoutedEventArgs e)
@@ -58,6 +107,7 @@ namespace UniMatrix
             _settings.ClearAccessToken();
             _settings.UserId = null;
             _settings.DeviceId = null;
+            _settings.SetupComplete = false;
 
             _db.ClearAll();
             Rooms.Clear();
