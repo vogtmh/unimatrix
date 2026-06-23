@@ -342,6 +342,10 @@ namespace UniMatrix
         private async void OpenRoom(Room room)
         {
             _openWatch.Restart();
+            // Suppress the ListView entrance cascade for the bulk page load (re-enabled once the
+            // open settles, see ScrollToBottomPass) so the room opens fully populated instead of
+            // visibly animating items in one by one.
+            SetMessageTransitions(false);
             _currentRoomId = room.Id;
             ChatRoomName.Text = room.DisplayName;
             ChatRoomMembers.Text = room.MemberText;
@@ -930,6 +934,28 @@ namespace UniMatrix
             return _messagesScrollViewer.VerticalOffset >= _messagesScrollViewer.ScrollableHeight - 80;
         }
 
+        /// <summary>
+        /// Toggles the message list's item transitions. Disabled during a room's bulk page load so
+        /// all messages appear at once (no entrance "cascade"); enabled afterwards so only live
+        /// messages arriving later animate in.
+        /// </summary>
+        private void SetMessageTransitions(bool enabled)
+        {
+            if (MessagesList == null) return;
+            if (enabled)
+            {
+                if (MessagesList.ItemContainerTransitions == null || MessagesList.ItemContainerTransitions.Count == 0)
+                    MessagesList.ItemContainerTransitions = new Windows.UI.Xaml.Media.Animation.TransitionCollection
+                    {
+                        new Windows.UI.Xaml.Media.Animation.AddDeleteThemeTransition()
+                    };
+            }
+            else
+            {
+                MessagesList.ItemContainerTransitions = new Windows.UI.Xaml.Media.Animation.TransitionCollection();
+            }
+        }
+
         private void ScrollMessagesToBottom()
         {
             if (Messages.Count == 0) return;
@@ -968,6 +994,9 @@ namespace UniMatrix
                 }
                 catch { }
 
+                // The bulk page is laid out and scrolled into place now; re-enable the fade so
+                // genuinely new (live) messages arriving via sync still animate in.
+                if (attemptsLeft == 1) SetMessageTransitions(true);
                 ScrollToBottomPass(last, attemptsLeft - 1);
             });
         }

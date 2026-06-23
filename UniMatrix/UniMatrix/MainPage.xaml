@@ -277,6 +277,14 @@
                         <ItemsStackPanel ItemsUpdatingScrollMode="KeepLastItemInView" />
                     </ItemsPanelTemplate>
                 </ListView.ItemsPanel>
+                <!-- Start with NO item transitions: the default ListView entrance cascade animates
+                     every item in when the page is bulk-loaded on open, which looks like the list
+                     "growing" from a few items to the full page (it plays even for a 1-message room).
+                     SetMessageTransitions(true) re-enables a fade AFTER open settles so only genuinely
+                     new (live) messages animate; OpenRoom resets it to empty before each bulk render. -->
+                <ListView.ItemContainerTransitions>
+                    <TransitionCollection />
+                </ListView.ItemContainerTransitions>
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
