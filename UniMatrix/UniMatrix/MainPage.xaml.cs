@@ -70,6 +70,10 @@ namespace UniMatrix
         private bool _loadingOlder;
         private bool _hasMoreOlder;
 
+        // Timing instrumentation for the room-open path. Restarted in OpenRoom so every PERF
+        // log line is relative to the moment the user tapped the room (ms since open).
+        private readonly System.Diagnostics.Stopwatch _openWatch = new System.Diagnostics.Stopwatch();
+
         private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom }
 
         public MainPage()
@@ -337,6 +341,7 @@ namespace UniMatrix
 
         private async void OpenRoom(Room room)
         {
+            _openWatch.Restart();
             _currentRoomId = room.Id;
             ChatRoomName.Text = room.DisplayName;
             ChatRoomMembers.Text = room.MemberText;
@@ -349,8 +354,11 @@ namespace UniMatrix
             }
 
             ShowView(View.Chat);
+            App.Log("PERF open: ShowView done @" + _openWatch.ElapsedMilliseconds + "ms");
             await LoadMessagesAsync(room.Id);
+            App.Log("PERF open: LoadMessagesAsync done @" + _openWatch.ElapsedMilliseconds + "ms");
             ScrollMessagesToBottom();
+            App.Log("PERF open: ScrollMessagesToBottom queued @" + _openWatch.ElapsedMilliseconds + "ms");
         }
 
         private async Task LoadMessagesAsync(string roomId)
@@ -401,8 +409,10 @@ namespace UniMatrix
         /// </summary>
         private void RenderLatestPage(string roomId)
         {
+            long tFetch0 = _openWatch.ElapsedMilliseconds;
             var names = _db.GetMemberNames(roomId);
             var msgs = _db.GetMessages(roomId, MessagePageSize);
+            long tFetch1 = _openWatch.ElapsedMilliseconds;
 
             Messages.Clear();
             Message prev = null;
@@ -413,6 +423,12 @@ namespace UniMatrix
                 prev = m;
                 Messages.Add(m);
             }
+            long tAdd1 = _openWatch.ElapsedMilliseconds;
+            int imageCount = msgs.Count(x => x.IsImage && !string.IsNullOrEmpty(x.Mxc));
+            App.Log("PERF render: count=" + msgs.Count + " images=" + imageCount
+                + " dbFetchMs=" + (tFetch1 - tFetch0)
+                + " addLoopMs=" + (tAdd1 - tFetch1)
+                + " @" + tAdd1 + "ms");
 
             // There may be older messages to page in if we filled a whole page from cache, OR if
             // the room hasn't been fully downloaded yet (a freshly-joined busy room only has the
@@ -681,10 +697,14 @@ namespace UniMatrix
 
         private async Task ResolveMessageImageAsync(Message m)
         {
+            long t0 = _openWatch.IsRunning ? _openWatch.ElapsedMilliseconds : -1;
             try
             {
                 string uri = await _media.GetThumbnailUriAsync(m.Mxc, ImageThumbSize);
                 if (uri != null) m.MediaUrl = uri;
+                if (t0 >= 0)
+                    App.Log("PERF image: resolved in " + (_openWatch.ElapsedMilliseconds - t0)
+                        + "ms (done @" + _openWatch.ElapsedMilliseconds + "ms)");
             }
             catch { }
         }
@@ -939,6 +959,10 @@ namespace UniMatrix
                     if (_messagesScrollViewer != null)
                     {
                         _messagesScrollViewer.UpdateLayout();
+                        App.Log("PERF scrollpass: extent=" + (int)_messagesScrollViewer.ExtentHeight
+                            + " scrollable=" + (int)_messagesScrollViewer.ScrollableHeight
+                            + " offset=" + (int)_messagesScrollViewer.VerticalOffset
+                            + " @" + _openWatch.ElapsedMilliseconds + "ms");
                         _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
                     }
                 }
