@@ -49,8 +49,9 @@ toolchain matches Windows 10 Mobile far better than anything current.
     SDK that ships inside VS does **not** include it).
 - **C++/WinRT** VS2017 extension (from the VS Marketplace).
 - **Python 2.7.15**, with `C:\Python27` **first** on `PATH`, then `pip install pywin32`.
-- **Strawberry Perl** (from strawberryperl.com) — needed by the BoringSSL build.
-- **Git for Windows**.
+- **Strawberry Perl** (from strawberryperl.com) — needed by the BoringSSL build.- **.NET Core SDK 2.1+** (from [dotnet.microsoft.com/download](https://dotnet.microsoft.com/download)) -
+  needed by the managed **PeerCC** sample projects (`Org.WebRtc.Callstats` targets netstandard2.0).
+  The native `Org.WebRtc` library builds without it, but the device call test (PeerCC) will not.- **Git for Windows**.
 - ~**40 GB** free disk, and clone **close to the drive root** (path length / MAX_PATH).
 
 Run the checker to confirm your machine is ready (makes no changes):
@@ -96,6 +97,24 @@ If you prefer the GUI for the first run (often easier to read errors):
 
 ---
 
+## Step 3 — harvest the binaries into the app repo
+
+Once a platform is built, copy its artifacts into the app as `libs\webrtc\<arch>\`:
+
+```powershell
+# After a successful -Build for that platform:
+.\build-webrtc-uwp.ps1 -Harvest -Platform ARM
+.\build-webrtc-uwp.ps1 -Harvest -Platform x86   # if/when built
+.\build-webrtc-uwp.ps1 -Harvest -Platform x64   # if/when built
+```
+
+This copies `Org.WebRtc.winmd`, `Org.WebRtc.dll`, `WebRtcScheme.dll` (and `Org.WebRtc.pdb` if
+present) into `UniMatrix\UniMatrix\libs\webrtc\<arch>\` by default (override with `-HarvestDir`).
+These are the files you commit; you then never need the giant source tree or the long build again
+unless you want to update WebRTC. `-Harvest` only copies files, so it skips the build prerequisites.
+
+---
+
 ## Known failure modes (and what they mean)
 
 - **`This project references NuGet package(s) that are missing ... Microsoft.Windows.CppWinRT...props`**
@@ -110,9 +129,11 @@ If you prefer the GUI for the first run (often easier to read errors):
   10.0.17134 and 10.0.17763 SDKs. This is separate from the base SDK and is the most common first
   failure.
 - **`The current .NET SDK does not support targeting .NET Standard 2.0`**
-  (`Org.WebRtc.Callstats.csproj`) → that project is optional telemetry, not needed for a call test.
-  Either install a modern .NET SDK, or unload/skip `Org.WebRtc.Callstats` and build only the native
-  `Org.WebRtc` + `PeerConnectionClient.WebRtc` projects.
+  (`Org.WebRtc.Callstats.csproj`) → no .NET Core SDK installed. This project is part of the PeerCC
+  sample. Fix: install **.NET Core SDK 2.1+** from
+  [dotnet.microsoft.com/download](https://dotnet.microsoft.com/download), then re-run `-Build`
+  (the native lib is cached, so this is fast). The native `Org.WebRtc` ARM artifacts are already
+  built at this point regardless.
 - **`MAX_PATH` / "file name too long"** → repo path too deep. Re-clone to `C:\webrtc-uwp`.
 - **gn/ninja or gclient errors during the first build** → almost always Python (must be 2.7.x first
   on PATH) or a missing Windows SDK 17134/17763.

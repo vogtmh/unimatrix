@@ -38,7 +38,10 @@ param(
     [string]$Configuration = "Release",
     [switch]$CheckOnly,
     [switch]$Clone,
-    [switch]$Build
+    [switch]$Build,
+    # Copy the built Org.WebRtc.winmd/.dll + WebRtcScheme.dll into a per-arch app folder.
+    [switch]$Harvest,
+    [string]$HarvestDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "UniMatrix\UniMatrix\libs\webrtc")
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,7 +49,7 @@ $RepoUrl   = "https://github.com/webrtc-uwp/webrtc-uwp-sdk"
 $SlnRel    = "webrtc\windows\solutions\WebRtc.Universal.sln"
 
 # If no action switch is given, do the whole sequence.
-if (-not $CheckOnly -and -not $Clone -and -not $Build) {
+if (-not $CheckOnly -and -not $Clone -and -not $Build -and -not $Harvest) {
     $Clone = $true; $Build = $true
 }
 
@@ -183,6 +186,18 @@ function Invoke-PrereqCheck {
     $perl = Get-Command perl -ErrorAction SilentlyContinue
     Require ($perl -ne $null) "perl found" "Strawberry Perl not on PATH (needed by BoringSSL). Install from strawberryperl.com."
 
+    # .NET Core SDK - needed by the managed PeerCC projects (Org.WebRtc.Callstats targets
+    # netstandard2.0). VS2017's MSBuild alone is NOT enough; without a .NET Core SDK the build
+    # fails with "The current .NET SDK does not support targeting .NET Standard 2.0."
+    $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($dotnet) {
+        $sdks = (& dotnet --list-sdks 2>$null) | Out-String
+        Require ($sdks -match "\d") "dotnet SDK present (for netstandard2.0 / PeerCC sample)" `
+            "dotnet is on PATH but no SDKs are installed. Install .NET Core SDK 2.1+ from https://dotnet.microsoft.com/download so the PeerCC managed projects build."
+    } else {
+        Warn "dotnet SDK not found. The native Org.WebRtc library still builds, but the PeerCC sample (needed for the device call test) will FAIL on netstandard2.0. Install .NET Core SDK 2.1+ from https://dotnet.microsoft.com/download."
+    }
+
     # Disk space - a full WebRTC tree + build output is large.
     try {
         $drive = (Split-Path -Qualifier $RepoRoot)
@@ -306,18 +321,68 @@ function Invoke-Build {
 }
 
 # --------------------------------------------------------------------------------------
+# Copies the built ARM/x86/x64 artifacts into the app repo as libs\webrtc\<Platform>\.
+function Invoke-Harvest {
+    Write-Section "Harvest artifacts -> app repo ($Platform)"
+
+    $buildOut = Join-Path $RepoRoot "webrtc\windows\solutions\Build\Output"
+    $wanted = @(
+        @{ Name = "Org.WebRtc.winmd"; Sub = "Org.WebRtc\$Configuration\$Platform" },
+        @{ Name = "Org.WebRtc.dll";   Sub = "Org.WebRtc\$Configuration\$Platform" },
+        @{ Name = "Org.WebRtc.pdb";   Sub = "Org.WebRtc\$Configuration\$Platform" },
+        @{ Name = "WebRtcScheme.dll"; Sub = $null }
+    )
+
+    $dest = Join-Path $HarvestDir $Platform
+    if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
+
+    $copied = 0
+    foreach ($w in $wanted) {
+        $src = $null
+        if ($w.Sub) {
+            $candidate = Join-Path (Join-Path $buildOut $w.Sub) $w.Name
+            if (Test-Path $candidate) { $src = $candidate }
+        }
+        # Fallback: search the whole build tree for the file under this platform.
+        if (-not $src) {
+            $src = Get-ChildItem -Path $RepoRoot -Recurse -Filter $w.Name -ErrorAction SilentlyContinue |
+                   Where-Object { $_.FullName -match [regex]::Escape("\$Platform\") } |
+                   Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+        }
+        if ($src) {
+            Copy-Item $src $dest -Force
+            Ok "$($w.Name) -> $dest"
+            $copied++
+        } else {
+            if ($w.Name -eq "Org.WebRtc.pdb") { Warn "$($w.Name) not found (optional symbols; skipping)." }
+            else { Bad "$($w.Name) not found for $Platform. Build it first with -Build."; }
+        }
+    }
+    Write-Host ""
+    if ($copied -gt 0) {
+        Ok "Harvested $copied file(s) into $dest"
+        Write-Host "  Reference Org.WebRtc.winmd from UniMatrix.csproj (conditioned on Platform=$Platform)" -ForegroundColor Gray
+        Write-Host "  and register WebRtcScheme as an in-process server in Package.appxmanifest." -ForegroundColor Gray
+    } else {
+        Warn "Nothing harvested. Did the $Platform build succeed?"
+    }
+}
+
+# --------------------------------------------------------------------------------------
 try {
     Write-Host "webrtc-uwp build harness  (Platform=$Platform Configuration=$Configuration RepoRoot=$RepoRoot)" -ForegroundColor White
 
     $prereqOk = Invoke-PrereqCheck
     if ($CheckOnly) { return }
 
-    if (-not $prereqOk) {
+    # Harvest only copies already-built files, so it doesn't need the build prerequisites.
+    if (-not $prereqOk -and ($Clone -or $Build)) {
         throw "Prerequisites not satisfied; aborting. Re-run with -CheckOnly after fixing them."
     }
 
-    if ($Clone) { Invoke-Clone }
-    if ($Build) { Invoke-Build }
+    if ($Clone)   { Invoke-Clone }
+    if ($Build)   { Invoke-Build }
+    if ($Harvest) { Invoke-Harvest }
 
     Write-Section "Done"
     Ok "Next: build/deploy the PeerCC sample to the Lumia and run a test call (README.md)."
