@@ -32,6 +32,9 @@ namespace UniMatrix
         private string _currentRoomId;
         private bool _initialized;
 
+        /// <summary>Signals completion of the first /sync pass so the splash can dismiss.</summary>
+        private TaskCompletionSource<bool> _firstSyncTcs;
+
         // Bound collections.
         public ObservableCollection<Room> Rooms { get; } = new ObservableCollection<Room>();
         public ObservableCollection<Message> Messages { get; } = new ObservableCollection<Message>();
@@ -39,7 +42,7 @@ namespace UniMatrix
         private const int AvatarThumbSize = 96;
         private const int ImageThumbSize = 320;
 
-        private enum View { Login, RoomList, Chat, RoomInfo, Settings }
+        private enum View { Splash, Login, RoomList, Chat, RoomInfo, Settings }
 
         public MainPage()
         {
@@ -81,12 +84,24 @@ namespace UniMatrix
             string token = _settings.GetAccessToken();
             if (!string.IsNullOrEmpty(token) && !string.IsNullOrEmpty(_settings.UserId))
             {
-                // Restore an existing session.
+                // Restore an existing session without flashing the login form.
                 _client.AccessToken = token;
                 _syncProcessor = new SyncProcessor(_db, _settings.UserId);
-                ShowView(View.RoomList);
+
+                ShowView(View.Splash);
+                SplashFadeIn.Begin();
+                SplashPulse.Begin();
+
                 LoadRoomsFromCache();
+
+                _firstSyncTcs = new TaskCompletionSource<bool>();
                 StartSync();
+
+                // Wait for the first sync pass, but don't hang forever on a slow/offline network.
+                await Task.WhenAny(_firstSyncTcs.Task, Task.Delay(8000));
+
+                SplashPulse.Stop();
+                ShowView(View.RoomList);
             }
             else
             {
@@ -102,6 +117,7 @@ namespace UniMatrix
         private void ShowView(View view)
         {
             _activeView = view;
+            SplashPanel.Visibility = view == View.Splash ? Visibility.Visible : Visibility.Collapsed;
             LoginPanel.Visibility = view == View.Login ? Visibility.Visible : Visibility.Collapsed;
             RoomListView.Visibility = view == View.RoomList ? Visibility.Visible : Visibility.Collapsed;
             ChatView.Visibility = view == View.Chat ? Visibility.Visible : Visibility.Collapsed;
@@ -213,21 +229,18 @@ namespace UniMatrix
                 .Where(r => !string.IsNullOrEmpty(r.AvatarMxc) && string.IsNullOrEmpty(r.AvatarUrl))
                 .ToList();
 
-            App.Log("Avatars: " + pending.Count + " room(s) need fetching.");
             foreach (var room in pending)
             {
                 try
                 {
-                    App.Log("Avatar fetch '" + room.DisplayName + "' mxc=" + room.AvatarMxc);
                     string uri = await _media.GetThumbnailUriAsync(room.AvatarMxc, AvatarThumbSize);
                     if (!string.IsNullOrEmpty(uri))
                     {
                         room.AvatarUrl = uri;
-                        App.Log("Avatar OK '" + room.DisplayName + "' -> " + uri);
                     }
                     else
                     {
-                        App.Log("Avatar FAILED '" + room.DisplayName + "' (null uri, using initial)");
+                        App.Log("Avatar failed for '" + room.DisplayName + "' (using initial)");
                     }
                 }
                 catch (Exception ex)
@@ -488,23 +501,15 @@ namespace UniMatrix
 
             App.Log("Sync loop started. since=" + (since ?? "<initial>") +
                     " homeserver=" + _client.BaseUrl);
-            int pass = 0;
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    pass++;
                     SetSyncLed(Colors.Orange);
-                    App.Log("Sync #" + pass + " requesting (" +
-                            (string.IsNullOrEmpty(since) ? "initial" : "incremental") + ")...");
                     var resp = await _client.SyncAsync(since, 30000, ct);
                     if (ct.IsCancellationRequested) break;
-                    App.Log("Sync #" + pass + " response received, processing...");
 
                     var result = _syncProcessor.Process(resp);
-                    App.Log("Sync #" + pass + " processed. changedRooms=" +
-                            result.ChangedRooms.Count + " nextBatch=" +
-                            (string.IsNullOrEmpty(result.NextBatch) ? "<none>" : "ok"));
                     if (!string.IsNullOrEmpty(result.NextBatch))
                     {
                         since = result.NextBatch;
@@ -521,7 +526,8 @@ namespace UniMatrix
                         if (_currentRoomId != null && result.ChangedRooms.Contains(_currentRoomId))
                             await RefreshCurrentRoomMessagesAsync();
                     }
-                    App.Log("Sync #" + pass + " done. roomsInList=" + Rooms.Count);
+
+                    _firstSyncTcs?.TrySetResult(true);
                 }
                 catch (OperationCanceledException)
                 {
@@ -532,6 +538,7 @@ namespace UniMatrix
                     App.Log("SYNC ERROR (since=" + (since ?? "<initial>") + "): " + ex);
                     SetSyncLed(Color.FromArgb(255, 0xFF, 0x6B, 0x6B)); // red
                     ShowSyncError(ex.Message);
+                    _firstSyncTcs?.TrySetResult(false);
                     try { await Task.Delay(5000, ct); }
                     catch (OperationCanceledException) { break; }
                 }

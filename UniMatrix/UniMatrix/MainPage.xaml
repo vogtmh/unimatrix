@@ -7,6 +7,48 @@
 
     <Grid>
 
+        <!-- ============================ SPLASH ============================ -->
+        <!-- Shown while restoring a saved session so the login form doesn't flash. -->
+        <Grid x:Name="SplashPanel" Background="{StaticResource AppBackgroundBrush}"
+              Visibility="Collapsed">
+            <Grid.Resources>
+                <Storyboard x:Name="SplashFadeIn">
+                    <DoubleAnimation Storyboard.TargetName="SplashContent"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0" To="1" Duration="0:0:0.4" />
+                    <DoubleAnimation Storyboard.TargetName="SplashContentTransform"
+                                     Storyboard.TargetProperty="Y"
+                                     From="16" To="0" Duration="0:0:0.4">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut" />
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+                <Storyboard x:Name="SplashPulse" RepeatBehavior="Forever" AutoReverse="True">
+                    <DoubleAnimation Storyboard.TargetName="SplashStatus"
+                                     Storyboard.TargetProperty="Opacity"
+                                     From="0.4" To="1" Duration="0:0:0.9">
+                        <DoubleAnimation.EasingFunction>
+                            <SineEase EasingMode="EaseInOut" />
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                </Storyboard>
+            </Grid.Resources>
+            <StackPanel x:Name="SplashContent" HorizontalAlignment="Center"
+                        VerticalAlignment="Center" MaxWidth="320" Padding="24">
+                <StackPanel.RenderTransform>
+                    <TranslateTransform x:Name="SplashContentTransform" />
+                </StackPanel.RenderTransform>
+                <Image Source="ms-appx:///Assets/unimatrix_banner.png" Stretch="Uniform"
+                       MaxWidth="240" HorizontalAlignment="Center" />
+                <ProgressRing Width="36" Height="36" Margin="0,28,0,0" IsActive="True"
+                              Foreground="{StaticResource AppAccentBrush}" />
+                <TextBlock x:Name="SplashStatus" Text="Logging in…"
+                           Foreground="{StaticResource AppSubtleTextBrush}"
+                           FontSize="14" HorizontalAlignment="Center" Margin="0,16,0,0" />
+            </StackPanel>
+        </Grid>
+
         <!-- ============================ LOGIN ============================ -->
         <Grid x:Name="LoginPanel" Background="{StaticResource AppBackgroundBrush}">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
