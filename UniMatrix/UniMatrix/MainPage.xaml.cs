@@ -67,8 +67,17 @@ namespace UniMatrix
         // on-disk DB; older pages are pulled in as the user scrolls to the top.
         private const int MessagePageSize = 50;
         private ScrollViewer _messagesScrollViewer;
+        private FrameworkElement _messagesContent;
         private bool _loadingOlder;
         private bool _hasMoreOlder;
+
+        // Scroll-to-bottom state. _followBottom means "keep the newest message in view": it stays
+        // on until the user interactively scrolls up, so late layout passes and async image loads
+        // re-snap to the bottom. The pump fields drive a settle loop that re-issues the scroll each
+        // frame until the content height stops growing (no racy VerticalOffset reads).
+        private bool _followBottom;
+        private double _scrollLastExtent;
+        private int _scrollStableFrames;
 
         private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom }
 
@@ -516,11 +525,35 @@ namespace UniMatrix
             if (_messagesScrollViewer != null)
             {
                 _messagesScrollViewer.ViewChanged += MessagesScrollViewer_ViewChanged;
+
+                // The ScrollViewer's content (the items panel) raises SizeChanged whenever its
+                // height changes — new items being laid out, images decoding, etc. While we're
+                // following the conversation, every such growth must re-snap us to the bottom. This
+                // is what makes scroll-to-bottom reliable across the multi-pass layout that a single
+                // ChangeView call can't catch.
+                _messagesContent = _messagesScrollViewer.Content as FrameworkElement;
+                if (_messagesContent != null)
+                    _messagesContent.SizeChanged += MessagesContent_SizeChanged;
             }
+        }
+
+        private void MessagesContent_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (_followBottom && _messagesScrollViewer != null)
+                _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
         }
 
         private void MessagesScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
         {
+            // IsIntermediate is true only for user-driven (touch/wheel/inertia) scrolling; our own
+            // programmatic ChangeView calls use disableAnimation=true and report false. So if the
+            // user interactively scrolls away from the bottom, stop following it.
+            if (e.IsIntermediate && _messagesScrollViewer != null &&
+                _messagesScrollViewer.VerticalOffset < _messagesScrollViewer.ScrollableHeight - 80)
+            {
+                _followBottom = false;
+            }
+
             // Near the top -> pull in the next older page.
             if (_messagesScrollViewer != null && _messagesScrollViewer.VerticalOffset <= 60 &&
                 _hasMoreOlder && !_loadingOlder)
@@ -696,24 +729,58 @@ namespace UniMatrix
             var latestIds = new HashSet<string>();
             foreach (var m in latest) latestIds.Add(m.EventId);
 
-            // 1. Remove local echoes that the server has now confirmed. SyncProcessor deletes the
-            //    echo row once the real event lands, so an echo still on screen but absent from the
-            //    fresh cache page is stale and its real counterpart is in `latest`.
+            var shownIds = new HashSet<string>();
+            foreach (var m in Messages) shownIds.Add(m.EventId);
+
+            // 1. Reconcile confirmed local echoes IN PLACE. When the server echoes our just-sent
+            //    message back via /sync, SyncProcessor deletes the echo row and inserts the real
+            //    event (with a different event id). If we removed the on-screen echo and added the
+            //    real message as a new item, the ListView would play its entrance transition a
+            //    SECOND time (the user sees the bubble fade in twice). Instead we find the matching
+            //    confirmed message and mutate the existing echo object: same instance stays in the
+            //    collection, so no remove/add and no extra animation. Content is identical (same
+            //    body), so nothing visibly changes.
+            var consumed = new HashSet<string>();
+            for (int i = 0; i < Messages.Count; i++)
+            {
+                var echo = Messages[i];
+                if (!echo.IsLocalEcho || latestIds.Contains(echo.EventId)) continue;
+
+                Message match = null;
+                foreach (var c in latest)
+                {
+                    if (shownIds.Contains(c.EventId) || consumed.Contains(c.EventId)) continue;
+                    if (c.Sender == echo.Sender && c.MsgType == echo.MsgType && c.Body == echo.Body)
+                    {
+                        match = c;
+                        break;
+                    }
+                }
+
+                if (match != null)
+                {
+                    // Promote the echo to the confirmed event without re-adding it.
+                    echo.EventId = match.EventId;
+                    echo.IsLocalEcho = false;
+                    consumed.Add(match.EventId);
+                    shownIds.Add(match.EventId);
+                }
+            }
+
+            // 2. Remove any local echoes that were NOT confirmed (e.g. failed sends already marked,
+            //    or echoes with no matching server event in this page).
             for (int i = Messages.Count - 1; i >= 0; i--)
             {
                 if (Messages[i].IsLocalEcho && !latestIds.Contains(Messages[i].EventId))
                     Messages.RemoveAt(i);
             }
 
-            var shownIds = new HashSet<string>();
-            foreach (var m in Messages) shownIds.Add(m.EventId);
-
-            // 2. Append only messages newer than the last one on screen. Older history is paged in
+            // 3. Append only messages newer than the last one on screen. Older history is paged in
             //    separately via scroll-back, so we never insert into the middle here.
             Message prev = Messages.Count > 0 ? Messages[Messages.Count - 1] : null;
             foreach (var m in latest)
             {
-                if (shownIds.Contains(m.EventId)) continue;
+                if (shownIds.Contains(m.EventId) || consumed.Contains(m.EventId)) continue;
                 if (prev != null &&
                     (m.Timestamp < prev.Timestamp ||
                      (m.Timestamp == prev.Timestamp && string.CompareOrdinal(m.EventId, prev.EventId) <= 0)))
@@ -745,52 +812,53 @@ namespace UniMatrix
         {
             if (Messages.Count == 0) return;
 
-            // ScrollIntoView only scrolls *just* enough to make an item visible, and because the
-            // ListView virtualizes, a freshly-added item's real height isn't measured yet — so it
-            // lands a message or two short of the bottom. Driving the inner ScrollViewer straight
-            // to its maximum offset is reliable.
-            //
-            // The catch: when a room is (re)opened the whole list is rebuilt, and virtualization
-            // realizes off-screen items lazily over SEVERAL layout passes, so ScrollableHeight keeps
-            // growing after the first ChangeView — leaving us parked partway up. A single low-priority
-            // retry isn't enough for a long room. So we re-issue the scroll across a few layout cycles
-            // and stop as soon as we're actually at the bottom (or run out of attempts).
-            var last = Messages[Messages.Count - 1];
-            try
-            {
-                MessagesList.UpdateLayout();
-                if (_messagesScrollViewer != null)
-                    _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
-                else
-                    MessagesList.ScrollIntoView(last);
-            }
-            catch { }
+            // Start (or resume) following the bottom. The content's SizeChanged handler keeps us
+            // pinned there as items lay out and images decode; the pump below drives the initial
+            // settle.
+            _followBottom = true;
 
-            ScrollToBottomRetry(last, 8);
+            if (_messagesScrollViewer == null)
+            {
+                // Inner ScrollViewer not located yet (first frame) — best effort.
+                MessagesList.ScrollIntoView(Messages[Messages.Count - 1]);
+                return;
+            }
+
+            _scrollLastExtent = -1;
+            _scrollStableFrames = 0;
+            PumpScrollToBottom(40);
         }
 
-        private void ScrollToBottomRetry(Message last, int attemptsLeft)
+        /// <summary>
+        /// Re-issues "scroll to the maximum offset" once per frame until the content height has
+        /// stopped growing for a few consecutive frames. We deliberately do NOT read VerticalOffset
+        /// to decide when we're done: ChangeView is asynchronous, so the offset lags by a frame and
+        /// using it as the stop condition made the scroll land short intermittently. Tracking the
+        /// (layout-driven) ExtentHeight instead is reliable.
+        /// </summary>
+        private void PumpScrollToBottom(int budget)
         {
-            if (attemptsLeft <= 0) return;
+            if (budget <= 0 || _messagesScrollViewer == null || !_followBottom) return;
 
-            var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Low, () =>
+            var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
             {
                 try
                 {
-                    if (_messagesScrollViewer == null)
-                    {
-                        MessagesList.ScrollIntoView(last);
-                        return;
-                    }
+                    var sv = _messagesScrollViewer;
+                    if (sv == null || !_followBottom) return;
 
-                    _messagesScrollViewer.UpdateLayout();
-                    double target = _messagesScrollViewer.ScrollableHeight;
-                    _messagesScrollViewer.ChangeView(null, target, null, true);
+                    sv.UpdateLayout();
+                    double extent = sv.ExtentHeight;
+                    sv.ChangeView(null, sv.ScrollableHeight, null, true);
 
-                    // If virtualization is still realizing items the extent will keep growing and
-                    // we won't be at the bottom yet — keep retrying until we settle there.
-                    if (_messagesScrollViewer.VerticalOffset < target - 4)
-                        ScrollToBottomRetry(last, attemptsLeft - 1);
+                    if (Math.Abs(extent - _scrollLastExtent) < 0.5)
+                        _scrollStableFrames++;
+                    else
+                        _scrollStableFrames = 0;
+                    _scrollLastExtent = extent;
+
+                    if (_scrollStableFrames < 4)
+                        PumpScrollToBottom(budget - 1);
                 }
                 catch { }
             });
