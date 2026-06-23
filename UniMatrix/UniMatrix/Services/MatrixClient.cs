@@ -252,6 +252,7 @@ namespace UniMatrix.Services
             return GetString(resp, "event_id");
         }
 
+        public async Task<string> CreateRoomAsync(string name, bool isPublic)
         {
             var body = new JsonObject
             {
