@@ -92,6 +92,12 @@ namespace UniMatrix
             {
                 LoginScroll.Margin = new Thickness(0, 0, 0, args.OccludedRect.Height);
             }
+            if (ChatView != null)
+            {
+                // Lift the whole chat (composer + message list) above the keyboard.
+                ChatView.Margin = new Thickness(0, 0, 0, args.OccludedRect.Height);
+                ScrollMessagesToBottom();
+            }
             args.EnsuredFocusedElementInView = true;
         }
 
@@ -100,6 +106,10 @@ namespace UniMatrix
             if (LoginScroll != null)
             {
                 LoginScroll.Margin = new Thickness(0);
+            }
+            if (ChatView != null)
+            {
+                ChatView.Margin = new Thickness(0);
             }
             args.EnsuredFocusedElementInView = true;
         }
