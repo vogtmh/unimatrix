@@ -210,36 +210,29 @@ namespace UniMatrix.Services
             string serverAndId = ParseMxc(mxc);
             if (serverAndId == null) return null;
 
-            // Ordered candidates: (url, useBearerAuth). Authenticated v1 first.
-            // matrix.org accepts the access_token as a query param on v1 too; we also
-            // send the Bearer header for spec-compliant servers.
+            // Authenticate using ONLY the access_token query parameter (matching the
+            // original JS UniMatrix client). matrix.org rejects requests that mix an
+            // Authorization header with the query param (M_MISSING_TOKEN), so we never
+            // send a header here. Authenticated v1 endpoints first (required for newer
+            // media), then legacy r0 as a fallback for older media.
             string tok = Uri.EscapeDataString(_accessToken);
             var candidates = new[]
             {
-                new MediaEndpoint(_baseUrl + "/_matrix/client/v1/media/thumbnail/" + serverAndId +
-                    "?width=" + size + "&height=" + size + "&method=scale&access_token=" + tok, true),
-                new MediaEndpoint(_baseUrl + "/_matrix/client/v1/media/download/" + serverAndId +
-                    "?access_token=" + tok, true),
-                new MediaEndpoint(_baseUrl + "/_matrix/media/r0/thumbnail/" + serverAndId +
-                    "?width=" + size + "&height=" + size + "&method=scale&access_token=" + tok, false),
-                new MediaEndpoint(_baseUrl + "/_matrix/media/r0/download/" + serverAndId +
-                    "?access_token=" + tok, false),
+                _baseUrl + "/_matrix/client/v1/media/thumbnail/" + serverAndId +
+                    "?width=" + size + "&height=" + size + "&method=scale&access_token=" + tok,
+                _baseUrl + "/_matrix/client/v1/media/download/" + serverAndId +
+                    "?access_token=" + tok,
+                _baseUrl + "/_matrix/media/r0/thumbnail/" + serverAndId +
+                    "?width=" + size + "&height=" + size + "&method=scale&access_token=" + tok,
+                _baseUrl + "/_matrix/media/r0/download/" + serverAndId +
+                    "?access_token=" + tok,
             };
 
-            foreach (var ep in candidates)
+            foreach (var url in candidates)
             {
                 try
                 {
-                    var request = new HttpRequestMessage(HttpMethod.Get, new Uri(ep.Url));
-                    if (ep.UseBearer)
-                    {
-                        // Use an explicit header append rather than the typed Authorization
-                        // property — Windows.Web.Http does not reliably transmit the typed
-                        // property on some builds, which caused 401s on authenticated media.
-                        request.Headers.TryAppendWithoutValidation("Authorization", "Bearer " + _accessToken);
-                    }
-
-                    using (var resp = await _http.SendRequestAsync(request))
+                    using (var resp = await _http.GetAsync(new Uri(url)))
                     {
                         if (resp.IsSuccessStatusCode)
                             return await resp.Content.ReadAsBufferAsync();
@@ -248,13 +241,12 @@ namespace UniMatrix.Services
                         try { body = await resp.Content.ReadAsStringAsync(); }
                         catch { }
                         if (body != null && body.Length > 160) body = body.Substring(0, 160);
-                        App.Log("Media " + (int)resp.StatusCode + (ep.UseBearer ? " [v1]" : " [r0]") +
-                                " " + mxc + " :: " + body);
+                        App.Log("Media " + (int)resp.StatusCode + " " + mxc + " :: " + body);
                     }
                 }
                 catch (Exception ex)
                 {
-                    App.Log("Media EXC " + (ep.UseBearer ? "[v1] " : "[r0] ") + mxc + ": " + ex.Message);
+                    App.Log("Media EXC " + mxc + ": " + ex.Message);
                 }
             }
             return null;
@@ -266,18 +258,6 @@ namespace UniMatrix.Services
                 return null;
             // mxc://server/mediaId  ->  server/mediaId
             return mxc.Substring(6);
-        }
-
-        /// <summary>A media URL candidate and whether it needs a Bearer auth header.</summary>
-        private struct MediaEndpoint
-        {
-            public readonly string Url;
-            public readonly bool UseBearer;
-            public MediaEndpoint(string url, bool useBearer)
-            {
-                Url = url;
-                UseBearer = useBearer;
-            }
         }
 
         // ---- HTTP helpers ----
