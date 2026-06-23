@@ -16,15 +16,19 @@
 #     so it cannot produce an ARM32 Win10 Mobile binary for the Lumia 930.
 #
 # WHAT IT DOES
-#   1. -CheckOnly : verifies every prerequisite and prints what's missing (no changes).
-#   2. -Clone     : recursively clones webrtc-uwp-sdk close to the drive root (path-length).
-#   3. -Build     : invokes VS2017 MSBuild on WebRtc.Universal.sln for ARM/Release.
+#   1. -CheckOnly     : verifies every prerequisite and prints what's missing (no changes).
+#   2. -Clone         : recursively clones webrtc-uwp-sdk close to the drive root (path-length).
+#   3. -Build         : invokes VS2017 MSBuild on WebRtc.Universal.sln for ARM/Release.
+#   4. -InstallDotNet : fetches + installs the .NET Core SDK (for the managed PeerCC projects).
+#   5. -Harvest       : copies the built artifacts into the app repo as libs\webrtc\<arch>\.
 #   Run with no switches to do Check -> Clone -> Build in sequence.
 #
 # USAGE (from an elevated "Developer Command Prompt for VS 2017" or PowerShell):
 #   powershell -ExecutionPolicy Bypass -File .\build-webrtc-uwp.ps1 -CheckOnly
+#   powershell -ExecutionPolicy Bypass -File .\build-webrtc-uwp.ps1 -InstallDotNet
 #   powershell -ExecutionPolicy Bypass -File .\build-webrtc-uwp.ps1 -Clone -Build
 #   powershell -ExecutionPolicy Bypass -File .\build-webrtc-uwp.ps1 -Build -Platform ARM -Configuration Release
+#   powershell -ExecutionPolicy Bypass -File .\build-webrtc-uwp.ps1 -Harvest -Platform ARM
 #
 # See README.md in this folder for the full runbook and known failure modes.
 
@@ -41,7 +45,13 @@ param(
     [switch]$Build,
     # Copy the built Org.WebRtc.winmd/.dll + WebRtcScheme.dll into a per-arch app folder.
     [switch]$Harvest,
-    [string]$HarvestDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "UniMatrix\UniMatrix\libs\webrtc")
+    [string]$HarvestDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "UniMatrix\UniMatrix\libs\webrtc"),
+    # Fetch + install the .NET Core SDK (needed by the managed PeerCC projects / netstandard2.0).
+    # 2.1.526 is the last 2.1.x SDK that still supports VS 15.9 / MSBuild 15 (VS2017). Later
+    # patches (e.g. 2.1.818) require MSBuild 16 / VS2019 and will NOT drive our VS2017 build.
+    [switch]$InstallDotNet,
+    [string]$DotNetVersion    = "2.1.526",
+    [string]$DotNetInstallDir = (Join-Path $env:LOCALAPPDATA "Microsoft\dotnet")
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,7 +59,7 @@ $RepoUrl   = "https://github.com/webrtc-uwp/webrtc-uwp-sdk"
 $SlnRel    = "webrtc\windows\solutions\WebRtc.Universal.sln"
 
 # If no action switch is given, do the whole sequence.
-if (-not $CheckOnly -and -not $Clone -and -not $Build -and -not $Harvest) {
+if (-not $CheckOnly -and -not $Clone -and -not $Build -and -not $Harvest -and -not $InstallDotNet) {
     $Clone = $true; $Build = $true
 }
 
@@ -132,6 +142,50 @@ function Get-PythonVersion {
     }
     if ($script:PyFallback) { return $script:PyFallback }
     return $null
+}
+
+# Fetches Microsoft's official dotnet-install.ps1 and installs the .NET Core SDK to a user
+# directory (no admin needed), then wires it into the CURRENT session (PATH + DOTNET_ROOT).
+function Install-DotNetSdk {
+    Write-Section "Install .NET Core SDK ($DotNetVersion, x64)"
+
+    $existing = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($existing) {
+        $sdks = (& dotnet --list-sdks 2>$null) | Out-String
+        if ($sdks -match "\d") {
+            Ok "A .NET SDK is already installed; skipping. Installed SDKs:"
+            $sdks.Trim().Split("`n") | ForEach-Object { Write-Host "    $($_.Trim())" -ForegroundColor Gray }
+            return
+        }
+    }
+
+    $installer = Join-Path $PSScriptRoot "dotnet-install.ps1"
+    Write-Host "  Downloading dotnet-install.ps1 ..." -ForegroundColor Gray
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri "https://dot.net/v1/dotnet-install.ps1" -OutFile $installer
+    } catch {
+        throw "Could not download dotnet-install.ps1: $($_.Exception.Message)"
+    }
+
+    # x64 = the host build machine's architecture (this SDK is a build tool, unrelated to the
+    # app's ARM target). Pin the exact version for VS2017 / MSBuild 15 compatibility.
+    Write-Host "  Installing .NET SDK $DotNetVersion (x64) to $DotNetInstallDir ..." -ForegroundColor Gray
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $installer -Version $DotNetVersion -Architecture x64 -InstallDir $DotNetInstallDir
+    if ($LASTEXITCODE -ne 0) { throw "dotnet-install.ps1 failed (exit $LASTEXITCODE)." }
+
+    # Make dotnet usable in THIS session (and prefer the just-installed SDK).
+    $env:DOTNET_ROOT = $DotNetInstallDir
+    if ($env:PATH -notlike "*$DotNetInstallDir*") { $env:PATH = "$DotNetInstallDir;$env:PATH" }
+
+    $dotnetExe = Join-Path $DotNetInstallDir "dotnet.exe"
+    if (Test-Path $dotnetExe) {
+        $ver = (& $dotnetExe --version 2>$null)
+        Ok ".NET SDK installed ($ver) at $DotNetInstallDir"
+        Write-Host "  Added to PATH for this session. To make it permanent, add $DotNetInstallDir to your user PATH." -ForegroundColor Gray
+    } else {
+        throw "dotnet.exe not found at $dotnetExe after install."
+    }
 }
 
 # --------------------------------------------------------------------------------------
@@ -371,6 +425,9 @@ function Invoke-Harvest {
 # --------------------------------------------------------------------------------------
 try {
     Write-Host "webrtc-uwp build harness  (Platform=$Platform Configuration=$Configuration RepoRoot=$RepoRoot)" -ForegroundColor White
+
+    # Install the .NET SDK first (if requested) so the prereq check below sees it.
+    if ($InstallDotNet) { Install-DotNetSdk }
 
     $prereqOk = Invoke-PrereqCheck
     if ($CheckOnly) { return }
