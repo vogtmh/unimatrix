@@ -384,7 +384,7 @@
         <!-- Floating bug button to open the debug overlay (always on top). -->
         <Button x:Name="DebugButton" Click="DebugToggle_Click"
                 HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                Margin="0,0,12,12" Width="44" Height="44" CornerRadius="22"
+                Margin="0,0,12,12" Width="44" Height="44"
                 Background="#222222" BorderBrush="#444444" BorderThickness="1" Padding="0">
             <TextBlock Text="&gt;_" Foreground="#33FF66" FontFamily="Consolas"
                        FontSize="16" FontWeight="Bold" HorizontalAlignment="Center"
