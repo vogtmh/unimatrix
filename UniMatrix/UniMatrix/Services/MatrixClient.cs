@@ -127,7 +127,8 @@ namespace UniMatrix.Services
         {
             string path = "/_matrix/client/r0/sync?access_token=" + Uri.EscapeDataString(_accessToken);
             path += "&filter=" + Uri.EscapeDataString(SyncFilter);
-            if (string.IsNullOrEmpty(since))
+            bool initial = string.IsNullOrEmpty(since);
+            if (initial)
             {
                 path += "&timeout=0";
             }
@@ -135,7 +136,24 @@ namespace UniMatrix.Services
             {
                 path += "&since=" + Uri.EscapeDataString(since) + "&timeout=" + timeoutMs;
             }
-            return await GetAsync(path, ct);
+
+            // Hard client-side cap so a stalled request surfaces as an error instead
+            // of leaving the sync LED stuck orange forever. The long-poll timeout is
+            // server-side; we allow generous extra time for transfer + parse.
+            int clientTimeoutMs = initial ? 120000 : timeoutMs + 20000;
+            using (var timeoutCts = new CancellationTokenSource(clientTimeoutMs))
+            using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token))
+            {
+                try
+                {
+                    return await GetAsync(path, linked.Token);
+                }
+                catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    throw new MatrixException(
+                        "Sync timed out after " + (clientTimeoutMs / 1000) + "s", 0);
+                }
+            }
         }
 
         // ---- Messages ----
@@ -214,11 +232,15 @@ namespace UniMatrix.Services
         private async Task<JsonObject> GetAsync(string path, CancellationToken ct)
         {
             var uri = new Uri(_baseUrl + path);
-            using (var resp = await _http.GetAsync(uri).AsTask(ct))
+            // ConfigureAwait(false) keeps the (potentially large) response read and
+            // JSON parse off the UI thread so the app doesn't freeze on big syncs.
+            using (var resp = await _http.GetAsync(uri).AsTask(ct).ConfigureAwait(false))
             {
-                string text = await resp.Content.ReadAsStringAsync().AsTask(ct);
+                string text = await resp.Content.ReadAsStringAsync().AsTask(ct).ConfigureAwait(false);
                 EnsureSuccess(resp, text);
-                return Parse(text);
+                // Parse on a background thread — Windows.Data.Json can take seconds
+                // on a large initial-sync payload on low-end hardware.
+                return await Task.Run(() => Parse(text), ct).ConfigureAwait(false);
             }
         }
 
