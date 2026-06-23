@@ -686,21 +686,36 @@ namespace UniMatrix
         {
             if (Messages.Count == 0) return;
 
-            // When a room is first opened the ListView hasn't laid out the freshly-added
-            // items yet, so an immediate ScrollIntoView lands on the wrong spot (or no-ops).
-            // Force a layout pass, scroll, then schedule a second scroll at low priority once
-            // virtualization has realized the last item, so we reliably end at the bottom.
+            // ScrollIntoView only scrolls *just* enough to make an item visible, and because the
+            // ListView virtualizes, a freshly-added item's real height isn't measured yet — so it
+            // lands a message or two short of the bottom. Driving the inner ScrollViewer straight
+            // to its maximum offset is reliable. We do it now (after a forced layout) and again at
+            // low priority once virtualization has realized the new item and ExtentHeight grew.
             var last = Messages[Messages.Count - 1];
             try
             {
                 MessagesList.UpdateLayout();
-                MessagesList.ScrollIntoView(last);
+                if (_messagesScrollViewer != null)
+                    _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
+                else
+                    MessagesList.ScrollIntoView(last);
             }
             catch { }
 
             var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Low, () =>
             {
-                try { MessagesList.ScrollIntoView(last); }
+                try
+                {
+                    if (_messagesScrollViewer != null)
+                    {
+                        _messagesScrollViewer.UpdateLayout();
+                        _messagesScrollViewer.ChangeView(null, _messagesScrollViewer.ScrollableHeight, null, true);
+                    }
+                    else
+                    {
+                        MessagesList.ScrollIntoView(last);
+                    }
+                }
                 catch { }
             });
         }
