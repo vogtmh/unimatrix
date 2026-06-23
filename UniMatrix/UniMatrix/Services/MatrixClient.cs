@@ -265,6 +265,18 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Leaves a room and then forgets it, so it disappears from the room list and the
+        /// server can eventually purge our copy of its history.
+        /// </summary>
+        public async Task LeaveRoomAsync(string roomId)
+        {
+            string id = Uri.EscapeDataString(roomId);
+            await PostAsync("/_matrix/client/r0/rooms/" + id + "/leave", new JsonObject(), requireAuth: true);
+            try { await PostAsync("/_matrix/client/r0/rooms/" + id + "/forget", new JsonObject(), requireAuth: true); }
+            catch { /* Best effort: leaving is what matters; forget can fail harmlessly. */ }
+        }
+
+        /// <summary>
         /// Fetches a page of room history (newest-first, dir=b). Pass the <paramref name="from"/>
         /// token returned in a previous response's "end" field to page further back. Note that
         /// <paramref name="limit"/> counts ALL events (state, membership, etc.), not just messages.

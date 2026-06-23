@@ -759,6 +759,47 @@ namespace UniMatrix
 
         private void RoomInfoCloseButton_Click(object sender, RoutedEventArgs e) => ShowView(View.Chat);
 
+        private async void LeaveRoomButton_Click(object sender, RoutedEventArgs e)
+        {
+            string roomId = _currentRoomId;
+            if (roomId == null) return;
+
+            var room = Rooms.FirstOrDefault(r => r.Id == roomId);
+            string name = room != null ? room.DisplayName : "this room";
+
+            var confirm = new Windows.UI.Popups.MessageDialog(
+                "Leave \"" + name + "\"? It will be removed from your room list.",
+                "Leave room");
+            confirm.Commands.Add(new Windows.UI.Popups.UICommand("Leave"));
+            confirm.Commands.Add(new Windows.UI.Popups.UICommand("Cancel"));
+            confirm.DefaultCommandIndex = 1;
+            confirm.CancelCommandIndex = 1;
+
+            var choice = await confirm.ShowAsync();
+            if (choice.Label != "Leave") return;
+
+            LeaveRoomButton.IsEnabled = false;
+            try
+            {
+                await _client.LeaveRoomAsync(roomId);
+
+                // Drop the local cache for the room and update the UI.
+                _db.DeleteRoom(roomId);
+                if (room != null) Rooms.Remove(room);
+                _currentRoomId = null;
+                Messages.Clear();
+                ShowView(View.RoomList);
+            }
+            catch (Exception ex)
+            {
+                await ShowErrorAsync("Could not leave room: " + ex.Message);
+            }
+            finally
+            {
+                LeaveRoomButton.IsEnabled = true;
+            }
+        }
+
         // ---- Sync loop ----
 
         private void StartSync()

@@ -241,6 +241,24 @@ namespace UniMatrix.Data
             }
         }
 
+        /// <summary>Removes a room and all of its cached messages and members (e.g. on leave).</summary>
+        public void DeleteRoom(string roomId)
+        {
+            lock (_gate)
+            {
+                using (var cmd = _connection.CreateCommand())
+                {
+                    cmd.CommandText = @"DELETE FROM messages WHERE room_id = @room;
+                                        DELETE FROM members  WHERE room_id = @room;
+                                        DELETE FROM rooms    WHERE id      = @room;
+                                        DELETE FROM meta     WHERE key = 'bf_token_' || @room
+                                                                OR key = 'bf_done_'  || @room;";
+                    cmd.Parameters.AddWithValue("@room", roomId);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
         public bool MessageExists(string eventId)
         {
             lock (_gate)

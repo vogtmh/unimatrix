@@ -139,7 +139,7 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="14,8" Height="52">
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="14,4" Height="64">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -154,7 +154,7 @@
                 </Button>
                 <Image Grid.Column="1" Source="ms-appx:///Assets/unimatrix_banner.png"
                        Stretch="Uniform" HorizontalAlignment="Left" VerticalAlignment="Center"
-                       Height="28" />
+                       Height="52" />
                 <Button Grid.Column="2" Click="NewRoomButton_Click" Background="Transparent"
                         BorderThickness="0" Padding="10" VerticalAlignment="Center">
                     <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="18" Foreground="White" />
@@ -246,7 +246,7 @@
             </Grid.RowDefinitions>
 
             <!-- Chat header -->
-            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="52">
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="64">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -343,7 +343,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="52">
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="64">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -352,8 +352,7 @@
                         BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
                     <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
                 </Button>
-                <TextBlock Grid.Column="1" Text="Room info" Foreground="White" FontSize="18"
-                           FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="Room info" Foreground="White" FontSize="18"                           FontWeight="SemiBold" VerticalAlignment="Center" />
             </Grid>
             <ScrollViewer Grid.Row="1">
                 <StackPanel Padding="24" HorizontalAlignment="Center" MaxWidth="420">
@@ -374,6 +373,17 @@
                     <TextBlock x:Name="InfoRoomId" Text="" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="12" TextWrapping="Wrap" Margin="0,16,0,0" HorizontalAlignment="Center"
                                TextAlignment="Center" />
+
+                    <Button x:Name="LeaveRoomButton" Click="LeaveRoomButton_Click"
+                            HorizontalAlignment="Stretch" Margin="0,32,0,0" Padding="0,12"
+                            Background="#3A1A1A" Foreground="#FF6B6B" BorderThickness="0">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7E8;" FontSize="16"
+                                      Foreground="#FF6B6B" VerticalAlignment="Center" />
+                            <TextBlock Text="Leave room" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       FontSize="15" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
@@ -413,7 +423,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="52">
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="64">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
