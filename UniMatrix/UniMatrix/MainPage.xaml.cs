@@ -46,6 +46,7 @@ namespace UniMatrix
             this.InitializeComponent();
             Current = this;
             this.Loaded += MainPage_Loaded;
+            App.LogLine += OnLogLine;
         }
 
         protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -440,15 +441,25 @@ namespace UniMatrix
         private async Task SyncLoopAsync(CancellationToken ct)
         {
             string since = _db.GetMeta("next_batch");
+            App.Log("Sync loop started. since=" + (since ?? "<initial>") +
+                    " homeserver=" + _client.BaseUrl);
+            int pass = 0;
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
+                    pass++;
                     SetSyncLed(Colors.Orange);
+                    App.Log("Sync #" + pass + " requesting (" +
+                            (string.IsNullOrEmpty(since) ? "initial" : "incremental") + ")...");
                     var resp = await _client.SyncAsync(since, 30000, ct);
                     if (ct.IsCancellationRequested) break;
+                    App.Log("Sync #" + pass + " response received, processing...");
 
                     var result = _syncProcessor.Process(resp);
+                    App.Log("Sync #" + pass + " processed. changedRooms=" +
+                            result.ChangedRooms.Count + " nextBatch=" +
+                            (string.IsNullOrEmpty(result.NextBatch) ? "<none>" : "ok"));
                     if (!string.IsNullOrEmpty(result.NextBatch))
                     {
                         since = result.NextBatch;
@@ -465,6 +476,7 @@ namespace UniMatrix
                         if (_currentRoomId != null && result.ChangedRooms.Contains(_currentRoomId))
                             await RefreshCurrentRoomMessagesAsync();
                     }
+                    App.Log("Sync #" + pass + " done. roomsInList=" + Rooms.Count);
                 }
                 catch (OperationCanceledException)
                 {
@@ -501,6 +513,47 @@ namespace UniMatrix
         {
             if (SyncErrorText == null) return;
             SyncErrorText.Visibility = Visibility.Collapsed;
+        }
+
+        // ---- Debug overlay ----
+
+        private readonly System.Text.StringBuilder _debugBuffer = new System.Text.StringBuilder();
+        private const int DebugMaxChars = 20000;
+
+        /// <summary>Receives every App.Log line and appends it to the on-screen overlay.</summary>
+        private async void OnLogLine(string line)
+        {
+            try
+            {
+                var dispatcher = Dispatcher;
+                if (dispatcher == null) return;
+                await dispatcher.RunAsync(CoreDispatcherPriority.Low, () => AppendDebugLine(line));
+            }
+            catch { }
+        }
+
+        private void AppendDebugLine(string line)
+        {
+            if (DebugText == null) return;
+            _debugBuffer.Append(line).Append('\n');
+            if (_debugBuffer.Length > DebugMaxChars)
+                _debugBuffer.Remove(0, _debugBuffer.Length - DebugMaxChars);
+            DebugText.Text = _debugBuffer.ToString();
+            // Auto-scroll to the newest line.
+            DebugScroll?.ChangeView(null, DebugScroll.ScrollableHeight, null, true);
+        }
+
+        private void DebugToggle_Click(object sender, RoutedEventArgs e)
+        {
+            DebugOverlay.Visibility = DebugOverlay.Visibility == Visibility.Visible
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
+        private void DebugClear_Click(object sender, RoutedEventArgs e)
+        {
+            _debugBuffer.Clear();
+            if (DebugText != null) DebugText.Text = "";
         }
 
         // ---- Lifecycle ----

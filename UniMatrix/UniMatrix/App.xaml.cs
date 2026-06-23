@@ -56,7 +56,15 @@ namespace UniMatrix
         internal static void Log(string message)
         {
             LogStartup(message);
+            try { LogLine?.Invoke(DateTime.Now.ToString("HH:mm:ss") + " " + message); }
+            catch { }
         }
+
+        /// <summary>
+        /// Raised for every <see cref="Log"/> call so an on-screen debug overlay can
+        /// display log lines live. Handlers must marshal to the UI thread themselves.
+        /// </summary>
+        internal static event Action<string> LogLine;
 
         private async void OnUnhandledException(object sender, Windows.UI.Xaml.UnhandledExceptionEventArgs e)
         {
