@@ -509,7 +509,11 @@ namespace UniMatrix
                     var resp = await _client.SyncAsync(since, 30000, ct);
                     if (ct.IsCancellationRequested) break;
 
-                    var result = _syncProcessor.Process(resp);
+                    // Persist on a background thread: an initial sync writes many
+                    // rooms/members and would otherwise freeze the UI thread,
+                    // leaving the sync LED stuck on orange.
+                    var result = await Task.Run(() => _syncProcessor.Process(resp), ct);
+                    if (ct.IsCancellationRequested) break;
                     if (!string.IsNullOrEmpty(result.NextBatch))
                     {
                         since = result.NextBatch;
