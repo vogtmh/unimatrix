@@ -18,6 +18,8 @@ namespace UniMatrix
             MessageLimitSlider.Value = _settings.MessageLimit;
             MessageLimitValue.Text = _settings.MessageLimit + " messages";
 
+            UseAccentToggle.IsOn = _settings.UseSystemAccent;
+
             ShowView(View.Settings);
         }
 
@@ -29,6 +31,13 @@ namespace UniMatrix
             int value = (int)e.NewValue;
             _settings.MessageLimit = value;
             if (MessageLimitValue != null) MessageLimitValue.Text = value + " messages";
+        }
+
+        private void UseAccentToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.UseSystemAccent = UseAccentToggle.IsOn;
+            Services.ThemeService.Apply(UseAccentToggle.IsOn);
         }
 
         private async void LogoutButton_Click(object sender, RoutedEventArgs e)

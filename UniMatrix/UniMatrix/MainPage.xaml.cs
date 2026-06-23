@@ -24,7 +24,7 @@ namespace UniMatrix
 
         private MatrixDatabase _db;
         private MatrixClient _client;
-        private SettingsService _settings;
+        private PreferencesService _settings;
         private MediaService _media;
         private SyncProcessor _syncProcessor;
 
@@ -59,9 +59,12 @@ namespace UniMatrix
             if (_initialized) return;
             _initialized = true;
 
-            _settings = new SettingsService();
+            _settings = new PreferencesService();
             _client = new MatrixClient();
             _client.SetHomeserver(_settings.Homeserver);
+
+            // Apply the accent preference (system accent by default).
+            ThemeService.Apply(_settings.UseSystemAccent);
 
             SettingsBuild.Text = "Build " + BuildInfo.Date;
 

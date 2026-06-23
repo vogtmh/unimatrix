@@ -108,12 +108,25 @@ namespace UniMatrix.Services
         // ---- Sync ----
 
         /// <summary>
+        /// A compact sync filter: drops presence/typing noise, lazy-loads room
+        /// members (so the initial sync isn't bloated by full member lists) and
+        /// caps the timeline. This keeps the initial sync small enough to parse
+        /// quickly on low-memory devices like the Lumia 930.
+        /// </summary>
+        private const string SyncFilter =
+            "{\"presence\":{\"types\":[]}," +
+            "\"room\":{\"timeline\":{\"limit\":20}," +
+            "\"state\":{\"lazy_load_members\":true}," +
+            "\"ephemeral\":{\"types\":[]}}}";
+
+        /// <summary>
         /// Runs a single /sync request. When <paramref name="since"/> is null this is an
         /// initial sync; otherwise it long-polls for up to <paramref name="timeoutMs"/>.
         /// </summary>
         public async Task<JsonObject> SyncAsync(string since, int timeoutMs, CancellationToken ct)
         {
             string path = "/_matrix/client/r0/sync?access_token=" + Uri.EscapeDataString(_accessToken);
+            path += "&filter=" + Uri.EscapeDataString(SyncFilter);
             if (string.IsNullOrEmpty(since))
             {
                 path += "&timeout=0";

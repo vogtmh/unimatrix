@@ -55,7 +55,6 @@ namespace UniMatrix.Services
         private void ProcessJoinedRoom(string roomId, JsonObject roomObj, SyncResult result)
         {
             var room = new Room { Id = roomId };
-            bool changed = false;
 
             // ---- State events (room name, avatar, topic, membership) ----
             JsonObject state = GetObject(roomObj, "state");
@@ -66,7 +65,7 @@ namespace UniMatrix.Services
                 {
                     foreach (var ev in events)
                     {
-                        if (ApplyStateEvent(roomId, ev.GetObject(), room)) changed = true;
+                        ApplyStateEvent(roomId, ev.GetObject(), room);
                     }
                 }
             }
@@ -90,7 +89,6 @@ namespace UniMatrix.Services
                             var msg = ApplyMessageEvent(roomId, ev);
                             if (msg != null)
                             {
-                                changed = true;
                                 if (msg.Timestamp > latestTs)
                                 {
                                     latestTs = msg.Timestamp;
@@ -101,7 +99,7 @@ namespace UniMatrix.Services
                         else if (type == "m.room.name" || type == "m.room.avatar" ||
                                  type == "m.room.topic" || type == "m.room.member")
                         {
-                            if (ApplyStateEvent(roomId, ev, room)) changed = true;
+                            ApplyStateEvent(roomId, ev, room);
                         }
                     }
                 }
@@ -125,11 +123,11 @@ namespace UniMatrix.Services
                 room.LastPreview = preview;
             }
 
-            if (changed || unread > 0)
-            {
-                _db.UpsertRoom(room);
-                result.ChangedRooms.Add(roomId);
-            }
+            // Always persist a joined room so it appears in the list, even if this
+            // sync window carried no name/message for it (UpsertRoom merges via
+            // COALESCE, so null fields never overwrite existing data).
+            _db.UpsertRoom(room);
+            result.ChangedRooms.Add(roomId);
         }
 
         /// <summary>Applies a single state event; returns true if room metadata changed.</summary>

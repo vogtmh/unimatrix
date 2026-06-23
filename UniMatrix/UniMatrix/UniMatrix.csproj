@@ -104,7 +104,7 @@
     <Compile Include="MainPage.Login.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
-    <Compile Include="MainPage.Settings.cs">
+    <Compile Include="MainPage.Preferences.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
     <Compile Include="Models\MatrixModels.cs" />
@@ -113,7 +113,8 @@
     <Compile Include="Services\MatrixClient.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
-    <Compile Include="Services\SettingsService.cs" />
+    <Compile Include="Services\PreferencesService.cs" />
+    <Compile Include="Services\ThemeService.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Properties\Default.rd.xml" />

@@ -8,7 +8,7 @@ namespace UniMatrix.Services
     /// Stores non-secret preferences in LocalSettings and the Matrix access token
     /// in the Windows credential vault. The account password is never persisted.
     /// </summary>
-    internal class SettingsService
+    internal class PreferencesService
     {
         private const string VaultResource = "UniMatrix";
 
@@ -16,6 +16,7 @@ namespace UniMatrix.Services
         private const string UserIdKey = "matrix_user_id";
         private const string DeviceIdKey = "matrix_device_id";
         private const string MessageLimitKey = "matrix_message_limit";
+        private const string UseSystemAccentKey = "use_system_accent";
 
         private readonly ApplicationDataContainer _local = ApplicationData.Current.LocalSettings;
 
@@ -51,6 +52,18 @@ namespace UniMatrix.Services
                 return 50;
             }
             set { _local.Values[MessageLimitKey] = value; }
+        }
+
+        /// <summary>True (default) to follow the system accent color; false for the signature green.</summary>
+        public bool UseSystemAccent
+        {
+            get
+            {
+                if (_local.Values.ContainsKey(UseSystemAccentKey))
+                    return (bool)_local.Values[UseSystemAccentKey];
+                return true; // System accent by default.
+            }
+            set { _local.Values[UseSystemAccentKey] = value; }
         }
 
         /// <summary>Returns the stored access token, or null if the user is not logged in.</summary>
