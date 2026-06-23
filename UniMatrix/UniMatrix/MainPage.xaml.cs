@@ -411,8 +411,11 @@ namespace UniMatrix
                 Messages.Add(m);
             }
 
-            // There may be older messages to page in iff we filled a whole page.
-            _hasMoreOlder = msgs.Count >= MessagePageSize;
+            // There may be older messages to page in if we filled a whole page from cache, OR if
+            // the room hasn't been fully downloaded yet (a freshly-joined busy room only has the
+            // handful of messages /sync delivered). In the latter case scrolling up fetches the
+            // rest from the server on demand — see LoadOlderMessagesAsync.
+            _hasMoreOlder = msgs.Count >= MessagePageSize || !IsBackfillDone(roomId);
             _loadingOlder = false;
 
             // Resolve image thumbnails asynchronously (fire and forget).
@@ -427,7 +430,7 @@ namespace UniMatrix
         /// preserving their reading position. Keeps the in-memory list growing only as far as
         /// the user actually scrolls back, instead of loading the whole room up front.
         /// </summary>
-        private void LoadOlderMessagesAsync()
+        private async Task LoadOlderMessagesAsync()
         {
             if (_loadingOlder || !_hasMoreOlder) return;
             if (Messages.Count == 0) return;
@@ -441,9 +444,37 @@ namespace UniMatrix
             try
             {
                 var older = _db.GetMessagesBefore(roomId, anchor.Timestamp, anchor.EventId, MessagePageSize);
+
+                // Cache exhausted but the room isn't fully downloaded yet -> pull the next older
+                // chunk from the server on demand, then read the cache again. Without this, a
+                // freshly-joined busy room (where /sync only delivered today's few messages) could
+                // never show its history: LoadOlder used to only ever read the local cache, so once
+                // the cached page ran out it simply stopped.
+                if (older.Count == 0 && !IsBackfillDone(roomId))
+                {
+                    ShowSyncProgress(true, "Loading older messages…");
+                    try
+                    {
+                        // sinceTs 0 = ignore the day window (the user is explicitly scrolling past
+                        // it); a small page budget keeps each scroll-up to a bounded fetch instead
+                        // of pulling the whole room at once.
+                        await TryBackfillAsync(roomId, 0, _syncCts?.Token ?? CancellationToken.None, maxPages: 3);
+                    }
+                    finally
+                    {
+                        ShowSyncProgress(false);
+                    }
+
+                    if (_currentRoomId != roomId) return; // navigated away while fetching
+                    older = _db.GetMessagesBefore(roomId, anchor.Timestamp, anchor.EventId, MessagePageSize);
+                }
+
                 if (older.Count == 0)
                 {
-                    _hasMoreOlder = false;
+                    // Nothing more in cache; keep the trigger armed only if the server may still
+                    // have older history we haven't reached (e.g. the background fill is busy or we
+                    // were briefly offline). Once the room is fully downloaded, stop.
+                    _hasMoreOlder = !IsBackfillDone(roomId);
                     return;
                 }
 
@@ -469,7 +500,7 @@ namespace UniMatrix
                     Messages.Insert(0, older[i]);
                 }
 
-                _hasMoreOlder = older.Count >= MessagePageSize;
+                _hasMoreOlder = older.Count >= MessagePageSize || !IsBackfillDone(roomId);
 
                 foreach (var m in older.Where(x => x.IsImage && !string.IsNullOrEmpty(x.Mxc)))
                 {
@@ -487,6 +518,11 @@ namespace UniMatrix
             {
                 _loadingOlder = false;
             }
+        }
+
+        private bool IsBackfillDone(string roomId)
+        {
+            return _db.GetMeta(BackfillDoneKey(roomId)) == "1";
         }
 
         /// <summary>
@@ -522,7 +558,7 @@ namespace UniMatrix
             if (_messagesScrollViewer != null && _messagesScrollViewer.VerticalOffset <= 60 &&
                 _hasMoreOlder && !_loadingOlder)
             {
-                LoadOlderMessagesAsync();
+                var _ = LoadOlderMessagesAsync();
             }
         }
 
@@ -546,7 +582,7 @@ namespace UniMatrix
         /// </summary>
         private bool NeedsBackfill(string roomId, long sinceTs)
         {
-            if (_db.GetMeta(BackfillDoneKey(roomId)) == "1") return false;
+            if (IsBackfillDone(roomId)) return false;
 
             long oldest = _db.GetOldestMessageTs(roomId);
             if (oldest == 0) return true;            // nothing cached yet
@@ -574,7 +610,7 @@ namespace UniMatrix
             catch { }
         }
 
-        private async Task<int> TryBackfillAsync(string roomId, long sinceTs, CancellationToken ct, Action<int> onPageStored = null)
+        private async Task<int> TryBackfillAsync(string roomId, long sinceTs, CancellationToken ct, Action<int> onPageStored = null, int maxPages = 200)
         {
             // The /messages limit counts ALL events (state, membership, etc.), so a single
             // page rarely yields enough real messages. Page backward until we've crossed the
@@ -585,7 +621,6 @@ namespace UniMatrix
             // new messages stored. Network/DB work runs off the UI thread (ConfigureAwait)
             // since this can run for minutes during the initial all-rooms backfill.
             const int pageSize = 100;
-            const int maxPages = 200;
             int fetched = 0;
 
             // Never backfill the same room from two places at once (e.g. the user opening a
