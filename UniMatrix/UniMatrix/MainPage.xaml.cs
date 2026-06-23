@@ -441,6 +441,18 @@ namespace UniMatrix
         private async Task SyncLoopAsync(CancellationToken ct)
         {
             string since = _db.GetMeta("next_batch");
+
+            // If we have a sync token but no cached rooms, a previous run saved the
+            // token without persisting the room list. An incremental sync from that
+            // token only returns deltas (nothing), so the list would stay empty
+            // forever. Force a full initial sync to repopulate.
+            if (!string.IsNullOrEmpty(since) && _db.GetRooms().Count == 0)
+            {
+                App.Log("Have next_batch but 0 cached rooms -> forcing full initial sync.");
+                since = null;
+                _db.SetMeta("next_batch", "");
+            }
+
             App.Log("Sync loop started. since=" + (since ?? "<initial>") +
                     " homeserver=" + _client.BaseUrl);
             int pass = 0;
