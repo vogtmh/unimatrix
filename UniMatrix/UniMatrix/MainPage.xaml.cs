@@ -501,11 +501,16 @@ namespace UniMatrix
 
             App.Log("Sync loop started. since=" + (since ?? "<initial>") +
                     " homeserver=" + _client.BaseUrl);
+
+            // Orange = connecting / initial sync in progress (we have no live data yet).
+            // Once a pass succeeds we go green and STAY green: incremental /sync is a
+            // long-poll that holds the connection open until something changes, which
+            // is normal and means we are connected, not busy.
+            SetSyncLed(Colors.Orange);
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    SetSyncLed(Colors.Orange);
                     var resp = await _client.SyncAsync(since, 30000, ct);
                     if (ct.IsCancellationRequested) break;
 

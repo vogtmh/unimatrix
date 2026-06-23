@@ -265,20 +265,15 @@ namespace UniMatrix.Services
         private async Task<JsonObject> GetAsync(string path, CancellationToken ct)
         {
             var uri = new Uri(_baseUrl + path);
-            bool isSync = path.StartsWith("/_matrix/client/r0/sync", StringComparison.OrdinalIgnoreCase);
-            if (isSync) App.Log("HTTP GET sync: sending request...");
             // ConfigureAwait(false) keeps the (potentially large) response read and
             // JSON parse off the UI thread so the app doesn't freeze on big syncs.
             using (var resp = await _http.GetAsync(uri).AsTask(ct).ConfigureAwait(false))
             {
-                if (isSync) App.Log("HTTP GET sync: status " + (int)resp.StatusCode + ", reading body...");
                 string text = await resp.Content.ReadAsStringAsync().AsTask(ct).ConfigureAwait(false);
-                if (isSync) App.Log("HTTP GET sync: body read, " + text.Length + " chars. Parsing...");
                 EnsureSuccess(resp, text);
                 // Parse on a background thread — Windows.Data.Json can take seconds
                 // on a large initial-sync payload on low-end hardware.
                 var obj = await Task.Run(() => Parse(text), ct).ConfigureAwait(false);
-                if (isSync) App.Log("HTTP GET sync: parse complete.");
                 return obj;
             }
         }
