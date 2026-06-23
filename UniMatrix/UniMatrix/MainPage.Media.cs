@@ -148,6 +148,7 @@ namespace UniMatrix
             // Show immediately with the cached thumbnail (if any) so there's instant feedback,
             // then swap in the full-resolution original once it has downloaded.
             ImageViewerScroll.ChangeView(null, null, 1.0f, true);
+            ConstrainViewerImageToScreen();
             ImageViewerImage.Source = null;
             if (!string.IsNullOrEmpty(msg.MediaUrl))
             {
@@ -180,6 +181,24 @@ namespace UniMatrix
         }
 
         private void ImageViewerCloseButton_Click(object sender, RoutedEventArgs e) => CloseImageViewer();
+
+        private void ImageViewerPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            ConstrainViewerImageToScreen();
+        }
+
+        /// <summary>
+        /// Caps the image to the panel size so a large photo fits the screen at zoom 1x (with
+        /// Stretch=Uniform the Image otherwise sizes to its full pixel dimensions and overflows).
+        /// Pinch-zoom still scales the ScrollViewer content beyond this, so the user can zoom in.
+        /// </summary>
+        private void ConstrainViewerImageToScreen()
+        {
+            double w = ImageViewerPanel.ActualWidth;
+            double h = ImageViewerPanel.ActualHeight;
+            if (w > 0) ImageViewerImage.MaxWidth = w;
+            if (h > 0) ImageViewerImage.MaxHeight = h;
+        }
 
         private void ImageViewerPanel_Tapped(object sender, Windows.UI.Xaml.Input.TappedRoutedEventArgs e)
         {

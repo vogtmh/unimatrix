@@ -60,11 +60,14 @@ namespace UniMatrix.Services
                 if (buffer == null) return null;
 
                 var folder = await GetFolderAsync();
-                string fileName = SafeFileName(mxc) + ".img";
-                var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+                // Use a unique filename rather than a deterministic one: after a cache wipe the
+                // old file may still be locked by a live BitmapImage/ImageBrush, and overwriting
+                // it (ReplaceExisting) would throw "file in use" and silently lose the avatar.
+                string fileName = SafeFileName(mxc) + "_" + NextSeq() + ".img";
+                var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.GenerateUniqueName);
                 await FileIO.WriteBufferAsync(file, buffer);
 
-                string appUri = "ms-appdata:///local/media/" + fileName;
+                string appUri = "ms-appdata:///local/media/" + file.Name;
                 _db.SetCachedMedia(mxc, appUri);
                 return appUri;
             }
@@ -90,9 +93,11 @@ namespace UniMatrix.Services
             try
             {
                 var folder = await GetFolderAsync();
-                string fileName = SafeFileName(mxc) + ".img";
-                await source.CopyAsync(folder, fileName, NameCollisionOption.ReplaceExisting);
-                _db.SetCachedMedia(mxc, "ms-appdata:///local/media/" + fileName);
+                // Unique name (see GetThumbnailUriAsync) so re-caching never collides with a
+                // locked file left over from a previous session.
+                string fileName = SafeFileName(mxc) + "_" + NextSeq() + ".img";
+                var copy = await source.CopyAsync(folder, fileName, NameCollisionOption.GenerateUniqueName);
+                _db.SetCachedMedia(mxc, "ms-appdata:///local/media/" + copy.Name);
             }
             catch (Exception ex)
             {
@@ -150,11 +155,12 @@ namespace UniMatrix.Services
                 if (buffer == null) return null;
 
                 var folder = await GetFolderAsync();
-                string fileName = "full_" + SafeFileName(mxc) + ".img";
-                var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
+                // Unique name (see GetThumbnailUriAsync) to avoid "file in use" on re-download.
+                string fileName = "full_" + SafeFileName(mxc) + "_" + NextSeq() + ".img";
+                var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.GenerateUniqueName);
                 await FileIO.WriteBufferAsync(file, buffer);
 
-                string appUri = "ms-appdata:///local/media/" + fileName;
+                string appUri = "ms-appdata:///local/media/" + file.Name;
                 _db.SetCachedMedia(cacheKey, appUri);
                 return appUri;
             }
@@ -163,6 +169,37 @@ namespace UniMatrix.Services
                 App.Log("Full image EXC for " + mxc + ": " + ex.Message);
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Best-effort deletion of every cached media file on disk. Called during a cache wipe so
+        /// orphaned files don't accumulate. Files still locked by a live image (e.g. an avatar
+        /// currently on screen) are skipped silently; their now-unique names mean a re-download
+        /// writes a fresh file instead of fighting the lock.
+        /// </summary>
+        public async Task ClearMediaCacheAsync()
+        {
+            try
+            {
+                var folder = await GetFolderAsync();
+                var files = await folder.GetFilesAsync();
+                foreach (var file in files)
+                {
+                    try { await file.DeleteAsync(StorageDeleteOption.PermanentDelete); }
+                    catch { /* In use (bound to a live Image) -> leave it; harmless. */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log("ClearMediaCache EXC: " + ex.Message);
+            }
+        }
+
+        // Monotonic counter so concurrently-cached files within a session never collide on name.
+        private static int _seq;
+        private static int NextSeq()
+        {
+            return System.Threading.Interlocked.Increment(ref _seq);
         }
 
         private static string SafeFileName(string mxc)

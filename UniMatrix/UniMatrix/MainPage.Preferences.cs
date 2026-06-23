@@ -204,6 +204,11 @@ namespace UniMatrix
             Messages.Clear();
             _currentRoomId = null;
 
+            // Delete the cached media files on disk too (ClearAll only drops the DB rows).
+            // Best-effort: files still locked by a live image are skipped, and re-downloads
+            // now write unique filenames so they never collide with a leftover locked file.
+            await _media.ClearMediaCacheAsync();
+
             // Clear any earlier cancel so the fresh sync's backfill can run.
             ResumeBackfillAll();
 

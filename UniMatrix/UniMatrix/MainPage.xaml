@@ -532,7 +532,7 @@
         <!-- Top-most overlay (last child) so it covers everything. Tapping the
              backdrop or the close button dismisses it. -->
         <Grid x:Name="ImageViewerPanel" Background="#F0000000" Visibility="Collapsed"
-              Tapped="ImageViewerPanel_Tapped">
+              Tapped="ImageViewerPanel_Tapped" SizeChanged="ImageViewerPanel_SizeChanged">
             <ScrollViewer x:Name="ImageViewerScroll" ZoomMode="Enabled"
                           MinZoomFactor="1" MaxZoomFactor="6"
                           HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
