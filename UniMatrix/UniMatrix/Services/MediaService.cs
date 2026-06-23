@@ -60,12 +60,27 @@ namespace UniMatrix.Services
             try
             {
                 var response = await _http.GetAsync(new Uri(url));
+
+                // matrix.org sometimes can't generate a thumbnail for certain media and
+                // returns 404 even though the original is downloadable. Fall back to the
+                // full-resolution download URL in that case.
                 if (!response.IsSuccessStatusCode)
                 {
-                    App.Log("Media HTTP " + (int)response.StatusCode + " for " + mxc);
-                    return null;
+                    App.Log("Media thumb HTTP " + (int)response.StatusCode + " for " + mxc + "; trying download...");
+                    response.Dispose();
+                    string downloadUrl = _client.ResolveDownloadUrl(mxc);
+                    if (downloadUrl == null) return null;
+                    response = await _http.GetAsync(new Uri(downloadUrl));
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        App.Log("Media download HTTP " + (int)response.StatusCode + " for " + mxc);
+                        response.Dispose();
+                        return null;
+                    }
                 }
+
                 var buffer = await response.Content.ReadAsBufferAsync();
+                response.Dispose();
                 var folder = await GetFolderAsync();
                 string fileName = SafeFileName(mxc) + ".img";
                 var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.ReplaceExisting);
