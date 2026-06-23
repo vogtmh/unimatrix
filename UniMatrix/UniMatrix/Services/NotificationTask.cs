@@ -67,15 +67,19 @@ namespace UniMatrix.Services
 
         /// <summary>
         /// Runs one notification pass: a short incremental sync, then a toast for each room with new
-        /// incoming messages that matches the user's notification preferences. Called from
+        /// incoming messages that matches the user's notification preferences, and a live-tile
+        /// update with the latest message that matches the tile preference. Called from
         /// App.OnBackgroundActivated. Never throws (best effort).
         /// </summary>
         public static async Task RunAsync()
         {
             var settings = new PreferencesService();
 
-            // Nothing to do if both notification types are off or we're signed out.
-            if (!settings.NotifyDirectMessages && !settings.NotifyGroupRooms) return;
+            bool toastsEnabled = settings.NotifyDirectMessages || settings.NotifyGroupRooms;
+            bool tileEnabled = settings.LiveTileMode != LiveTileMode.Off;
+
+            // Nothing to do if neither toasts nor the live tile are on, or we're signed out.
+            if (!toastsEnabled && !tileEnabled) return;
             string token = settings.GetAccessToken();
             if (string.IsNullOrEmpty(token) || string.IsNullOrEmpty(settings.UserId)) return;
 
@@ -108,11 +112,35 @@ namespace UniMatrix.Services
                 if (!string.IsNullOrEmpty(result.NextBatch))
                     db.SetMeta("next_batch", result.NextBatch);
 
+                // The newest tile-eligible message across all changed rooms (most recent wins).
+                Room tileRoom = null;
+                Message tileMessage = null;
+
                 foreach (var roomId in result.ChangedRooms)
                 {
-                    try { NotifyRoomIfNeeded(db, settings, roomId); }
+                    try
+                    {
+                        Room room = db.GetRoom(roomId);
+                        if (room == null || room.UnreadCount <= 0) continue;
+
+                        Message latest = db.GetLatestIncomingMessage(roomId, settings.UserId);
+                        if (latest == null) continue;
+
+                        if (toastsEnabled)
+                            NotifyRoomIfNeeded(db, settings, room, latest);
+
+                        if (tileEnabled && TileWants(settings.LiveTileMode, room.IsDirect) &&
+                            (tileMessage == null || latest.Timestamp > tileMessage.Timestamp))
+                        {
+                            tileMessage = latest;
+                            tileRoom = room;
+                        }
+                    }
                     catch (Exception ex) { App.Log("Notify room error (" + roomId + "): " + ex.Message); }
                 }
+
+                if (tileEnabled && tileMessage != null)
+                    TileService.UpdateLatest(tileRoom.DisplayName, Preview(tileMessage));
             }
             catch (Exception ex)
             {
@@ -124,25 +152,31 @@ namespace UniMatrix.Services
             }
         }
 
-        private static void NotifyRoomIfNeeded(MatrixDatabase db, PreferencesService settings, string roomId)
+        /// <summary>Whether a room of the given direct/group kind matches the live-tile mode.</summary>
+        private static bool TileWants(LiveTileMode mode, bool isDirect)
         {
-            Room room = db.GetRoom(roomId);
-            if (room == null || room.UnreadCount <= 0) return;
+            switch (mode)
+            {
+                case LiveTileMode.All: return true;
+                case LiveTileMode.DirectOnly: return isDirect;
+                case LiveTileMode.GroupsOnly: return !isDirect;
+                default: return false; // Off
+            }
+        }
 
+        private static void NotifyRoomIfNeeded(MatrixDatabase db, PreferencesService settings, Room room, Message latest)
+        {
             // Respect the per-type toggles.
             if (room.IsDirect && !settings.NotifyDirectMessages) return;
             if (!room.IsDirect && !settings.NotifyGroupRooms) return;
 
-            Message latest = db.GetLatestIncomingMessage(roomId, settings.UserId);
-            if (latest == null) return;
-
             // Don't re-notify for a message we've already toasted (the background task runs every
             // 15 min and a room can stay unread across several passes).
-            string lastNotified = db.GetMeta("notif_" + roomId);
+            string lastNotified = db.GetMeta("notif_" + room.Id);
             if (lastNotified == latest.EventId) return;
 
-            ToastService.ShowMessage(roomId, room.DisplayName, Preview(latest));
-            db.SetMeta("notif_" + roomId, latest.EventId);
+            ToastService.ShowMessage(room.Id, room.DisplayName, Preview(latest));
+            db.SetMeta("notif_" + room.Id, latest.EventId);
         }
 
         private static string Preview(Message m)

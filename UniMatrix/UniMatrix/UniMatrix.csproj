@@ -125,6 +125,7 @@
     <Compile Include="Services\ThemeService.cs" />
     <Compile Include="Services\ToastService.cs" />
     <Compile Include="Services\NotificationTask.cs" />
+    <Compile Include="Services\TileService.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Properties\Default.rd.xml" />

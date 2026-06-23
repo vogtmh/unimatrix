@@ -22,6 +22,7 @@ namespace UniMatrix
 
             NotifyDirectToggle.IsOn = _settings.NotifyDirectMessages;
             NotifyGroupsToggle.IsOn = _settings.NotifyGroupRooms;
+            LiveTileModeCombo.SelectedIndex = (int)_settings.LiveTileMode;
 
             ShowView(View.Settings);
 
@@ -148,11 +149,30 @@ namespace UniMatrix
             UpdateNotificationTaskRegistration();
         }
 
-        /// <summary>Registers the background notification task when at least one type is enabled,
-        /// and unregisters it when both are off (no point waking up to do nothing).</summary>
+        private void LiveTileModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_settings == null) return;
+            int idx = LiveTileModeCombo.SelectedIndex;
+            if (idx < 0) return;
+
+            var mode = (Services.LiveTileMode)idx;
+            _settings.LiveTileMode = mode;
+
+            // Turning the tile off should clear any message currently pinned to it.
+            if (mode == Services.LiveTileMode.Off)
+                Services.TileService.Clear();
+
+            UpdateNotificationTaskRegistration();
+        }
+
+        /// <summary>Registers the background task when at least one of the message notifications or
+        /// the live tile is enabled, and unregisters it when everything is off (no point waking up
+        /// to do nothing).</summary>
         private void UpdateNotificationTaskRegistration()
         {
-            if (_settings.NotifyDirectMessages || _settings.NotifyGroupRooms)
+            bool anyEnabled = _settings.NotifyDirectMessages || _settings.NotifyGroupRooms ||
+                              _settings.LiveTileMode != Services.LiveTileMode.Off;
+            if (anyEnabled)
             {
                 var _ = Services.NotificationTask.RegisterAsync();
             }

@@ -4,6 +4,15 @@ using Windows.Storage;
 
 namespace UniMatrix.Services
 {
+    /// <summary>Which rooms' latest message is pushed to the Start screen live tile.</summary>
+    internal enum LiveTileMode
+    {
+        Off = 0,
+        All = 1,
+        DirectOnly = 2,
+        GroupsOnly = 3
+    }
+
     /// <summary>
     /// Stores non-secret preferences in LocalSettings and the Matrix access token
     /// in the Windows credential vault. The account password is never persisted.
@@ -22,6 +31,8 @@ namespace UniMatrix.Services
 
         private const string NotifyDirectKey = "notify_direct_messages";
         private const string NotifyGroupsKey = "notify_group_rooms";
+
+        private const string LiveTileModeKey = "live_tile_mode";
 
         /// <summary>
         /// When a room has had no activity within the history window, show at least this
@@ -106,6 +117,21 @@ namespace UniMatrix.Services
                 return false; // Groups off by default.
             }
             set { _local.Values[NotifyGroupsKey] = value; }
+        }
+
+        /// <summary>Which rooms' latest message updates the Start screen live tile. Off by default.</summary>
+        public LiveTileMode LiveTileMode
+        {
+            get
+            {
+                if (_local.Values.ContainsKey(LiveTileModeKey))
+                {
+                    int v = (int)_local.Values[LiveTileModeKey];
+                    if (v >= 0 && v <= 3) return (LiveTileMode)v;
+                }
+                return LiveTileMode.Off;
+            }
+            set { _local.Values[LiveTileModeKey] = (int)value; }
         }
 
         /// <summary>Returns the stored access token, or null if the user is not logged in.</summary>
