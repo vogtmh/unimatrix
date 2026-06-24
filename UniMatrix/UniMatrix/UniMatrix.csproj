@@ -218,21 +218,21 @@
     </PackageReference>
   </ItemGroup>
   <!--
-    WebRTC native component (webrtc-uwp SDK, M71). Org.WebRtc.dll is native code, so the
-    winmd metadata reference and the runtime dll/scheme handler are selected per-Platform.
-    The matching binaries are vendored under libs\webrtc\<Platform>\ and copied next to the
-    app at build time. ARM is the only arch harvested so far (the Lumia 930 target); x86/x64
-    groups are added as those arches are harvested for desktop/second-peer builds.
+    WebRTC native component (webrtc-uwp SDK, M71). Org.WebRtc.winmd carries the WinRT type
+    metadata used at compile time; Org.WebRtc.dll is the native (ARMv7) implementation. For a
+    NATIVE WinMD the implementation dll MUST be declared via <Implementation> so MSBuild copies
+    it to the output AND doesn't try to read it as a managed assembly (doing the latter causes
+    MSB3246 "no assembly manifest" and silently drops the reference -> CS0246 on every Org.* type).
+    Do NOT add the dll as a separate <Content> item — that reintroduces the mis-resolution.
+    The matching binaries are vendored under libs\webrtc\<Platform>\. ARM is the only arch
+    harvested so far (the Lumia 930 target); x86/x64 groups are added as those arches are harvested.
   -->
   <ItemGroup Condition="'$(Platform)' == 'ARM'">
     <Reference Include="Org.WebRtc">
       <HintPath>libs\webrtc\ARM\Org.WebRtc.winmd</HintPath>
       <IsWinMDFile>true</IsWinMDFile>
+      <Implementation>Org.WebRtc.dll</Implementation>
     </Reference>
-    <Content Include="libs\webrtc\ARM\Org.WebRtc.dll">
-      <Link>Org.WebRtc.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
   <PropertyGroup Condition=" '$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '14.0' ">
     <VisualStudioVersion>14.0</VisualStudioVersion>
