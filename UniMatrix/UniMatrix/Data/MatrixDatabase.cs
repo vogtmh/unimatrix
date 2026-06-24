@@ -66,6 +66,11 @@ namespace UniMatrix.Data
             try { Execute("ALTER TABLE rooms ADD COLUMN is_invite INTEGER NOT NULL DEFAULT 0"); }
             catch { /* column already present */ }
 
+            // Migration: remember who invited the user (the inviter's @user:server), shown on the
+            // invite screen. Same no-op-after-first-run pattern.
+            try { Execute("ALTER TABLE rooms ADD COLUMN inviter TEXT"); }
+            catch { /* column already present */ }
+
             Execute(@"
                 CREATE TABLE IF NOT EXISTS messages (
                     event_id   TEXT PRIMARY KEY,
@@ -213,7 +218,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct, is_invite
+                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct, is_invite, inviter
                                     FROM rooms ORDER BY last_ts DESC";
                 using (var r = cmd.ExecuteReader())
                 {
@@ -230,7 +235,8 @@ namespace UniMatrix.Data
                             LastEventTs = r.GetInt64(6),
                             LastPreview = r.IsDBNull(7) ? null : r.GetString(7),
                             IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0,
-                            IsInvite = !r.IsDBNull(9) && r.GetInt32(9) != 0
+                            IsInvite = !r.IsDBNull(9) && r.GetInt32(9) != 0,
+                            Inviter = r.IsDBNull(10) ? null : r.GetString(10)
                         });
                     }
                 }
@@ -244,7 +250,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct, is_invite
+                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct, is_invite, inviter
                                     FROM rooms WHERE id = @id";
                 cmd.Parameters.AddWithValue("@id", roomId);
                 using (var r = cmd.ExecuteReader())
@@ -262,7 +268,8 @@ namespace UniMatrix.Data
                             LastEventTs = r.GetInt64(6),
                             LastPreview = r.IsDBNull(7) ? null : r.GetString(7),
                             IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0,
-                            IsInvite = !r.IsDBNull(9) && r.GetInt32(9) != 0
+                            IsInvite = !r.IsDBNull(9) && r.GetInt32(9) != 0,
+                            Inviter = r.IsDBNull(10) ? null : r.GetString(10)
                         };
                     }
                 }
@@ -300,6 +307,22 @@ namespace UniMatrix.Data
             {
                 cmd.CommandText = "UPDATE rooms SET is_invite = @i WHERE id = @id";
                 cmd.Parameters.AddWithValue("@i", isInvite ? 1 : 0);
+                cmd.Parameters.AddWithValue("@id", roomId);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        /// <summary>
+        /// Records who invited the user to a room (the inviter's @user:server), shown on the invite
+        /// screen. A null/empty value clears it. Stored separately from UpsertRoom like is_invite.
+        /// </summary>
+        public void SetRoomInviter(string roomId, string inviter)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE rooms SET inviter = @inv WHERE id = @id";
+                cmd.Parameters.AddWithValue("@inv", (object)inviter ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("@id", roomId);
                 cmd.ExecuteNonQuery();
             }

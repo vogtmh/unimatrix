@@ -444,6 +444,62 @@
             </ScrollViewer>
         </Grid>
 
+        <!-- ========================= INVITE ========================= -->
+        <Grid x:Name="InvitePanel" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="64">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Click="InviteCloseButton_Click" Background="Transparent"
+                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
+                </Button>
+                <TextBlock Grid.Column="1" Text="Invitation" Foreground="White" FontSize="18"
+                           FontWeight="SemiBold" VerticalAlignment="Center" />
+            </Grid>
+            <ScrollViewer Grid.Row="1">
+                <StackPanel Padding="24" HorizontalAlignment="Center" MaxWidth="420" VerticalAlignment="Center">
+                    <Grid Width="120" Height="120" Margin="0,24,0,16" HorizontalAlignment="Center">
+                        <Ellipse x:Name="InviteAvatarFallback" Fill="{StaticResource AppCardBrush}" />
+                        <TextBlock x:Name="InviteAvatarInitial" Foreground="White" FontSize="48"
+                                   FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Ellipse x:Name="InviteAvatarImage" Visibility="Collapsed" />
+                    </Grid>
+                    <TextBlock x:Name="InviteTitle" Text="" Foreground="White" FontSize="22"
+                               FontWeight="SemiBold" TextWrapping="Wrap" HorizontalAlignment="Center"
+                               TextAlignment="Center" />
+                    <TextBlock x:Name="InviteSubtitle" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="14" TextWrapping="Wrap" HorizontalAlignment="Center"
+                               TextAlignment="Center" Margin="0,4,0,0" />
+                    <TextBlock x:Name="InviteUserId" Text="" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="13" TextWrapping="Wrap" HorizontalAlignment="Center"
+                               TextAlignment="Center" Margin="0,4,0,0" />
+
+                    <Button x:Name="InviteAcceptButton" Click="InviteAcceptButton_Click"
+                            HorizontalAlignment="Stretch" Margin="0,32,0,0" Padding="0,14"
+                            Background="{StaticResource AppAccentBrush}" Foreground="White" BorderThickness="0">
+                        <TextBlock Text="Start chatting" FontSize="15" HorizontalAlignment="Center" />
+                    </Button>
+                    <Button x:Name="InviteDeclineButton" Click="InviteDeclineButton_Click"
+                            HorizontalAlignment="Stretch" Margin="0,12,0,0" Padding="0,12"
+                            Background="{StaticResource AppCardBrush}" Foreground="White" BorderThickness="0">
+                        <TextBlock Text="Decline" FontSize="15" HorizontalAlignment="Center" />
+                    </Button>
+
+                    <ProgressRing x:Name="InviteProgress" IsActive="False" Width="28" Height="28"
+                                  Foreground="{StaticResource AppAccentBrush}" Margin="0,16,0,0" />
+                    <TextBlock x:Name="InviteStatus" Text="" Foreground="#FF6B6B" FontSize="13"
+                               TextWrapping="Wrap" HorizontalAlignment="Center" TextAlignment="Center"
+                               Margin="0,8,0,0" Visibility="Collapsed" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
         <!-- ========================= ADD ROOM ========================= -->
         <Grid x:Name="AddRoomPanel" Background="{StaticResource AppBackgroundBrush}" Visibility="Collapsed">
             <Grid.RowDefinitions>

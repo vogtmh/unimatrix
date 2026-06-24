@@ -35,6 +35,10 @@ namespace UniMatrix.Models
             set { _isInvite = value; Raise("IsInvite"); Raise("InviteVisibility"); Raise("PreviewVisibility"); }
         }
 
+        /// <summary>For an invited room, the @user:server who sent the invite (shown on the invite
+        /// screen). Null for joined rooms.</summary>
+        public string Inviter { get; set; }
+
         private string _avatarUrl;
         /// <summary>Resolved https:// URL for the room avatar, or null when unset.</summary>
         public string AvatarUrl

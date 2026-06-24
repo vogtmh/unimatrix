@@ -79,7 +79,7 @@ namespace UniMatrix
         // log line is relative to the moment the user tapped the room (ms since open).
         private readonly System.Diagnostics.Stopwatch _openWatch = new System.Diagnostics.Stopwatch();
 
-        private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom }
+        private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom, Invite }
 
         public MainPage()
         {
@@ -263,13 +263,14 @@ namespace UniMatrix
             RoomInfoPanel.Visibility = view == View.RoomInfo ? Visibility.Visible : Visibility.Collapsed;
             SettingsPanel.Visibility = view == View.Settings ? Visibility.Visible : Visibility.Collapsed;
             AddRoomPanel.Visibility = view == View.AddRoom ? Visibility.Visible : Visibility.Collapsed;
+            InvitePanel.Visibility = view == View.Invite ? Visibility.Visible : Visibility.Collapsed;
             UpdateBackButton();
         }
 
         private void UpdateBackButton()
         {
             var nav = SystemNavigationManager.GetForCurrentView();
-            bool canGoBack = _activeView == View.Chat || _activeView == View.RoomInfo || _activeView == View.Settings || _activeView == View.AddRoom;
+            bool canGoBack = _activeView == View.Chat || _activeView == View.RoomInfo || _activeView == View.Settings || _activeView == View.AddRoom || _activeView == View.Invite;
             nav.AppViewBackButtonVisibility = canGoBack
                 ? AppViewBackButtonVisibility.Visible
                 : AppViewBackButtonVisibility.Collapsed;
@@ -300,6 +301,10 @@ namespace UniMatrix
                     ShowView(View.RoomList);
                     break;
                 case View.AddRoom:
+                    e.Handled = true;
+                    ShowView(View.RoomList);
+                    break;
+                case View.Invite:
                     e.Handled = true;
                     ShowView(View.RoomList);
                     break;
@@ -341,6 +346,7 @@ namespace UniMatrix
                     existing.LastPreview = incoming.LastPreview;
                     existing.IsDirect = incoming.IsDirect;
                     existing.IsInvite = incoming.IsInvite;
+                    existing.Inviter = incoming.Inviter;
                     if (existing.AvatarMxc != incoming.AvatarMxc)
                     {
                         // Avatar changed: drop the resolved URL so it gets re-fetched.
@@ -410,55 +416,136 @@ namespace UniMatrix
             if (room == null) return;
             if (room.IsInvite)
             {
-                var _ = HandleInviteTapAsync(room);
+                ShowInvitePanel(room);
                 return;
             }
             OpenRoom(room);
         }
 
+        // The invite currently shown on the Invite panel (so the Accept/Decline buttons know which
+        // room they act on).
+        private Room _inviteRoom;
+
         /// <summary>
-        /// A tapped invitation prompts Accept / Decline. Accepting joins the room (it then arrives
-        /// under /sync "join" and the invite flag clears); declining leaves+forgets it and drops it
-        /// from the local list immediately.
+        /// Shows the Element-style invitation screen for a pending invite: the inviter's avatar,
+        /// who they are, and Start chatting / Decline actions. Replaces the old MessageDialog (which
+        /// silently failed on Windows 10 Mobile because it can't show more than two commands).
         /// </summary>
-        private async Task HandleInviteTapAsync(Room room)
+        private void ShowInvitePanel(Room room)
         {
-            var dialog = new Windows.UI.Popups.MessageDialog(
-                "You've been invited to " + room.DisplayName + ".", "Invitation");
-            dialog.Commands.Add(new Windows.UI.Popups.UICommand("Accept"));
-            dialog.Commands.Add(new Windows.UI.Popups.UICommand("Decline"));
-            dialog.Commands.Add(new Windows.UI.Popups.UICommand("Cancel"));
-            dialog.DefaultCommandIndex = 0;
-            dialog.CancelCommandIndex = 2;
+            _inviteRoom = room;
 
-            var choice = await dialog.ShowAsync();
-            if (choice == null || choice.Label == "Cancel") return;
+            InviteTitle.Text = room.DisplayName;
+            InviteSubtitle.Text = room.IsDirect ? "wants to chat" : "invited you to join this room";
+            InviteUserId.Text = !string.IsNullOrEmpty(room.Inviter) ? room.Inviter : room.Id;
 
-            if (choice.Label == "Accept")
+            // Avatar: reuse the resolved URL if the room list already fetched it, otherwise show the
+            // colored initial and kick off a background fetch from the mxc.
+            InviteAvatarInitial.Text = room.AvatarInitial;
+            InviteAvatarFallback.Fill = room.AvatarBrush;
+            ApplyInviteAvatar(room);
+
+            InviteStatus.Visibility = Visibility.Collapsed;
+            InviteStatus.Text = "";
+            InviteProgress.IsActive = false;
+            InviteAcceptButton.IsEnabled = true;
+            InviteDeclineButton.IsEnabled = true;
+
+            ShowView(View.Invite);
+
+            if (!room.HasAvatar && !string.IsNullOrEmpty(room.AvatarMxc))
             {
-                try
+                var _ = LoadInviteAvatarAsync(room);
+            }
+        }
+
+        private void ApplyInviteAvatar(Room room)
+        {
+            if (room.HasAvatar)
+            {
+                InviteAvatarImage.Fill = new ImageBrush
                 {
-                    await _client.JoinRoomAsync(room.Id);
-                    // Reflect the join locally right away; the next /sync delivers the timeline.
-                    _db.SetRoomInvite(room.Id, false);
-                    room.IsInvite = false;
-                    RefreshRooms();
-                    OpenRoom(room);
-                }
-                catch (Exception ex)
+                    ImageSource = new Windows.UI.Xaml.Media.Imaging.BitmapImage(new Uri(room.AvatarUrl)),
+                    Stretch = Stretch.UniformToFill
+                };
+                InviteAvatarImage.Visibility = Visibility.Visible;
+                InviteAvatarInitial.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                InviteAvatarImage.Visibility = Visibility.Collapsed;
+                InviteAvatarInitial.Visibility = Visibility.Visible;
+            }
+        }
+
+        private async Task LoadInviteAvatarAsync(Room room)
+        {
+            try
+            {
+                string uri = await _media.GetThumbnailUriAsync(room.AvatarMxc, AvatarThumbSize);
+                if (!string.IsNullOrEmpty(uri))
                 {
-                    App.Log("Invite accept failed: " + ex.Message);
-                    await new Windows.UI.Popups.MessageDialog(
-                        "Could not join: " + ex.Message, "Invitation").ShowAsync();
+                    room.AvatarUrl = uri;
+                    // Only update the UI if this invite is still the one on screen.
+                    if (_inviteRoom == room && _activeView == View.Invite)
+                        ApplyInviteAvatar(room);
                 }
             }
-            else // Decline
+            catch (Exception ex)
             {
-                try { await _client.LeaveRoomAsync(room.Id); }
-                catch (Exception ex) { App.Log("Invite decline failed: " + ex.Message); }
-                _db.DeleteRoom(room.Id);
+                App.Log("Invite avatar EXC '" + room.DisplayName + "': " + ex.Message);
+            }
+        }
+
+        private void InviteCloseButton_Click(object sender, RoutedEventArgs e) => ShowView(View.RoomList);
+
+        private async void InviteAcceptButton_Click(object sender, RoutedEventArgs e)
+        {
+            var room = _inviteRoom;
+            if (room == null) return;
+
+            InviteProgress.IsActive = true;
+            InviteAcceptButton.IsEnabled = false;
+            InviteDeclineButton.IsEnabled = false;
+            InviteStatus.Visibility = Visibility.Collapsed;
+            try
+            {
+                await _client.JoinRoomAsync(room.Id);
+                // Reflect the join locally right away; the next /sync delivers the timeline.
+                _db.SetRoomInvite(room.Id, false);
+                room.IsInvite = false;
                 RefreshRooms();
+                OpenRoom(room);
             }
+            catch (Exception ex)
+            {
+                App.Log("Invite accept failed: " + ex.Message);
+                InviteStatus.Text = "Could not join: " + ex.Message;
+                InviteStatus.Visibility = Visibility.Visible;
+                InviteAcceptButton.IsEnabled = true;
+                InviteDeclineButton.IsEnabled = true;
+            }
+            finally
+            {
+                InviteProgress.IsActive = false;
+            }
+        }
+
+        private async void InviteDeclineButton_Click(object sender, RoutedEventArgs e)
+        {
+            var room = _inviteRoom;
+            if (room == null) return;
+
+            InviteProgress.IsActive = true;
+            InviteAcceptButton.IsEnabled = false;
+            InviteDeclineButton.IsEnabled = false;
+            try { await _client.LeaveRoomAsync(room.Id); }
+            catch (Exception ex) { App.Log("Invite decline failed: " + ex.Message); }
+            _db.DeleteRoom(room.Id);
+            _inviteRoom = null;
+            RefreshRooms();
+            InviteProgress.IsActive = false;
+            ShowView(View.RoomList);
         }
 
 

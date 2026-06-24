@@ -312,6 +312,11 @@ namespace UniMatrix.Services
             string inviter = null;
             bool isDirect = false;
 
+            // The inviter's own member event (membership=join) carries their displayname/avatar, so
+            // we collect every member's profile while scanning and resolve the inviter's afterwards.
+            var memberNames = new Dictionary<string, string>();
+            var memberAvatars = new Dictionary<string, string>();
+
             JsonObject inviteState = GetObject(roomObj, "invite_state");
             JsonArray events = GetArray(inviteState, "events");
             if (events != null)
@@ -332,6 +337,15 @@ namespace UniMatrix.Services
                         string stateKey = MatrixClient.GetString(ev, "state_key");
                         JsonObject content = GetObject(ev, "content");
                         string membership = content != null ? MatrixClient.GetString(content, "membership") : null;
+
+                        if (content != null && !string.IsNullOrEmpty(stateKey))
+                        {
+                            string dn = MatrixClient.GetString(content, "displayname");
+                            string av = MatrixClient.GetString(content, "avatar_url");
+                            if (!string.IsNullOrEmpty(dn)) memberNames[stateKey] = dn;
+                            if (!string.IsNullOrEmpty(av)) memberAvatars[stateKey] = av;
+                        }
+
                         if (stateKey == _myUserId && membership == "invite")
                         {
                             inviter = MatrixClient.GetString(ev, "sender");
@@ -346,9 +360,24 @@ namespace UniMatrix.Services
                 }
             }
 
-            // Name fallback: a named room keeps its name; otherwise show who invited us.
+            // Name fallback: a named room keeps its name; otherwise use the inviter's display name,
+            // then the localpart of their id.
             if (string.IsNullOrEmpty(room.Name))
-                room.Name = !string.IsNullOrEmpty(inviter) ? LocalPart(inviter) : roomId;
+            {
+                string inviterName = null;
+                if (!string.IsNullOrEmpty(inviter)) memberNames.TryGetValue(inviter, out inviterName);
+                if (!string.IsNullOrEmpty(inviterName)) room.Name = inviterName;
+                else room.Name = !string.IsNullOrEmpty(inviter) ? LocalPart(inviter) : roomId;
+            }
+
+            // Avatar fallback: if the room itself has no avatar (typical for a DM), show the
+            // inviter's avatar so the invite looks like Element's "X wants to chat" screen.
+            if (string.IsNullOrEmpty(room.AvatarMxc) && !string.IsNullOrEmpty(inviter))
+            {
+                string inviterAvatar;
+                if (memberAvatars.TryGetValue(inviter, out inviterAvatar) && !string.IsNullOrEmpty(inviterAvatar))
+                    room.AvatarMxc = inviterAvatar;
+            }
 
             // Surface a fresh invite near the top of the list (it has no timeline timestamp).
             if (isNew)
@@ -358,8 +387,12 @@ namespace UniMatrix.Services
             _db.SetRoomInvite(roomId, true);
             if (isDirect) _db.SetRoomDirect(roomId, true);
 
+            // Record who invited us so the invite screen can show "@inviter:server".
+            _db.SetRoomInviter(roomId, inviter);
+
             App.Log("SYNC invite stored: " + roomId + " from=" + (inviter ?? "<none>") +
-                    " isDirect=" + isDirect + " name=" + room.Name + " new=" + isNew);
+                    " isDirect=" + isDirect + " name=" + room.Name +
+                    " avatar=" + (string.IsNullOrEmpty(room.AvatarMxc) ? "<none>" : "yes") + " new=" + isNew);
 
             result.ChangedRooms.Add(roomId);
         }
