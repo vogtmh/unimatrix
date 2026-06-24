@@ -20,6 +20,9 @@ namespace UniMatrix
         private DispatcherTimer _callTimer;
         private DateTimeOffset _callConnectedAt;
 
+        // Pulses the vibration motor repeatedly while an incoming call is ringing.
+        private DispatcherTimer _ringVibrateTimer;
+
         // ---- User actions ----
 
         private async void CallButton_Click(object sender, RoutedEventArgs e)
@@ -44,6 +47,7 @@ namespace UniMatrix
         private async void CallAcceptButton_Click(object sender, RoutedEventArgs e)
         {
             if (_callService == null) return;
+            StopRingVibration();
             if (CallAcceptDeclinePanel != null) CallAcceptDeclinePanel.Visibility = Visibility.Collapsed;
             if (CallActivePanel != null) CallActivePanel.Visibility = Visibility.Visible;
             if (CallStatusText != null) CallStatusText.Text = "Connecting\u2026";
@@ -52,6 +56,7 @@ namespace UniMatrix
 
         private async void CallDeclineButton_Click(object sender, RoutedEventArgs e)
         {
+            StopRingVibration();
             HideCallOverlay();
             if (_callService != null) await _callService.HangupAsync();
         }
@@ -82,10 +87,12 @@ namespace UniMatrix
         {
             ShowCallOverlay(incoming: true, roomId: roomId,
                             peerName: GetRoomDisplayName(roomId), status: "Incoming call\u2026");
+            StartRingVibration();
         }
 
         private void CallService_CallConnected()
         {
+            StopRingVibration();
             if (CallAcceptDeclinePanel != null) CallAcceptDeclinePanel.Visibility = Visibility.Collapsed;
             if (CallActivePanel != null) CallActivePanel.Visibility = Visibility.Visible;
             if (CallStatusText != null) CallStatusText.Text = "Connected";
@@ -95,8 +102,46 @@ namespace UniMatrix
 
         private void CallService_CallEnded()
         {
+            StopRingVibration();
             StopCallTimer();
             HideCallOverlay();
+        }
+
+        // ---- Incoming-call vibration ----
+
+        /// <summary>
+        /// Buzzes the phone in a repeating pattern while a call is ringing. Uses the Windows Phone
+        /// vibration device, which only exists on mobile, so the call is guarded with ApiInformation
+        /// and wrapped in try/catch to stay a no-op on desktop or if the device has no motor.
+        /// </summary>
+        private void StartRingVibration()
+        {
+            if (_ringVibrateTimer != null && _ringVibrateTimer.IsEnabled) return;
+            if (!Windows.Foundation.Metadata.ApiInformation.IsTypePresent(
+                    "Windows.Phone.Devices.Notification.VibrationDevice")) return;
+
+            VibrateOnce();
+            if (_ringVibrateTimer == null)
+            {
+                _ringVibrateTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2500) };
+                _ringVibrateTimer.Tick += (s, e) => VibrateOnce();
+            }
+            _ringVibrateTimer.Start();
+        }
+
+        private void StopRingVibration()
+        {
+            if (_ringVibrateTimer != null) _ringVibrateTimer.Stop();
+        }
+
+        private void VibrateOnce()
+        {
+            try
+            {
+                var device = Windows.Phone.Devices.Notification.VibrationDevice.GetDefault();
+                device?.Vibrate(TimeSpan.FromMilliseconds(800));
+            }
+            catch { /* no vibration motor / not permitted: ignore */ }
         }
 
         // ---- Call duration timer ----

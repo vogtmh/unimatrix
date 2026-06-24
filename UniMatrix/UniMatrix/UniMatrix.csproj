@@ -218,6 +218,16 @@
     </PackageReference>
   </ItemGroup>
   <!--
+    Windows Mobile Extensions for the UWP: provides the mobile-only contracts used at compile time,
+    e.g. Windows.Phone.Devices.Notification.VibrationDevice (incoming-call ring vibration). All such
+    calls are still guarded at runtime with ApiInformation so the app keeps working on desktop.
+  -->
+  <ItemGroup>
+    <SDKReference Include="WindowsMobile, Version=10.0.16299.0">
+      <Name>Windows Mobile Extensions for the UWP</Name>
+    </SDKReference>
+  </ItemGroup>
+  <!--
     WebRTC native component (webrtc-uwp SDK, M71). Org.WebRtc.winmd carries the WinRT type
     metadata used at compile time; Org.WebRtc.dll is the native (ARMv7) implementation. For a
     NATIVE WinMD the implementation dll MUST be declared via <Implementation> so MSBuild copies
