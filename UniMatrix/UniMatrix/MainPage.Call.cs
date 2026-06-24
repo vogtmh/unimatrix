@@ -15,6 +15,10 @@ namespace UniMatrix
     /// </summary>
     public sealed partial class MainPage
     {
+        // Ticks once a second while a call is connected, updating CallTimerText.
+        private DispatcherTimer _callTimer;
+        private DateTimeOffset _callConnectedAt;
+
         // ---- User actions ----
 
         private async void CallButton_Click(object sender, RoutedEventArgs e)
@@ -57,6 +61,20 @@ namespace UniMatrix
             if (_callService != null) await _callService.HangupAsync();
         }
 
+        private void CallMuteButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_callService == null) return;
+            bool muted = _callService.ToggleMute();
+            UpdateMuteButton(muted);
+        }
+
+        private void UpdateMuteButton(bool muted)
+        {
+            // Glyph E74F = muted mic, E720 = mic. Label flips to the action the button performs.
+            if (CallMuteIcon != null) CallMuteIcon.Glyph = muted ? "\uE74F" : "\uE720";
+            if (CallMuteLabel != null) CallMuteLabel.Text = muted ? "Unmute" : "Mute";
+        }
+
         // ---- CallService events (raised on the UI thread) ----
 
         private void CallService_IncomingCall(string roomId)
@@ -69,12 +87,60 @@ namespace UniMatrix
         {
             if (CallAcceptDeclinePanel != null) CallAcceptDeclinePanel.Visibility = Visibility.Collapsed;
             if (CallHangupButton != null) CallHangupButton.Visibility = Visibility.Visible;
+            if (CallMuteButton != null) CallMuteButton.Visibility = Visibility.Visible;
             if (CallStatusText != null) CallStatusText.Text = "Connected";
+            UpdateMuteButton(_callService != null && _callService.IsMuted);
+            StartCallTimer();
         }
 
         private void CallService_CallEnded()
         {
+            StopCallTimer();
             HideCallOverlay();
+        }
+
+        // ---- Call duration timer ----
+
+        private void StartCallTimer()
+        {
+            // CallConnected can fire more than once (ICE Connected/Completed); keep the original
+            // start time so the displayed duration doesn't reset.
+            if (_callTimer != null && _callTimer.IsEnabled) return;
+
+            _callConnectedAt = DateTimeOffset.Now;
+            if (_callTimer == null)
+            {
+                _callTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                _callTimer.Tick += CallTimer_Tick;
+            }
+            UpdateCallTimerText();
+            if (CallTimerText != null) CallTimerText.Visibility = Visibility.Visible;
+            _callTimer.Start();
+        }
+
+        private void StopCallTimer()
+        {
+            if (_callTimer != null) _callTimer.Stop();
+            if (CallTimerText != null)
+            {
+                CallTimerText.Visibility = Visibility.Collapsed;
+                CallTimerText.Text = "";
+            }
+        }
+
+        private void CallTimer_Tick(object sender, object e)
+        {
+            UpdateCallTimerText();
+        }
+
+        private void UpdateCallTimerText()
+        {
+            if (CallTimerText == null) return;
+            TimeSpan elapsed = DateTimeOffset.Now - _callConnectedAt;
+            if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+            CallTimerText.Text = elapsed.Hours > 0
+                ? string.Format("{0}:{1:D2}:{2:D2}", (int)elapsed.TotalHours, elapsed.Minutes, elapsed.Seconds)
+                : string.Format("{0:D2}:{1:D2}", elapsed.Minutes, elapsed.Seconds);
         }
 
         /// <summary>
@@ -116,6 +182,14 @@ namespace UniMatrix
                 CallAcceptDeclinePanel.Visibility = incoming ? Visibility.Visible : Visibility.Collapsed;
             if (CallHangupButton != null)
                 CallHangupButton.Visibility = incoming ? Visibility.Collapsed : Visibility.Visible;
+            // Mute and timer only appear once the call is connected.
+            if (CallMuteButton != null) CallMuteButton.Visibility = Visibility.Collapsed;
+            if (CallTimerText != null)
+            {
+                CallTimerText.Visibility = Visibility.Collapsed;
+                CallTimerText.Text = "";
+            }
+            UpdateMuteButton(false);
             CallOverlay.Visibility = Visibility.Visible;
         }
 

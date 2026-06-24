@@ -850,7 +850,10 @@
                            FontWeight="SemiBold" HorizontalAlignment="Center"
                            TextAlignment="Center" TextWrapping="Wrap" Margin="0,20,0,4" />
                 <TextBlock x:Name="CallStatusText" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
-                           FontSize="15" HorizontalAlignment="Center" Margin="0,0,0,32" />
+                           FontSize="15" HorizontalAlignment="Center" Margin="0,0,0,4" />
+                <TextBlock x:Name="CallTimerText" Text="" Foreground="White"
+                           FontSize="20" FontWeight="SemiBold" HorizontalAlignment="Center"
+                           Visibility="Collapsed" Margin="0,0,0,32" />
 
                 <!-- Incoming-call accept/decline -->
                 <Grid x:Name="CallAcceptDeclinePanel" Visibility="Collapsed">
@@ -877,6 +880,18 @@
                         </StackPanel>
                     </Button>
                 </Grid>
+
+                <!-- Mute (active call) -->
+                <Button x:Name="CallMuteButton" Click="CallMuteButton_Click" Visibility="Collapsed"
+                        HorizontalAlignment="Stretch" Padding="0,14" Margin="0,0,0,8"
+                        Background="{StaticResource AppCardBrush}" Foreground="White" BorderThickness="0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <FontIcon x:Name="CallMuteIcon" FontFamily="Segoe MDL2 Assets" Glyph="&#xE720;"
+                                  FontSize="18" VerticalAlignment="Center" />
+                        <TextBlock x:Name="CallMuteLabel" Text="Mute" Margin="8,0,0,0"
+                                   VerticalAlignment="Center" FontSize="15" />
+                    </StackPanel>
+                </Button>
 
                 <!-- Hang up (active/outgoing call) -->
                 <Button x:Name="CallHangupButton" Click="CallHangupButton_Click"

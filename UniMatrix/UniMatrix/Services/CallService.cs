@@ -43,6 +43,9 @@ namespace UniMatrix.Services
         // remote's id (captured from their invite/answer, echoed back in m.call.select_answer).
         private string _localPartyId;
         private string _remotePartyId;
+        // Whether the local microphone is currently muted (track disabled). Kept platform-agnostic so
+        // the UI can query/toggle it even on builds without the native WebRTC library.
+        private bool _muted;
 
         /// <summary>True when this build actually has the native WebRTC library available.</summary>
         public bool IsWebRtcAvailable
@@ -59,6 +62,9 @@ namespace UniMatrix.Services
 
         /// <summary>True while a call is being set up or is connected.</summary>
         public bool InCall { get { return _inCall; } }
+
+        /// <summary>True when the local microphone is muted.</summary>
+        public bool IsMuted { get { return _muted; } }
 
         /// <summary>The room of the active (or pending) call, or null.</summary>
         public string CurrentRoomId { get { return _roomId; } }
@@ -528,6 +534,24 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Toggles the local microphone mute and returns the new muted state. Muting simply disables
+        /// the local audio track (the peer connection stays up and keeps receiving remote audio).
+        /// </summary>
+        public bool ToggleMute()
+        {
+            _muted = !_muted;
+#if WEBRTC
+            try
+            {
+                if (_selfAudioTrack != null) _selfAudioTrack.Enabled = !_muted;
+            }
+            catch (Exception ex) { App.Log("CALL: mute toggle failed: " + ex.Message); }
+#endif
+            Status(_muted ? "Microphone muted." : "Microphone unmuted.");
+            return _muted;
+        }
+
+        /// <summary>
         /// Feeds a raw m.call.* signalling event (from /sync) into the state machine. Safe to call
         /// for every call event; events for other/old calls or our own echoes are filtered out.
         /// </summary>
@@ -834,6 +858,7 @@ namespace UniMatrix.Services
             _roomId = null;
             _localPartyId = null;
             _remotePartyId = null;
+            _muted = false;
 
             Status("Call ended.");
             RunOnUi(() => CallEnded?.Invoke());
