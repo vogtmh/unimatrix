@@ -44,7 +44,7 @@ namespace UniMatrix
         {
             if (_callService == null) return;
             if (CallAcceptDeclinePanel != null) CallAcceptDeclinePanel.Visibility = Visibility.Collapsed;
-            if (CallHangupButton != null) CallHangupButton.Visibility = Visibility.Visible;
+            if (CallActivePanel != null) CallActivePanel.Visibility = Visibility.Visible;
             if (CallStatusText != null) CallStatusText.Text = "Connecting\u2026";
             await _callService.AcceptIncomingAsync();
         }
@@ -86,8 +86,7 @@ namespace UniMatrix
         private void CallService_CallConnected()
         {
             if (CallAcceptDeclinePanel != null) CallAcceptDeclinePanel.Visibility = Visibility.Collapsed;
-            if (CallHangupButton != null) CallHangupButton.Visibility = Visibility.Visible;
-            if (CallMuteButton != null) CallMuteButton.Visibility = Visibility.Visible;
+            if (CallActivePanel != null) CallActivePanel.Visibility = Visibility.Visible;
             if (CallStatusText != null) CallStatusText.Text = "Connected";
             UpdateMuteButton(_callService != null && _callService.IsMuted);
             StartCallTimer();
@@ -114,18 +113,15 @@ namespace UniMatrix
                 _callTimer.Tick += CallTimer_Tick;
             }
             UpdateCallTimerText();
-            if (CallTimerText != null) CallTimerText.Visibility = Visibility.Visible;
+            if (CallTimerPanel != null) CallTimerPanel.Visibility = Visibility.Visible;
             _callTimer.Start();
         }
 
         private void StopCallTimer()
         {
             if (_callTimer != null) _callTimer.Stop();
-            if (CallTimerText != null)
-            {
-                CallTimerText.Visibility = Visibility.Collapsed;
-                CallTimerText.Text = "";
-            }
+            if (CallTimerPanel != null) CallTimerPanel.Visibility = Visibility.Collapsed;
+            if (CallTimerText != null) CallTimerText.Text = "";
         }
 
         private void CallTimer_Tick(object sender, object e)
@@ -180,15 +176,13 @@ namespace UniMatrix
             if (CallStatusText != null) CallStatusText.Text = status ?? "";
             if (CallAcceptDeclinePanel != null)
                 CallAcceptDeclinePanel.Visibility = incoming ? Visibility.Visible : Visibility.Collapsed;
-            if (CallHangupButton != null)
-                CallHangupButton.Visibility = incoming ? Visibility.Collapsed : Visibility.Visible;
-            // Mute and timer only appear once the call is connected.
-            if (CallMuteButton != null) CallMuteButton.Visibility = Visibility.Collapsed;
-            if (CallTimerText != null)
-            {
-                CallTimerText.Visibility = Visibility.Collapsed;
-                CallTimerText.Text = "";
-            }
+            // The active-call panel (mute + hang up) shows for an outgoing call right away and for an
+            // incoming call once it's accepted.
+            if (CallActivePanel != null)
+                CallActivePanel.Visibility = incoming ? Visibility.Collapsed : Visibility.Visible;
+            // The timer only appears once the call is connected.
+            if (CallTimerPanel != null) CallTimerPanel.Visibility = Visibility.Collapsed;
+            if (CallTimerText != null) CallTimerText.Text = "";
             UpdateMuteButton(false);
             CallOverlay.Visibility = Visibility.Visible;
         }
