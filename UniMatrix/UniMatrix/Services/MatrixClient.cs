@@ -465,7 +465,12 @@ namespace UniMatrix.Services
             }
         }
 
-
+        /// <summary>
+        /// Queries the public room directory. Pass an empty <paramref name="searchTerm"/> to
+        /// list the most popular rooms, or a term to filter. <paramref name="server"/> may name a
+        /// remote homeserver's directory (e.g. "matrix.org"); leave empty for the user's own.
+        /// </summary>
+        public async Task<List<PublicRoomEntry>> GetPublicRoomsAsync(string server, string searchTerm, CancellationToken ct)
         {
             string path = "/_matrix/client/r0/publicRooms";
             if (!string.IsNullOrWhiteSpace(server))

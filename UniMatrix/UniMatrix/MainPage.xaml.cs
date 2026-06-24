@@ -188,7 +188,9 @@ namespace UniMatrix
             // Apply the accent preference (system accent by default).
             ThemeService.Apply(_settings.UseSystemAccent);
 
-            SettingsBuild.Text = "Build " + BuildInfo.Date;
+            var v = Windows.ApplicationModel.Package.Current.Id.Version;
+            SettingsBuild.Text = "Version " + v.Major + "." + v.Minor + "." + v.Build + "." + v.Revision +
+                                 "  \u2022  Build " + BuildInfo.Date;
 
             // Open the local cache database.
             string dbPath = System.IO.Path.Combine(
