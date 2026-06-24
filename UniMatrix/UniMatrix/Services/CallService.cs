@@ -365,7 +365,7 @@ namespace UniMatrix.Services
                 { KVersion, CallVersionValue },
                 { KCandidates, arr }
             };
-            Status("Sending " + arr.Count + " local candidate(s).");
+            Status("Sending " + arr.Count + " local candidate(s). " + SummarizeCandidateTypes(arr));
             SendSignal("m.call.candidates", content);
         }
 
@@ -684,6 +684,8 @@ namespace UniMatrix.Services
             JsonArray candidates = GetArray(signal.Content, KCandidates);
             if (candidates == null) return;
 
+            App.Log("CALL: remote candidate types " + SummarizeCandidateTypes(candidates));
+
             foreach (var item in candidates)
             {
                 if (item.ValueType != JsonValueType.Object) continue;
@@ -845,6 +847,39 @@ namespace UniMatrix.Services
             if (v.ValueType == JsonValueType.String) return "\"" + v.GetString() + "\"";
             if (v.ValueType == JsonValueType.Number) return v.GetNumber().ToString();
             return v.ValueType.ToString();
+        }
+
+        /// <summary>
+        /// Counts host/srflx/relay/other candidate types in a candidates JSON array for logging.
+        /// The "typ X" token in each SDP candidate line tells us whether TURN relay candidates are
+        /// actually being gathered/received — essential for diagnosing cross-network call failures.
+        /// </summary>
+        private static string SummarizeCandidateTypes(JsonArray candidates)
+        {
+            int host = 0, srflx = 0, relay = 0, other = 0, eoc = 0;
+            if (candidates != null)
+            {
+                foreach (var item in candidates)
+                {
+                    if (item.ValueType != JsonValueType.Object) continue;
+                    string cand = MatrixClient.GetString(item.GetObject(), KCandidate);
+                    if (string.IsNullOrEmpty(cand)) { eoc++; continue; }
+                    int idx = cand.IndexOf("typ ", StringComparison.Ordinal);
+                    string typ = "";
+                    if (idx >= 0)
+                    {
+                        int start = idx + 4;
+                        int end = cand.IndexOf(' ', start);
+                        typ = end > start ? cand.Substring(start, end - start) : cand.Substring(start);
+                    }
+                    if (typ == "host") host++;
+                    else if (typ == "srflx" || typ == "prflx") srflx++;
+                    else if (typ == "relay") relay++;
+                    else other++;
+                }
+            }
+            return "[host=" + host + " srflx=" + srflx + " relay=" + relay +
+                   (other > 0 ? " other=" + other : "") + (eoc > 0 ? " eoc=" + eoc : "") + "]";
         }
 
         // ---- small JSON helpers (mirror SyncProcessor's) ----
