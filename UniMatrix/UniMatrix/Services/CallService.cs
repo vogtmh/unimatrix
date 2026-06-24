@@ -244,7 +244,7 @@ namespace UniMatrix.Services
             {
                 { KCandidate, JsonValue.CreateStringValue(cand.Candidate ?? "") },
                 { KSdpMid, JsonValue.CreateStringValue(cand.SdpMid ?? "") },
-                { KSdpMLineIndex, JsonValue.CreateNumberValue(cand.SdpMLineIndex) }
+                { KSdpMLineIndex, JsonValue.CreateNumberValue(cand.SdpMLineIndex ?? 0) }
             };
             var arr = new JsonArray { candJson };
             var content = new JsonObject
