@@ -61,6 +61,11 @@ namespace UniMatrix.Data
             try { Execute("ALTER TABLE rooms ADD COLUMN is_direct INTEGER NOT NULL DEFAULT 0"); }
             catch { /* column already present */ }
 
+            // Migration: add the pending-invite flag (room the user was invited to but hasn't
+            // joined). Same no-op-after-first-run pattern as is_direct above.
+            try { Execute("ALTER TABLE rooms ADD COLUMN is_invite INTEGER NOT NULL DEFAULT 0"); }
+            catch { /* column already present */ }
+
             Execute(@"
                 CREATE TABLE IF NOT EXISTS messages (
                     event_id   TEXT PRIMARY KEY,
@@ -208,7 +213,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct
+                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct, is_invite
                                     FROM rooms ORDER BY last_ts DESC";
                 using (var r = cmd.ExecuteReader())
                 {
@@ -224,7 +229,8 @@ namespace UniMatrix.Data
                             UnreadCount = r.GetInt32(5),
                             LastEventTs = r.GetInt64(6),
                             LastPreview = r.IsDBNull(7) ? null : r.GetString(7),
-                            IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0
+                            IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0,
+                            IsInvite = !r.IsDBNull(9) && r.GetInt32(9) != 0
                         });
                     }
                 }
@@ -238,7 +244,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct
+                cmd.CommandText = @"SELECT id, name, topic, avatar_mxc, member_count, unread, last_ts, last_preview, is_direct, is_invite
                                     FROM rooms WHERE id = @id";
                 cmd.Parameters.AddWithValue("@id", roomId);
                 using (var r = cmd.ExecuteReader())
@@ -255,7 +261,8 @@ namespace UniMatrix.Data
                             UnreadCount = r.GetInt32(5),
                             LastEventTs = r.GetInt64(6),
                             LastPreview = r.IsDBNull(7) ? null : r.GetString(7),
-                            IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0
+                            IsDirect = !r.IsDBNull(8) && r.GetInt32(8) != 0,
+                            IsInvite = !r.IsDBNull(9) && r.GetInt32(9) != 0
                         };
                     }
                 }
@@ -276,6 +283,23 @@ namespace UniMatrix.Data
             {
                 cmd.CommandText = "UPDATE rooms SET is_direct = @d WHERE id = @id";
                 cmd.Parameters.AddWithValue("@d", isDirect ? 1 : 0);
+                cmd.Parameters.AddWithValue("@id", roomId);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        /// <summary>
+        /// Flags (or clears) a room as a pending invite. Set when the room arrives in the /sync
+        /// "invite" section, cleared once the user joins (the room then arrives under "join").
+        /// Stored separately from UpsertRoom for the same reason as is_direct.
+        /// </summary>
+        public void SetRoomInvite(string roomId, bool isInvite)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE rooms SET is_invite = @i WHERE id = @id";
+                cmd.Parameters.AddWithValue("@i", isInvite ? 1 : 0);
                 cmd.Parameters.AddWithValue("@id", roomId);
                 cmd.ExecuteNonQuery();
             }

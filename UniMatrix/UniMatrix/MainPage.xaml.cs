@@ -340,6 +340,7 @@ namespace UniMatrix
                     existing.LastEventTs = incoming.LastEventTs;
                     existing.LastPreview = incoming.LastPreview;
                     existing.IsDirect = incoming.IsDirect;
+                    existing.IsInvite = incoming.IsInvite;
                     if (existing.AvatarMxc != incoming.AvatarMxc)
                     {
                         // Avatar changed: drop the resolved URL so it gets re-fetched.
@@ -406,8 +407,60 @@ namespace UniMatrix
         private void RoomsList_ItemClick(object sender, ItemClickEventArgs e)
         {
             var room = e.ClickedItem as Room;
-            if (room != null) OpenRoom(room);
+            if (room == null) return;
+            if (room.IsInvite)
+            {
+                var _ = HandleInviteTapAsync(room);
+                return;
+            }
+            OpenRoom(room);
         }
+
+        /// <summary>
+        /// A tapped invitation prompts Accept / Decline. Accepting joins the room (it then arrives
+        /// under /sync "join" and the invite flag clears); declining leaves+forgets it and drops it
+        /// from the local list immediately.
+        /// </summary>
+        private async Task HandleInviteTapAsync(Room room)
+        {
+            var dialog = new Windows.UI.Popups.MessageDialog(
+                "You've been invited to " + room.DisplayName + ".", "Invitation");
+            dialog.Commands.Add(new Windows.UI.Popups.UICommand("Accept"));
+            dialog.Commands.Add(new Windows.UI.Popups.UICommand("Decline"));
+            dialog.Commands.Add(new Windows.UI.Popups.UICommand("Cancel"));
+            dialog.DefaultCommandIndex = 0;
+            dialog.CancelCommandIndex = 2;
+
+            var choice = await dialog.ShowAsync();
+            if (choice == null || choice.Label == "Cancel") return;
+
+            if (choice.Label == "Accept")
+            {
+                try
+                {
+                    await _client.JoinRoomAsync(room.Id);
+                    // Reflect the join locally right away; the next /sync delivers the timeline.
+                    _db.SetRoomInvite(room.Id, false);
+                    room.IsInvite = false;
+                    RefreshRooms();
+                    OpenRoom(room);
+                }
+                catch (Exception ex)
+                {
+                    App.Log("Invite accept failed: " + ex.Message);
+                    await new Windows.UI.Popups.MessageDialog(
+                        "Could not join: " + ex.Message, "Invitation").ShowAsync();
+                }
+            }
+            else // Decline
+            {
+                try { await _client.LeaveRoomAsync(room.Id); }
+                catch (Exception ex) { App.Log("Invite decline failed: " + ex.Message); }
+                _db.DeleteRoom(room.Id);
+                RefreshRooms();
+            }
+        }
+
 
         /// <summary>
         /// Opens a room with a short entrance animation. Used when jumping straight into a freshly

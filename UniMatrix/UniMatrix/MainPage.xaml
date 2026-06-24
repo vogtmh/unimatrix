@@ -202,7 +202,12 @@
                                            TextTrimming="CharacterEllipsis" MaxLines="1" />
                                 <TextBlock Text="{Binding LastPreview}" Foreground="{StaticResource AppSubtleTextBrush}"
                                            FontSize="13" TextTrimming="CharacterEllipsis" MaxLines="1"
-                                           Margin="0,2,0,0" />
+                                           Margin="0,2,0,0" Visibility="{Binding PreviewVisibility}" />
+                                <TextBlock Text="Invitation &#8212; tap to accept"
+                                           Foreground="{StaticResource AppAccentBrush}"
+                                           FontSize="13" FontWeight="SemiBold" MaxLines="1"
+                                           TextTrimming="CharacterEllipsis" Margin="0,2,0,0"
+                                           Visibility="{Binding InviteVisibility}" />
                             </StackPanel>
 
                             <!-- Unread badge -->

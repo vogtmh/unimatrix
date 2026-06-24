@@ -25,6 +25,16 @@ namespace UniMatrix.Models
         /// Drives the per-type notification toggles (DMs vs group rooms).</summary>
         public bool IsDirect { get; set; }
 
+        private bool _isInvite;
+        /// <summary>True when the user has been invited to this room but hasn't joined yet. Such
+        /// rooms appear in the list with an "Invitation" hint and a tap offers Accept/Decline
+        /// instead of opening the (not-yet-joined) timeline.</summary>
+        public bool IsInvite
+        {
+            get { return _isInvite; }
+            set { _isInvite = value; Raise("IsInvite"); Raise("InviteVisibility"); Raise("PreviewVisibility"); }
+        }
+
         private string _avatarUrl;
         /// <summary>Resolved https:// URL for the room avatar, or null when unset.</summary>
         public string AvatarUrl
@@ -83,6 +93,11 @@ namespace UniMatrix.Models
         public bool HasUnread { get { return _unread > 0; } }
         public Visibility UnreadVisibility { get { return _unread > 0 ? Visibility.Visible : Visibility.Collapsed; } }
         public string UnreadText { get { return _unread > 99 ? "99+" : _unread.ToString(); } }
+
+        /// <summary>Shows the "Invitation" hint line for a pending invite.</summary>
+        public Visibility InviteVisibility { get { return _isInvite ? Visibility.Visible : Visibility.Collapsed; } }
+        /// <summary>Hides the normal last-message preview while the room is just an invitation.</summary>
+        public Visibility PreviewVisibility { get { return _isInvite ? Visibility.Collapsed : Visibility.Visible; } }
 
         public string MemberText
         {

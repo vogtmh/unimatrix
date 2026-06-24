@@ -62,20 +62,60 @@ namespace UniMatrix.Services
             if (rooms == null) return result;
 
             JsonObject join = GetObject(rooms, "join");
-            if (join == null) return result;
-
-            foreach (var roomId in join.Keys)
+            if (join != null)
             {
-                try
+                foreach (var roomId in join.Keys)
                 {
-                    JsonObject roomObj = GetObject(join, roomId);
-                    if (roomObj == null) continue;
-                    ProcessJoinedRoom(roomId, roomObj, result);
+                    try
+                    {
+                        JsonObject roomObj = GetObject(join, roomId);
+                        if (roomObj == null) continue;
+                        ProcessJoinedRoom(roomId, roomObj, result);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Don't let one malformed room abort the entire sync.
+                        App.Log("SYNC room parse error (" + roomId + "): " + ex.Message);
+                    }
                 }
-                catch (Exception ex)
+            }
+
+            // Rooms the user has been invited to but not joined. Without this, an invitation
+            // (including a new direct message) would never surface in the app.
+            JsonObject invite = GetObject(rooms, "invite");
+            if (invite != null)
+            {
+                foreach (var roomId in invite.Keys)
                 {
-                    // Don't let one malformed room abort the entire sync.
-                    App.Log("SYNC room parse error (" + roomId + "): " + ex.Message);
+                    try
+                    {
+                        JsonObject roomObj = GetObject(invite, roomId);
+                        if (roomObj == null) continue;
+                        ProcessInvitedRoom(roomId, roomObj, result);
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log("SYNC invite parse error (" + roomId + "): " + ex.Message);
+                    }
+                }
+            }
+
+            // Rooms the user has left / declined / been removed from: drop them locally so a
+            // declined invite or a left room disappears from the list on the next sync.
+            JsonObject leave = GetObject(rooms, "leave");
+            if (leave != null)
+            {
+                foreach (var roomId in leave.Keys)
+                {
+                    try
+                    {
+                        _db.DeleteRoom(roomId);
+                        result.ChangedRooms.Add(roomId);
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log("SYNC leave parse error (" + roomId + "): " + ex.Message);
+                    }
                 }
             }
 
@@ -235,6 +275,10 @@ namespace UniMatrix.Services
             // COALESCE, so null fields never overwrite existing data).
             _db.UpsertRoom(room);
 
+            // If this room was previously a pending invite, joining it clears that state so it
+            // stops showing the "Invitation" hint and opens normally.
+            _db.SetRoomInvite(roomId, false);
+
             // Nameless rooms (notably direct messages) have no m.room.name, so without help they'd
             // show as a raw room id. Matrix names such rooms after their "heroes" (the other
             // members the server picks out in the summary). Fill in that fallback only when the room
@@ -250,11 +294,68 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Builds a display name for a nameless room from the summary's m.heroes (the other
-        /// members), resolving each to a known display name where possible and otherwise to the
-        /// localpart of the Matrix id. Returns null if there are no heroes to name it after.
+        /// Persists a room the user has been invited to (but not joined). The invite arrives with a
+        /// stripped "invite_state" — a small set of state events (name, avatar, topic, and the
+        /// m.room.member invite targeting us) rather than a full timeline. We pull a display name
+        /// and avatar from it, flag the room as a pending invite, and mark it direct when the invite
+        /// says so, so it shows in the list with an Accept/Decline affordance.
         /// </summary>
-        private string BuildHeroName(string roomId, JsonObject summary)
+        private void ProcessInvitedRoom(string roomId, JsonObject roomObj, SyncResult result)
+        {
+            bool isNew = _db.GetRoom(roomId) == null;
+            var room = new Room { Id = roomId };
+            string inviter = null;
+            bool isDirect = false;
+
+            JsonObject inviteState = GetObject(roomObj, "invite_state");
+            JsonArray events = GetArray(inviteState, "events");
+            if (events != null)
+            {
+                foreach (var evVal in events)
+                {
+                    JsonObject ev = evVal.GetObject();
+                    string type = MatrixClient.GetString(ev, "type");
+
+                    if (type == "m.room.name" || type == "m.room.avatar" || type == "m.room.topic")
+                    {
+                        ApplyStateEvent(roomId, ev, room);
+                    }
+                    else if (type == "m.room.member")
+                    {
+                        // The invite event has our user id as the state_key; its sender is the
+                        // person who invited us, and its content may flag the room as a DM.
+                        string stateKey = MatrixClient.GetString(ev, "state_key");
+                        JsonObject content = GetObject(ev, "content");
+                        string membership = content != null ? MatrixClient.GetString(content, "membership") : null;
+                        if (stateKey == _myUserId && membership == "invite")
+                        {
+                            inviter = MatrixClient.GetString(ev, "sender");
+                            if (content != null && content.ContainsKey("is_direct") &&
+                                content["is_direct"].ValueType == JsonValueType.Boolean &&
+                                content.GetNamedBoolean("is_direct"))
+                            {
+                                isDirect = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Name fallback: a named room keeps its name; otherwise show who invited us.
+            if (string.IsNullOrEmpty(room.Name))
+                room.Name = !string.IsNullOrEmpty(inviter) ? LocalPart(inviter) : roomId;
+
+            // Surface a fresh invite near the top of the list (it has no timeline timestamp).
+            if (isNew)
+                room.LastEventTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            _db.UpsertRoom(room);
+            _db.SetRoomInvite(roomId, true);
+            if (isDirect) _db.SetRoomDirect(roomId, true);
+
+            result.ChangedRooms.Add(roomId);
+        }
+
         {
             JsonArray heroes = GetArray(summary, "m.heroes");
             if (heroes == null || heroes.Count == 0) return null;
