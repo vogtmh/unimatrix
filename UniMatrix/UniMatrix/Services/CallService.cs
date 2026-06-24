@@ -439,6 +439,8 @@ namespace UniMatrix.Services
                         { KLifetime, JsonValue.CreateNumberValue(60000) },
                         { KOffer, offerJson }
                     };
+                    App.Log("CALL: SEND m.call.invite v=\"1\" party=" + _localPartyId +
+                            " sdpLen=" + (offer.Sdp != null ? offer.Sdp.Length : 0));
                     await _client.SendEventAsync(roomId, "m.call.invite", content);
                     return true;
                 });
@@ -497,6 +499,8 @@ namespace UniMatrix.Services
                         { KCapabilities, BuildCapabilities() },
                         { KAnswer, answerJson }
                     };
+                    App.Log("CALL: SEND m.call.answer v=\"1\" party=" + _localPartyId +
+                            " sdpLen=" + (answer.Sdp != null ? answer.Sdp.Length : 0));
                     await _client.SendEventAsync(_roomId, "m.call.answer", content);
                     return true;
                 });
@@ -536,6 +540,14 @@ namespace UniMatrix.Services
 #if WEBRTC
             string type = signal.Type;
             string callId = MatrixClient.GetString(signal.Content, KCallId);
+
+            // Diagnostic: record exactly what the remote sent us. This is essential for interop
+            // debugging (e.g. Element) — it shows the version/party_id of inbound events and whether
+            // the peer is replying at all when we place a call.
+            App.Log("CALL: RECV " + type + " from " + (signal.Sender ?? "?") +
+                    " v=" + DescribeVersion(signal.Content) +
+                    " party=" + (MatrixClient.GetString(signal.Content, KPartyId) ?? "-") +
+                    " callId=" + (callId ?? "-") + " (mine=" + (_callId ?? "-") + ")");
 
             try
             {
@@ -823,6 +835,16 @@ namespace UniMatrix.Services
                 { "m.call.transferee", JsonValue.CreateBooleanValue(false) },
                 { "m.call.dtmf", JsonValue.CreateBooleanValue(false) }
             };
+        }
+
+        /// <summary>Renders the "version" field for logs (it may be a string "1" or the number 0).</summary>
+        private static string DescribeVersion(JsonObject content)
+        {
+            if (content == null || !content.ContainsKey(KVersion)) return "-";
+            var v = content[KVersion];
+            if (v.ValueType == JsonValueType.String) return "\"" + v.GetString() + "\"";
+            if (v.ValueType == JsonValueType.Number) return v.GetNumber().ToString();
+            return v.ValueType.ToString();
         }
 
         // ---- small JSON helpers (mirror SyncProcessor's) ----
