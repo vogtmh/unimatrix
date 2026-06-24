@@ -107,6 +107,10 @@ namespace UniMatrix.Services
         private const string KPartyId = "party_id";
         private const string KCapabilities = "capabilities";
         private const string KSelectedPartyId = "selected_party_id";
+        // Reason a peer gives when it hangs up / rejects (e.g. "ice_failed", "invite_timeout",
+        // "user_hangup", "invalid_party_id"). Logging it is essential for diagnosing why Element
+        // declines a UniMatrix call automatically.
+        private const string KReason = "reason";
         // VoIP version we advertise. MSC2746 uses the string "1" (v0 used the number 0).
         private static IJsonValue CallVersionValue { get { return JsonValue.CreateStringValue("1"); } }
 
@@ -602,10 +606,20 @@ namespace UniMatrix.Services
                         break;
                     case "m.call.hangup":
                     case "m.call.reject":
-                        if (callId == _callId && _inCall)
                         {
-                            Status("Remote ended the call.");
-                            EndCallLocal(notifyRemote: false);
+                            // Log the peer-supplied reason regardless of whether it matches our
+                            // current call — when Element auto-declines our invite this is the only
+                            // place the cause (e.g. "ice_failed", "invite_timeout", an SDP error) is
+                            // visible to us.
+                            string reason = MatrixClient.GetString(signal.Content, KReason);
+                            App.Log("CALL: " + type + " reason=" + (string.IsNullOrEmpty(reason) ? "-" : reason) +
+                                    " callId=" + (callId ?? "-") + " (mine=" + (_callId ?? "-") + ")");
+                            if (callId == _callId && _inCall)
+                            {
+                                Status("Remote ended the call" +
+                                       (string.IsNullOrEmpty(reason) ? "." : " (" + reason + ")."));
+                                EndCallLocal(notifyRemote: false);
+                            }
                         }
                         break;
                 }
