@@ -1144,6 +1144,20 @@ namespace UniMatrix
                 }
             }
 
+            // 1b. Update already-shown call rows in place. A call is ONE row (keyed by call_id)
+            //     that evolves from "Missed/Outgoing" at invite time to the final outcome with a
+            //     duration once it's answered/ended. Because that row keeps the same event id, the
+            //     append step below skips it, so we refresh its call fields here instead.
+            var latestById = new Dictionary<string, Message>();
+            foreach (var m in latest) latestById[m.EventId] = m;
+            foreach (var shown in Messages)
+            {
+                if (!shown.IsCall) continue;
+                Message fresh;
+                if (latestById.TryGetValue(shown.EventId, out fresh))
+                    shown.UpdateCallFrom(fresh);
+            }
+
             // 2. Remove any local echoes that were NOT confirmed (e.g. failed sends already marked,
             //    or echoes with no matching server event in this page).
             for (int i = Messages.Count - 1; i >= 0; i--)

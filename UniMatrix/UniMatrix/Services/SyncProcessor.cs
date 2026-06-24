@@ -523,37 +523,105 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Turns a voice/video call signaling event (m.call.*) into a single timeline
-        /// marker so the user can see that a call happened. Only the call invite is
-        /// surfaced; the chatty negotiation events (candidates, answer, negotiate,
-        /// select_answer) are skipped so one call yields at most one timeline line.
-        /// Returns the parsed marker, or null if the event type is not surfaced.
+        /// Folds a voice/video call signalling event (m.call.*) into a SINGLE timeline row that
+        /// summarises the whole call. All events for one call share a synthetic event id
+        /// ("call:" + call_id), so the row is created on the invite and updated in place as the
+        /// call is answered and ends — yielding one line per call with an outcome and duration:
+        ///   - outgoing connected -> "Outgoing call" (green) + duration
+        ///   - incoming answered  -> "Incoming call" (blue) + duration
+        ///   - incoming unanswered-> "Missed call"   (red)
+        ///   - outgoing unanswered-> "Outgoing call" (green) + "No answer"
+        /// The chatty negotiation events (candidates / negotiate / select_answer) are ignored.
+        /// Returns the updated marker, or null if the event type isn't surfaced.
         /// </summary>
         private Message ApplyCallEvent(string roomId, string type, JsonObject ev)
         {
-            string label;
-            switch (type)
+            if (type != "m.call.invite" && type != "m.call.answer" &&
+                type != "m.call.hangup" && type != "m.call.reject")
+                return null; // candidates / negotiate / select_answer don't change the summary
+
+            JsonObject content = GetObject(ev, "content");
+            if (content == null) return null;
+            string callId = MatrixClient.GetString(content, "call_id");
+            if (string.IsNullOrEmpty(callId)) return null;
+
+            string sender = MatrixClient.GetString(ev, "sender");
+            long ts = (long)GetNumber(ev, "origin_server_ts", 0);
+            bool fromMe = !string.IsNullOrEmpty(_myUserId) && sender == _myUserId;
+
+            // One row per call, keyed by call_id, evolved as the call progresses.
+            string syntheticId = "call:" + callId;
+            Message msg = _db.GetMessageById(syntheticId);
+            if (msg == null)
             {
-                case "m.call.invite": label = "\uD83D\uDCDE Call"; break;
-                case "m.call.reject": label = "\uD83D\uDCDE Call declined"; break;
-                default: return null; // candidates / answer / hangup / negotiate / select_answer
+                msg = new Message
+                {
+                    EventId = syntheticId,
+                    RoomId = roomId,
+                    MsgType = "m.call",
+                    IsLocalEcho = false
+                };
             }
 
-            string eventId = MatrixClient.GetString(ev, "event_id");
-            if (string.IsNullOrEmpty(eventId)) return null;
-
-            var msg = new Message
+            switch (type)
             {
-                EventId = eventId,
-                RoomId = roomId,
-                Sender = MatrixClient.GetString(ev, "sender"),
-                MsgType = "m.call",
-                Body = label,
-                Timestamp = (long)GetNumber(ev, "origin_server_ts", 0),
-                IsLocalEcho = false
-            };
+                case "m.call.invite":
+                    // The invite fixes who started the call (direction) and its timeline position.
+                    msg.Sender = sender;
+                    if (msg.Timestamp == 0) msg.Timestamp = ts;
+                    if (msg.CallAnswerTs == 0) // don't downgrade an already-connected call
+                        msg.CallKind = fromMe ? "outgoing_noanswer" : "missed";
+                    break;
+
+                case "m.call.answer":
+                    // The call connected. Direction comes from the invite sender when we have it;
+                    // otherwise from the answerer (if I answered it was incoming, else outgoing).
+                    msg.CallAnswerTs = ts;
+                    bool outgoing = !string.IsNullOrEmpty(msg.Sender)
+                        ? (msg.Sender == _myUserId)
+                        : !fromMe;
+                    msg.CallKind = outgoing ? "outgoing" : "incoming";
+                    if (msg.Timestamp == 0) msg.Timestamp = ts;
+                    break;
+
+                case "m.call.hangup":
+                case "m.call.reject":
+                    if (msg.CallAnswerTs > 0)
+                    {
+                        // Connected call -> show its duration, keep the incoming/outgoing kind.
+                        int secs = (int)((ts - msg.CallAnswerTs) / 1000);
+                        msg.CallSeconds = secs > 0 ? secs : 0;
+                        if (msg.CallKind != "incoming" && msg.CallKind != "outgoing")
+                            msg.CallKind = "incoming";
+                    }
+                    else
+                    {
+                        // Never answered: incoming -> missed, outgoing -> no answer.
+                        bool wasMine = !string.IsNullOrEmpty(msg.Sender)
+                            ? (msg.Sender == _myUserId)
+                            : fromMe;
+                        msg.CallKind = wasMine ? "outgoing_noanswer" : "missed";
+                    }
+                    if (msg.Timestamp == 0) msg.Timestamp = ts;
+                    break;
+            }
+
+            msg.Body = CallSummaryLabel(msg.CallKind);
             _db.UpsertMessage(msg);
             return msg;
+        }
+
+        /// <summary>Friendly preview/label text for a call row, by its outcome kind.</summary>
+        private static string CallSummaryLabel(string callKind)
+        {
+            switch (callKind)
+            {
+                case "missed": return "Missed call";
+                case "incoming": return "Incoming call";
+                case "outgoing":
+                case "outgoing_noanswer": return "Outgoing call";
+                default: return "Call";
+            }
         }
 
         private void RemoveMatchingLocalEcho(string roomId, string msgType, string body)

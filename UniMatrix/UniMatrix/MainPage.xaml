@@ -353,13 +353,20 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Voice/video call marker (m.call.*), centered system-style pill -->
+                            <!-- Voice/video call marker (m.call.*), centered system-style pill.
+                                 Icon colour conveys the outcome: red=missed, blue=incoming, green=outgoing. -->
                             <Border HorizontalAlignment="Center" Margin="0,4"
                                     Background="{StaticResource AppPanelBrush}" CornerRadius="14"
                                     Padding="14,6" Visibility="{Binding CallVisibility}">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding Body}" Foreground="{StaticResource AppSubtleTextBrush}"
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="{Binding CallIcon}"
+                                              Foreground="{Binding CallIconBrush}" FontSize="14"
+                                              VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding CallLabel}" Foreground="{StaticResource AppSubtleTextBrush}"
                                                FontSize="13" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding CallDurationText}" Foreground="{StaticResource AppSubtleTextBrush}"
+                                               FontSize="13" Margin="6,0,0,0" VerticalAlignment="Center"
+                                               Visibility="{Binding CallDurationVisibility}" />
                                     <TextBlock Text="{Binding TimeText}" Foreground="{StaticResource AppFaintTextBrush}"
                                                FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" />
                                 </StackPanel>

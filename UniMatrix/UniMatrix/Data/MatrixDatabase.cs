@@ -85,6 +85,15 @@ namespace UniMatrix.Data
 
             Execute("CREATE INDEX IF NOT EXISTS idx_messages_room_ts ON messages(room_id, ts)");
 
+            // Migration: call-summary columns (one timeline row per voice call). Same
+            // no-op-after-first-run ALTER pattern as the rooms columns above.
+            try { Execute("ALTER TABLE messages ADD COLUMN call_kind TEXT"); }
+            catch { /* column already present */ }
+            try { Execute("ALTER TABLE messages ADD COLUMN call_seconds INTEGER NOT NULL DEFAULT 0"); }
+            catch { /* column already present */ }
+            try { Execute("ALTER TABLE messages ADD COLUMN call_answer_ts INTEGER NOT NULL DEFAULT 0"); }
+            catch { /* column already present */ }
+
             Execute(@"
                 CREATE TABLE IF NOT EXISTS members (
                     room_id      TEXT NOT NULL,
@@ -336,8 +345,8 @@ namespace UniMatrix.Data
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.CommandText = @"
-                    INSERT OR REPLACE INTO messages(event_id, room_id, sender, msgtype, body, ts, mxc, local_echo)
-                    VALUES(@id, @room, @sender, @type, @body, @ts, @mxc, @echo)";
+                    INSERT OR REPLACE INTO messages(event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts)
+                    VALUES(@id, @room, @sender, @type, @body, @ts, @mxc, @echo, @callkind, @callsecs, @callans)";
                 cmd.Parameters.AddWithValue("@id", m.EventId);
                 cmd.Parameters.AddWithValue("@room", m.RoomId);
                 cmd.Parameters.AddWithValue("@sender", (object)m.Sender ?? DBNull.Value);
@@ -346,6 +355,9 @@ namespace UniMatrix.Data
                 cmd.Parameters.AddWithValue("@ts", m.Timestamp);
                 cmd.Parameters.AddWithValue("@mxc", (object)m.Mxc ?? DBNull.Value);
                 cmd.Parameters.AddWithValue("@echo", m.IsLocalEcho ? 1 : 0);
+                cmd.Parameters.AddWithValue("@callkind", (object)m.CallKind ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@callsecs", m.CallSeconds);
+                cmd.Parameters.AddWithValue("@callans", m.CallAnswerTs);
                 cmd.ExecuteNonQuery();
             }
         }
@@ -391,13 +403,28 @@ namespace UniMatrix.Data
             }
         }
 
+        /// <summary>Returns a single stored message by its event id, or null if none exists.</summary>
+        public Message GetMessageById(string eventId)
+        {
+            var result = new List<Message>();
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts
+                                    FROM messages WHERE event_id = @id LIMIT 1";
+                cmd.Parameters.AddWithValue("@id", eventId);
+                ReadMessages(cmd, result);
+            }
+            return result.Count > 0 ? result[0] : null;
+        }
+
         /// <summary>Returns the most recent messages for a room in chronological (oldest-first) order.</summary>
         public List<Message> GetMessages(string roomId, int limit)        {
             var result = new List<Message>();
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts
                                     FROM messages WHERE room_id = @room
                                     ORDER BY ts DESC LIMIT @limit";
                 cmd.Parameters.AddWithValue("@room", roomId);
@@ -434,6 +461,7 @@ namespace UniMatrix.Data
             {
                 cmd.CommandText = @"SELECT event_id FROM messages
                                     WHERE room_id = @room AND local_echo = 0
+                                      AND event_id NOT LIKE 'call:%'
                                     ORDER BY ts DESC LIMIT 1";
                 cmd.Parameters.AddWithValue("@room", roomId);
                 return cmd.ExecuteScalar() as string;
@@ -451,7 +479,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts
                                     FROM messages
                                     WHERE room_id = @room AND local_echo = 0
                                       AND (sender IS NULL OR sender <> @me)
@@ -503,7 +531,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts
                                     FROM messages WHERE room_id = @room AND ts >= @since
                                     ORDER BY ts DESC";
                 cmd.Parameters.AddWithValue("@room", roomId);
@@ -516,7 +544,7 @@ namespace UniMatrix.Data
                 lock (_gate)
                 using (var cmd = _connection.CreateCommand())
                 {
-                    cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                    cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts
                                         FROM messages WHERE room_id = @room
                                         ORDER BY ts DESC LIMIT @limit";
                     cmd.Parameters.AddWithValue("@room", roomId);
@@ -542,7 +570,7 @@ namespace UniMatrix.Data
             lock (_gate)
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo
+                cmd.CommandText = @"SELECT event_id, room_id, sender, msgtype, body, ts, mxc, local_echo, call_kind, call_seconds, call_answer_ts
                                     FROM messages
                                     WHERE room_id = @room
                                       AND (ts < @ts OR (ts = @ts AND event_id < @id))
@@ -574,7 +602,10 @@ namespace UniMatrix.Data
                         Body = r.IsDBNull(4) ? null : r.GetString(4),
                         Timestamp = r.GetInt64(5),
                         Mxc = r.IsDBNull(6) ? null : r.GetString(6),
-                        IsLocalEcho = r.GetInt32(7) != 0
+                        IsLocalEcho = r.GetInt32(7) != 0,
+                        CallKind = r.IsDBNull(8) ? null : r.GetString(8),
+                        CallSeconds = r.GetInt32(9),
+                        CallAnswerTs = r.GetInt64(10)
                     });
                 }
             }

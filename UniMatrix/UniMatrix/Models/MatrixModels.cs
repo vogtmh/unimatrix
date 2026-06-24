@@ -271,6 +271,115 @@ namespace UniMatrix.Models
         public bool IsCall { get { return MsgType == "m.call"; } }
         public Visibility CallVisibility { get { return IsCall ? Visibility.Visible : Visibility.Collapsed; } }
 
+        // ---- Call summary (m.call) rendering ----
+        // A single timeline row summarises an entire call. CallKind is the outcome category
+        // (set by SyncProcessor from the correlated m.call.invite/answer/hangup/reject events):
+        //   "outgoing"          - a call we placed that connected (green, shows duration)
+        //   "incoming"          - a call we received and answered (blue, shows duration)
+        //   "missed"            - a call we received but didn't answer (red)
+        //   "outgoing_noanswer" - a call we placed that was never answered (green, "No answer")
+        // CallSeconds is the connected duration (0 when not answered). CallAnswerTs is the
+        // answer event timestamp, kept so a later hangup can compute the duration.
+        private string _callKind;
+        public string CallKind
+        {
+            get { return _callKind; }
+            set
+            {
+                _callKind = value;
+                Raise("CallKind"); Raise("CallIcon"); Raise("CallIconBrush"); Raise("CallLabel");
+                Raise("CallDurationText"); Raise("CallDurationVisibility");
+            }
+        }
+
+        private int _callSeconds;
+        public int CallSeconds
+        {
+            get { return _callSeconds; }
+            set { _callSeconds = value; Raise("CallSeconds"); Raise("CallDurationText"); Raise("CallDurationVisibility"); }
+        }
+
+        /// <summary>Timestamp (ms) of the m.call.answer, used to compute the duration on hangup.</summary>
+        public long CallAnswerTs { get; set; }
+
+        /// <summary>Segoe MDL2 glyph for the call row (a phone; colour conveys the outcome).</summary>
+        public string CallIcon { get { return "\uE717"; } }
+
+        /// <summary>Colour of the call icon: red (missed), blue (incoming), green (outgoing).</summary>
+        public Windows.UI.Xaml.Media.Brush CallIconBrush
+        {
+            get
+            {
+                string hex;
+                switch (_callKind)
+                {
+                    case "missed": hex = "#FF6B6B"; break;            // red
+                    case "incoming": hex = "#4C9DFF"; break;          // blue
+                    case "outgoing":
+                    case "outgoing_noanswer": hex = "#4CD964"; break; // green
+                    default: hex = "#BBBBBB"; break;                  // neutral (ringing/unknown)
+                }
+                return new Windows.UI.Xaml.Media.SolidColorBrush(HexColor(hex));
+            }
+        }
+
+        /// <summary>Friendly label for the call row.</summary>
+        public string CallLabel
+        {
+            get
+            {
+                switch (_callKind)
+                {
+                    case "missed": return "Missed call";
+                    case "incoming": return "Incoming call";
+                    case "outgoing":
+                    case "outgoing_noanswer": return "Outgoing call";
+                    default: return "Call";
+                }
+            }
+        }
+
+        /// <summary>Duration ("M:SS"/"H:MM:SS") for answered calls, or "No answer" for an unanswered outgoing call.</summary>
+        public string CallDurationText
+        {
+            get
+            {
+                if (_callSeconds > 0)
+                {
+                    var ts = TimeSpan.FromSeconds(_callSeconds);
+                    return ts.Hours > 0
+                        ? string.Format("{0}:{1:D2}:{2:D2}", (int)ts.TotalHours, ts.Minutes, ts.Seconds)
+                        : string.Format("{0}:{1:D2}", ts.Minutes, ts.Seconds);
+                }
+                if (_callKind == "outgoing_noanswer") return "No answer";
+                return "";
+            }
+        }
+
+        public Visibility CallDurationVisibility
+        {
+            get { return string.IsNullOrEmpty(CallDurationText) ? Visibility.Collapsed : Visibility.Visible; }
+        }
+
+        /// <summary>Copies the evolving call state from a freshly-loaded row into this on-screen one.</summary>
+        public void UpdateCallFrom(Message other)
+        {
+            if (other == null) return;
+            CallAnswerTs = other.CallAnswerTs;
+            CallSeconds = other.CallSeconds;
+            CallKind = other.CallKind;
+            Body = other.Body;
+        }
+
+        private static Windows.UI.Color HexColor(string hex)
+        {
+            hex = hex.TrimStart('#');
+            byte r = System.Convert.ToByte(hex.Substring(0, 2), 16);
+            byte g = System.Convert.ToByte(hex.Substring(2, 2), 16);
+            byte b = System.Convert.ToByte(hex.Substring(4, 2), 16);
+            return Windows.UI.Color.FromArgb(255, r, g, b);
+        }
+
         /// <summary>The normal chat bubble is hidden for call events.</summary>
         public Visibility BubbleVisibility { get { return IsCall ? Visibility.Collapsed : Visibility.Visible; } }
 
