@@ -19,6 +19,8 @@
 #   1. -CheckOnly     : verifies every prerequisite and prints what's missing (no changes).
 #   2. -Clone         : recursively clones webrtc-uwp-sdk close to the drive root (path-length).
 #   3. -Build         : invokes VS2017 MSBuild on WebRtc.Universal.sln for ARM/Release.
+#                       (auto-renews the PeerCC test signing cert if it's missing/expired;
+#                        force it with -RenewCert. The sample's checked-in cert is from ~2018.)
 #   4. -InstallDotNet : fetches + installs the .NET Core SDK (for the managed PeerCC projects).
 #   5. -Harvest       : copies the built artifacts into the app repo as libs\webrtc\<arch>\.
 #   Run with no switches to do Check -> Clone -> Build in sequence.
@@ -43,6 +45,10 @@ param(
     [switch]$CheckOnly,
     [switch]$Clone,
     [switch]$Build,
+    # Force regeneration of the PeerCC test signing certificate even if a valid one exists.
+    # (-Build renews it automatically when the bundled cert is missing or expired - the
+    #  sample's checked-in PFX is from ~2018 and now triggers APPX0108 'certificate expired'.)
+    [switch]$RenewCert,
     # Copy the built Org.WebRtc.winmd/.dll + WebRtcScheme.dll into a per-arch app folder.
     [switch]$Harvest,
     [string]$HarvestDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "UniMatrix\UniMatrix\libs\webrtc"),
@@ -324,6 +330,76 @@ function Restore-Packages($sln) {
 }
 
 # --------------------------------------------------------------------------------------
+# The PeerCC sample ships a checked-in test signing certificate
+# (PeerConnectionClient.WebRtc_TemporaryKey.pfx) created back in ~2018. It has long since
+# expired, so the final appx packaging step fails with APPX0108 "the certificate ... expired".
+# This regenerates a fresh self-signed test cert whose Subject matches the package Publisher,
+# exports it over the same PFX filename, and syncs the .csproj thumbprint. It only acts when
+# the cert is missing/expired (or when -RenewCert is given), so repeat builds stay fast.
+function Update-TestCertificate {
+    Write-Section "Check / renew PeerCC test signing certificate"
+
+    $clientDir = Join-Path $RepoRoot "common\windows\samples\PeerCC\Client"
+    if (-not (Test-Path $clientDir)) {
+        Warn "PeerCC client folder not found ($clientDir); skipping cert renewal."
+        return
+    }
+    $manifest = Join-Path $clientDir "Package.appxmanifest"
+    $csproj   = Join-Path $clientDir "PeerConnectionClient.WebRtc.csproj"
+    $pfx      = Join-Path $clientDir "PeerConnectionClient.WebRtc_TemporaryKey.pfx"
+
+    # The package Publisher is the exact Subject the signing cert MUST carry.
+    $publisher = $null
+    if (Test-Path $manifest) {
+        try { [xml]$x = Get-Content $manifest; $publisher = $x.Package.Identity.Publisher } catch { }
+    }
+    if (-not $publisher) {
+        $publisher = "CN=webrtc-uwp"
+        Warn "Could not read Publisher from manifest; defaulting cert subject to $publisher."
+    }
+
+    # Reuse an existing, still-valid cert unless -RenewCert was passed.
+    if ((Test-Path $pfx) -and -not $RenewCert) {
+        try {
+            $existing = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $pfx, "", "Exportable"
+            if ($existing.NotAfter -gt (Get-Date).AddDays(7) -and $existing.Subject -eq $publisher) {
+                Ok ("Existing test cert valid until {0:yyyy-MM-dd}; no renewal needed." -f $existing.NotAfter)
+                return
+            }
+            Warn ("Existing test cert expired/mismatched (NotAfter {0:yyyy-MM-dd}, Subject '{1}'); regenerating." -f $existing.NotAfter, $existing.Subject)
+        } catch {
+            Warn "Existing PFX could not be read; regenerating."
+        }
+    }
+
+    Write-Host "  Generating self-signed test cert  Subject=$publisher" -ForegroundColor Gray
+    $cert = New-SelfSignedCertificate `
+        -Type Custom `
+        -Subject $publisher `
+        -KeyUsage DigitalSignature `
+        -FriendlyName "PeerCC WebRTC test cert" `
+        -CertStoreLocation "Cert:\CurrentUser\My" `
+        -NotAfter (Get-Date).AddYears(3) `
+        -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}")
+
+    # VS test certs use an empty PFX password; export over the same filename the project references.
+    $empty = New-Object System.Security.SecureString
+    Export-PfxCertificate -Cert "Cert:\CurrentUser\My\$($cert.Thumbprint)" -FilePath $pfx -Password $empty | Out-Null
+    Ok "Wrote $pfx"
+
+    # A stale <PackageCertificateThumbprint> in the .csproj fails the build; keep it in sync.
+    if (Test-Path $csproj) {
+        $text = Get-Content $csproj -Raw
+        if ($text -match "<PackageCertificateThumbprint>.*?</PackageCertificateThumbprint>") {
+            $text = [regex]::Replace($text, "<PackageCertificateThumbprint>.*?</PackageCertificateThumbprint>", "<PackageCertificateThumbprint>$($cert.Thumbprint)</PackageCertificateThumbprint>")
+            Set-Content -Path $csproj -Value $text -Encoding UTF8
+            Ok "Synced PackageCertificateThumbprint in $(Split-Path -Leaf $csproj)."
+        }
+    }
+    Ok ("Test cert ready (valid until {0:yyyy-MM-dd})." -f $cert.NotAfter)
+}
+
+# --------------------------------------------------------------------------------------
 function Invoke-Build {
     Write-Section "Build WebRtc.Universal.sln ($Configuration | $Platform)"
 
@@ -336,6 +412,7 @@ function Invoke-Build {
     if (-not $msbuild) { throw "MSBuild 15.0 (VS2017) not found; cannot build." }
 
     Restore-Packages $sln
+    Update-TestCertificate
 
     Write-Host "  Solution : $sln" -ForegroundColor Gray
     Write-Host "  MSBuild  : $msbuild" -ForegroundColor Gray

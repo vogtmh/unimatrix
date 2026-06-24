@@ -141,6 +141,15 @@ unless you want to update WebRTC. `-Harvest` only copies files, so it skips the 
   it from [dotnet.microsoft.com/download](https://dotnet.microsoft.com/download). Use **2.1.526**,
   not a newer patch: 2.1.818 etc. require MSBuild 16 / VS2019. Then re-run `-Build` (the native lib
   is cached, so this is fast). The native `Org.WebRtc` ARM artifacts are already built regardless.
+- **`APPX0108: the specified certificate has expired`** (`Das angegebene Zertifikat ist abgelaufen`,
+  at `Microsoft.AppXPackage.Targets`) → this is the **very last** step (appx signing) and means the
+  native lib + the whole managed app already built fine. The PeerCC sample ships a checked-in test
+  certificate (`PeerConnectionClient.WebRtc_TemporaryKey.pfx`) made in ~2018 that is now expired.
+  Fix: the script now **auto-generates a fresh self-signed test cert** as part of `-Build` (matching
+  the package `Publisher`, valid 3 years, with the `.csproj` thumbprint synced). Force a regen with
+  `.\build-webrtc-uwp.ps1 -Build -RenewCert`. To do it by hand instead, open the project in VS2017 →
+  `Package.appxmanifest` → *Packaging* → *Choose Certificate… → Create…*. The native `Org.WebRtc`
+  artifacts are already built at this point, so `-Harvest` works regardless of signing.
 - **`MAX_PATH` / "file name too long"** → repo path too deep. Re-clone to `C:\webrtc-uwp`.
 - **gn/ninja or gclient errors during the first build** → almost always Python (must be 2.7.x first
   on PATH) or a missing Windows SDK 17134/17763.
