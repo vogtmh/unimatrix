@@ -123,6 +123,18 @@ namespace UniMatrix.Services
         private int _remoteCandApplied;
         private int _remoteCandBuffered;
 
+        // Outgoing local ICE candidates are batched into a single m.call.candidates event instead
+        // of one event per candidate: matrix.org rate-limits room sends (M_LIMIT_EXCEEDED / HTTP
+        // 429), so firing ~10 separate candidate events floods the limiter and most candidates
+        // never reach the peer — ICE then fails. The Matrix VoIP spec's "candidates" array exists
+        // precisely so a batch can go in one event. We coalesce candidates that arrive within a
+        // short window from the first one, then flush them together (also flushed on
+        // end-of-candidates and call teardown).
+        private readonly List<JsonObject> _outgoingCandidates = new List<JsonObject>();
+        private readonly object _outgoingLock = new object();
+        private System.Threading.Timer _candidateFlushTimer;
+        private const int CandidateBatchDelayMs = 750;
+
         /// <summary>Initializes the native WebRTC library exactly once, on the UI thread.</summary>
         private void EnsureLibrary()
         {
@@ -280,7 +292,13 @@ namespace UniMatrix.Services
         private void Pc_OnIceCandidate(IRTCPeerConnectionIceEvent evt)
         {
             var cand = evt?.Candidate;
-            if (cand == null) { Status("Local ICE gathering complete (" + _localCandCount + " sent)."); return; }
+            if (cand == null)
+            {
+                // End-of-candidates: send whatever is still queued right away.
+                FlushOutgoingCandidates();
+                Status("Local ICE gathering complete (" + _localCandCount + " sent).");
+                return;
+            }
             if (string.IsNullOrEmpty(_callId) || string.IsNullOrEmpty(_roomId)) return;
 
             _localCandCount++;
@@ -290,13 +308,51 @@ namespace UniMatrix.Services
                 { KSdpMid, JsonValue.CreateStringValue(cand.SdpMid ?? "") },
                 { KSdpMLineIndex, JsonValue.CreateNumberValue(cand.SdpMLineIndex ?? 0) }
             };
-            var arr = new JsonArray { candJson };
+
+            // Queue the candidate and arm a one-shot flush. A fixed window from the first queued
+            // candidate (rather than resetting on every candidate) bounds us to roughly one
+            // m.call.candidates event per window, which keeps us under the homeserver's rate limit.
+            lock (_outgoingLock)
+            {
+                _outgoingCandidates.Add(candJson);
+                if (_candidateFlushTimer == null)
+                {
+                    _candidateFlushTimer = new System.Threading.Timer(
+                        _ => FlushOutgoingCandidates(), null,
+                        CandidateBatchDelayMs, System.Threading.Timeout.Infinite);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sends all queued local ICE candidates in a single m.call.candidates event. Called from
+        /// the batch timer, on end-of-candidates and during teardown. Safe to call when empty.
+        /// </summary>
+        private void FlushOutgoingCandidates()
+        {
+            JsonArray arr;
+            string callId = _callId;
+            lock (_outgoingLock)
+            {
+                if (_candidateFlushTimer != null)
+                {
+                    _candidateFlushTimer.Dispose();
+                    _candidateFlushTimer = null;
+                }
+                if (_outgoingCandidates.Count == 0) return;
+                arr = new JsonArray();
+                foreach (var c in _outgoingCandidates) arr.Add(c);
+                _outgoingCandidates.Clear();
+            }
+            if (string.IsNullOrEmpty(callId) || string.IsNullOrEmpty(_roomId)) return;
+
             var content = new JsonObject
             {
-                { KCallId, JsonValue.CreateStringValue(_callId) },
+                { KCallId, JsonValue.CreateStringValue(callId) },
                 { KVersion, JsonValue.CreateNumberValue(0) },
                 { KCandidates, arr }
             };
+            Status("Sending " + arr.Count + " local candidate(s).");
             SendSignal("m.call.candidates", content);
         }
 
@@ -603,8 +659,29 @@ namespace UniMatrix.Services
 
         private async Task SendSignalAsync(string eventType, JsonObject content, string roomId)
         {
-            try { await _client.SendEventAsync(roomId, eventType, content); }
-            catch (Exception ex) { App.Log("CALL: send " + eventType + " failed: " + ex.Message); }
+            // Retry on rate-limiting (HTTP 429 / M_LIMIT_EXCEEDED) honouring the server's requested
+            // back-off. Candidate batches are essential for ICE, so a dropped one can fail the call.
+            const int maxAttempts = 4;
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    await _client.SendEventAsync(roomId, eventType, content);
+                    return;
+                }
+                catch (MatrixException mex) when (mex.StatusCode == 429 && attempt < maxAttempts)
+                {
+                    int delay = mex.RetryAfterMs > 0 ? mex.RetryAfterMs : 1000 * attempt;
+                    if (delay > 5000) delay = 5000;
+                    App.Log("CALL: " + eventType + " rate-limited; retrying in " + delay + "ms (attempt " + attempt + ").");
+                    await Task.Delay(delay);
+                }
+                catch (Exception ex)
+                {
+                    App.Log("CALL: send " + eventType + " failed: " + ex.Message);
+                    return;
+                }
+            }
         }
 
         /// <summary>Tears down the active call, optionally notifying the peer with m.call.hangup.</summary>
@@ -648,6 +725,15 @@ namespace UniMatrix.Services
             _localCandCount = 0;
             _remoteCandApplied = 0;
             _remoteCandBuffered = 0;
+            lock (_outgoingLock)
+            {
+                if (_candidateFlushTimer != null)
+                {
+                    _candidateFlushTimer.Dispose();
+                    _candidateFlushTimer = null;
+                }
+                _outgoingCandidates.Clear();
+            }
 #endif
             _inCall = false;
             _callId = null;

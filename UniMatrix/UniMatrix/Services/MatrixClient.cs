@@ -684,6 +684,7 @@ namespace UniMatrix.Services
             if (resp.IsSuccessStatusCode) return;
 
             string message = "HTTP " + (int)resp.StatusCode;
+            int retryAfterMs = 0;
             bool parsedStructured = false;
             try
             {
@@ -692,6 +693,8 @@ namespace UniMatrix.Services
                 {
                     string code = GetString(err, "errcode");
                     string detail = GetString(err, "error");
+                    // 429 rate-limit responses carry the server's requested back-off.
+                    retryAfterMs = (int)GetNumber(err, "retry_after_ms");
                     if (!string.IsNullOrEmpty(detail))
                     {
                         message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
@@ -708,7 +711,7 @@ namespace UniMatrix.Services
                 message += ": " + snippet;
             }
 
-            throw new MatrixException(message, (int)resp.StatusCode);
+            throw new MatrixException(message, (int)resp.StatusCode, retryAfterMs);
         }
 
         private static JsonObject Parse(string text)
@@ -744,9 +747,12 @@ namespace UniMatrix.Services
     internal class MatrixException : Exception
     {
         public int StatusCode { get; }
-        public MatrixException(string message, int statusCode) : base(message)
+        /// <summary>For HTTP 429 (M_LIMIT_EXCEEDED) the server's requested back-off, in ms (0 if none).</summary>
+        public int RetryAfterMs { get; }
+        public MatrixException(string message, int statusCode, int retryAfterMs = 0) : base(message)
         {
             StatusCode = statusCode;
+            RetryAfterMs = retryAfterMs;
         }
     }
 }
