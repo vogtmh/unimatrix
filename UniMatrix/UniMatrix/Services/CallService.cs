@@ -654,10 +654,18 @@ namespace UniMatrix.Services
             }
             _remotePartyId = MatrixClient.GetString(signal.Content, KPartyId);
 
+            // Native WebRTC calls block until the library pumps work through the UI dispatcher they
+            // are bound to. Sync delivers this signal ON the UI thread, so calling
+            // SetRemoteDescription directly here deadlocks the whole app (the caller freezes the
+            // instant the answer arrives). Marshal the native work to a background thread, exactly
+            // like PlaceCallAsync / AcceptIncomingAsync do.
             var init = new RTCSessionDescriptionInit { Sdp = sdp, Type = RTCSdpType.Answer };
-            await _pc.SetRemoteDescription(new RTCSessionDescription(init));
-            _remoteDescriptionSet = true;
-            FlushPendingCandidates();
+            await Task.Run(async () =>
+            {
+                await _pc.SetRemoteDescription(new RTCSessionDescription(init));
+                _remoteDescriptionSet = true;
+                FlushPendingCandidates();
+            });
 
             if (_remotePartyId != null)
             {
@@ -686,6 +694,7 @@ namespace UniMatrix.Services
 
             App.Log("CALL: remote candidate types " + SummarizeCandidateTypes(candidates));
 
+            var toApply = new List<RTCIceCandidateInit>();
             foreach (var item in candidates)
             {
                 if (item.ValueType != JsonValueType.Object) continue;
@@ -706,14 +715,28 @@ namespace UniMatrix.Services
 
                 if (_remoteDescriptionSet && _pc != null)
                 {
-                    try { await _pc.AddIceCandidate(new RTCIceCandidate(init)); _remoteCandApplied++; }
-                    catch (Exception ex) { App.Log("CALL: AddIceCandidate failed: " + ex.Message); }
+                    toApply.Add(init);
                 }
                 else
                 {
                     _pendingRemoteCandidates.Add(init);
                     _remoteCandBuffered++;
                 }
+            }
+
+            // AddIceCandidate is a native WebRTC call and must not run on the UI thread (sync
+            // delivers this signal on the UI thread, which is also the WebRTC dispatcher thread —
+            // calling it here directly would deadlock the app).
+            if (toApply.Count > 0 && _pc != null)
+            {
+                await Task.Run(async () =>
+                {
+                    foreach (var init in toApply)
+                    {
+                        try { await _pc.AddIceCandidate(new RTCIceCandidate(init)); _remoteCandApplied++; }
+                        catch (Exception ex) { App.Log("CALL: AddIceCandidate failed: " + ex.Message); }
+                    }
+                });
             }
             Status("Remote candidates: applied=" + _remoteCandApplied + " buffered=" + _remoteCandBuffered + ".");
         }
