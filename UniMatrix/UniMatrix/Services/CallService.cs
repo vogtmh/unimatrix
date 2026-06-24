@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Windows.Data.Json;
 using Windows.UI.Core;
+using UniMatrix.Models;
 
 #if WEBRTC
 using Org.WebRtc;
@@ -29,6 +30,10 @@ namespace UniMatrix.Services
     {
         private CoreDispatcher _dispatcher;
         private MatrixClient _client;
+
+        // TURN/STUN credentials fetched from the homeserver before each call (plain model, so it
+        // lives outside the #if WEBRTC region). Null when the homeserver provides none.
+        private TurnServerInfo _turn;
 
         // Active-call identity (shared between platforms so the UI logic is identical).
         private string _callId;
@@ -110,6 +115,11 @@ namespace UniMatrix.Services
         // or create the peer connection for a call that's about to be declined).
         private string _pendingOfferSdp;
 
+        // ICE candidate counters for diagnostics (how many we sent / received / buffered).
+        private int _localCandCount;
+        private int _remoteCandApplied;
+        private int _remoteCandBuffered;
+
         /// <summary>Initializes the native WebRTC library exactly once, on the UI thread.</summary>
         private void EnsureLibrary()
         {
@@ -159,6 +169,13 @@ namespace UniMatrix.Services
                 Status("Microphone permission denied.");
                 return false;
             }
+            // Pull short-lived TURN credentials from the homeserver so the call can traverse NATs
+            // that plain STUN can't. Best-effort: if it fails we fall back to public STUN only.
+            _turn = await _client.GetTurnServerAsync();
+            if (_turn != null)
+                Status("TURN servers: " + _turn.Uris.Count + " (user=" + (string.IsNullOrEmpty(_turn.Username) ? "none" : "set") + ")");
+            else
+                Status("No TURN servers from homeserver; using public STUN only.");
             return true;
         }
 
@@ -188,10 +205,19 @@ namespace UniMatrix.Services
             };
             _factory = new WebRtcFactory(factoryConfig);
 
-            var iceServers = new List<RTCIceServer>
+            // Prefer the homeserver's TURN servers (they relay media when a direct path can't be
+            // found); always keep a public STUN server as a fallback for candidate discovery.
+            var iceServers = new List<RTCIceServer>();
+            if (_turn != null && _turn.Uris.Count > 0)
             {
-                new RTCIceServer { Urls = new List<string> { "stun:stun.l.google.com:19302" } }
-            };
+                iceServers.Add(new RTCIceServer
+                {
+                    Urls = new List<string>(_turn.Uris),
+                    Username = _turn.Username ?? "",
+                    Credential = _turn.Password ?? ""
+                });
+            }
+            iceServers.Add(new RTCIceServer { Urls = new List<string> { "stun:stun.l.google.com:19302" } });
 
             var config = new RTCConfiguration
             {
@@ -205,6 +231,7 @@ namespace UniMatrix.Services
             _pc.OnIceCandidate += Pc_OnIceCandidate;
             _pc.OnTrack += Pc_OnTrack;
             _pc.OnIceConnectionStateChange += Pc_OnIceConnectionStateChange;
+            _pc.OnIceGatheringStateChange += Pc_OnIceGatheringStateChange;
 
             // Audio-only: create a single local audio track. No video capturer/track.
             var audioOptions = new AudioOptions { Factory = _factory };
@@ -250,9 +277,10 @@ namespace UniMatrix.Services
         private void Pc_OnIceCandidate(IRTCPeerConnectionIceEvent evt)
         {
             var cand = evt?.Candidate;
-            if (cand == null) return; // null = end-of-candidates
+            if (cand == null) { Status("Local ICE gathering complete (" + _localCandCount + " sent)."); return; }
             if (string.IsNullOrEmpty(_callId) || string.IsNullOrEmpty(_roomId)) return;
 
+            _localCandCount++;
             var candJson = new JsonObject
             {
                 { KCandidate, JsonValue.CreateStringValue(cand.Candidate ?? "") },
@@ -269,9 +297,18 @@ namespace UniMatrix.Services
             SendSignal("m.call.candidates", content);
         }
 
+        private void Pc_OnIceGatheringStateChange()
+        {
+            var pc = _pc;
+            if (pc == null) return;
+            Status("ICE gathering: " + pc.IceGatheringState);
+        }
+
         private void FlushPendingCandidates()
         {
             if (_pc == null) return;
+            if (_pendingRemoteCandidates.Count > 0)
+                Status("Flushing " + _pendingRemoteCandidates.Count + " buffered remote candidate(s).");
             foreach (var init in _pendingRemoteCandidates)
             {
                 try { var _ = _pc.AddIceCandidate(new RTCIceCandidate(init)); }
@@ -491,7 +528,12 @@ namespace UniMatrix.Services
 
         private async Task OnRemoteAnswer(CallSignal signal, string callId)
         {
-            if (!_inCall || !_isCaller || callId != _callId || _pc == null) return;
+            if (!_inCall || !_isCaller || callId != _callId || _pc == null)
+            {
+                Status("Ignoring answer (inCall=" + _inCall + " isCaller=" + _isCaller +
+                       " idMatch=" + (callId == _callId) + " pc=" + (_pc != null) + ").");
+                return;
+            }
 
             JsonObject answer = GetObject(signal.Content, KAnswer);
             string sdp = answer != null ? MatrixClient.GetString(answer, KSdp) : null;
@@ -506,7 +548,11 @@ namespace UniMatrix.Services
 
         private async Task OnRemoteCandidates(CallSignal signal, string callId)
         {
-            if (!_inCall || callId != _callId) return;
+            if (!_inCall || callId != _callId)
+            {
+                Status("Ignoring candidates (inCall=" + _inCall + " idMatch=" + (callId == _callId) + ").");
+                return;
+            }
 
             JsonArray candidates = GetArray(signal.Content, KCandidates);
             if (candidates == null) return;
@@ -531,14 +577,16 @@ namespace UniMatrix.Services
 
                 if (_remoteDescriptionSet && _pc != null)
                 {
-                    try { await _pc.AddIceCandidate(new RTCIceCandidate(init)); }
+                    try { await _pc.AddIceCandidate(new RTCIceCandidate(init)); _remoteCandApplied++; }
                     catch (Exception ex) { App.Log("CALL: AddIceCandidate failed: " + ex.Message); }
                 }
                 else
                 {
                     _pendingRemoteCandidates.Add(init);
+                    _remoteCandBuffered++;
                 }
             }
+            Status("Remote candidates: applied=" + _remoteCandApplied + " buffered=" + _remoteCandBuffered + ".");
         }
 #endif
 
@@ -579,6 +627,7 @@ namespace UniMatrix.Services
                     _pc.OnIceCandidate -= Pc_OnIceCandidate;
                     _pc.OnTrack -= Pc_OnTrack;
                     _pc.OnIceConnectionStateChange -= Pc_OnIceConnectionStateChange;
+                    _pc.OnIceGatheringStateChange -= Pc_OnIceGatheringStateChange;
                 }
                 (_selfAudioTrack as IDisposable)?.Dispose();
                 (_peerAudioTrack as IDisposable)?.Dispose();
@@ -593,6 +642,9 @@ namespace UniMatrix.Services
             _pendingRemoteCandidates.Clear();
             _pendingOfferSdp = null;
             _isCaller = false;
+            _localCandCount = 0;
+            _remoteCandApplied = 0;
+            _remoteCandBuffered = 0;
 #endif
             _inCall = false;
             _callId = null;

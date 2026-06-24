@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using Windows.UI.Xaml;
 
@@ -202,6 +203,17 @@ namespace UniMatrix.Models
         {
             get { return new Windows.UI.Xaml.Media.SolidColorBrush(AvatarColor); }
         }
+    }
+
+    /// <summary>
+    /// TURN/STUN credentials returned by the homeserver's /voip/turnServer endpoint, used to build
+    /// the ICE server list for WebRTC calls.
+    /// </summary>
+    public class TurnServerInfo
+    {
+        public List<string> Uris { get; } = new List<string>();
+        public string Username { get; set; }
+        public string Password { get; set; }
     }
 
     /// <summary>

@@ -425,11 +425,47 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Queries the public room directory. Pass an empty <paramref name="searchTerm"/> to
-        /// list the most popular rooms, or a term to filter. <paramref name="server"/> may name a
-        /// remote homeserver's directory (e.g. "matrix.org"); leave empty for the user's own.
+        /// Fetches TURN/STUN server credentials from the homeserver (/voip/turnServer). These are
+        /// short-lived (ttl) credentials Element-style clients use so calls work across NATs that
+        /// plain STUN can't traverse. Returns null if the homeserver provides none or the call fails
+        /// (the caller then falls back to a public STUN server only).
         /// </summary>
-        public async Task<List<PublicRoomEntry>> GetPublicRoomsAsync(string server, string searchTerm, CancellationToken ct)
+        public async Task<TurnServerInfo> GetTurnServerAsync()
+        {
+            try
+            {
+                string path = "/_matrix/client/r0/voip/turnServer?access_token=" +
+                              Uri.EscapeDataString(_accessToken);
+                var resp = await GetAsync(path, CancellationToken.None);
+                if (resp == null) return null;
+
+                var info = new TurnServerInfo
+                {
+                    Username = GetString(resp, "username"),
+                    Password = GetString(resp, "password")
+                };
+                if (resp.ContainsKey("uris") && resp["uris"].ValueType == JsonValueType.Array)
+                {
+                    foreach (var u in resp.GetNamedArray("uris"))
+                    {
+                        if (u.ValueType == JsonValueType.String)
+                        {
+                            string uri = u.GetString();
+                            if (!string.IsNullOrEmpty(uri)) info.Uris.Add(uri);
+                        }
+                    }
+                }
+                if (info.Uris.Count == 0) return null;
+                return info;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: turnServer lookup failed: " + ex.Message);
+                return null;
+            }
+        }
+
+
         {
             string path = "/_matrix/client/r0/publicRooms";
             if (!string.IsNullOrWhiteSpace(server))
