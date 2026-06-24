@@ -434,6 +434,7 @@ namespace UniMatrix.Services
                     };
                     var offer = await _pc.CreateOffer(offerOptions);
                     await _pc.SetLocalDescription(offer);
+                    LogSdp("local offer", offer.Sdp);
 
                     var offerJson = new JsonObject
                     {
@@ -488,6 +489,7 @@ namespace UniMatrix.Services
                 {
                     if (!CreatePeerConnection()) return false;
 
+                    LogSdp("remote offer", _pendingOfferSdp);
                     var remoteInit = new RTCSessionDescriptionInit { Sdp = _pendingOfferSdp, Type = RTCSdpType.Offer };
                     await _pc.SetRemoteDescription(new RTCSessionDescription(remoteInit));
                     _remoteDescriptionSet = true;
@@ -495,6 +497,7 @@ namespace UniMatrix.Services
 
                     var answer = await _pc.CreateAnswer(new RTCAnswerOptions());
                     await _pc.SetLocalDescription(answer);
+                    LogSdp("local answer", answer.Sdp);
 
                     var answerJson = new JsonObject
                     {
@@ -682,6 +685,7 @@ namespace UniMatrix.Services
             JsonObject answer = GetObject(signal.Content, KAnswer);
             string sdp = answer != null ? MatrixClient.GetString(answer, KSdp) : null;
             if (string.IsNullOrEmpty(sdp)) return;
+            LogSdp("remote answer", sdp);
 
             // MSC2746: the first answerer wins. Record their party_id and tell every device in the
             // room which answer we picked, so the others stop ringing. Ignore later answers.
@@ -909,6 +913,67 @@ namespace UniMatrix.Services
             if (v.ValueType == JsonValueType.String) return "\"" + v.GetString() + "\"";
             if (v.ValueType == JsonValueType.Number) return v.GetNumber().ToString();
             return v.ValueType.ToString();
+        }
+
+        /// <summary>
+        /// Logs an SDP blob (offer/answer) as a single, readable log entry plus a one-line summary
+        /// of the media direction / DTLS setup / mux / codecs. This is the key diagnostic for
+        /// interop: it reveals Plan B vs Unified Plan (m=/mid/msid), the a=sendrecv direction (a
+        /// recvonly answer would explain one-way audio), the a=setup DTLS role and the negotiated
+        /// codecs — none of which the candidate-type counters can show.
+        /// </summary>
+        private static void LogSdp(string label, string sdp)
+        {
+            if (string.IsNullOrEmpty(sdp)) { App.Log("CALL: " + label + " SDP <empty>"); return; }
+            App.Log("CALL: " + label + " " + SummarizeSdp(sdp));
+            // Collapse CRLF/LF so the whole SDP is one log line (it's ~1 KB, fine to read inline).
+            string oneLine = sdp.Replace("\r\n", " | ").Replace("\n", " | ").Replace("\r", " | ");
+            App.Log("CALL: " + label + " SDP: " + oneLine);
+        }
+
+        /// <summary>
+        /// Extracts the interop-relevant SDP attributes (media kinds + mids, direction, DTLS setup
+        /// role, rtcp-mux, BUNDLE, and codec names) into a compact one-line summary.
+        /// </summary>
+        private static string SummarizeSdp(string sdp)
+        {
+            string dir = "?";
+            if (sdp.IndexOf("a=sendrecv", StringComparison.Ordinal) >= 0) dir = "sendrecv";
+            else if (sdp.IndexOf("a=sendonly", StringComparison.Ordinal) >= 0) dir = "sendonly";
+            else if (sdp.IndexOf("a=recvonly", StringComparison.Ordinal) >= 0) dir = "recvonly";
+            else if (sdp.IndexOf("a=inactive", StringComparison.Ordinal) >= 0) dir = "inactive";
+
+            var mids = new List<string>();
+            var codecs = new List<string>();
+            string setup = "?";
+            bool mux = false, bundle = false, msid = false, planBssrc = false;
+            foreach (var raw in sdp.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.StartsWith("a=mid:", StringComparison.Ordinal)) mids.Add(line.Substring(6));
+                else if (line.StartsWith("a=setup:", StringComparison.Ordinal)) setup = line.Substring(8);
+                else if (line.StartsWith("a=rtcp-mux", StringComparison.Ordinal)) mux = true;
+                else if (line.StartsWith("a=group:BUNDLE", StringComparison.Ordinal)) bundle = true;
+                else if (line.StartsWith("a=msid:", StringComparison.Ordinal)) msid = true;
+                else if (line.StartsWith("a=ssrc:", StringComparison.Ordinal) &&
+                         line.IndexOf(" msid:", StringComparison.Ordinal) >= 0) planBssrc = true;
+                else if (line.StartsWith("a=rtpmap:", StringComparison.Ordinal))
+                {
+                    int sp = line.IndexOf(' ');
+                    int slash = sp >= 0 ? line.IndexOf('/', sp) : -1;
+                    if (sp >= 0)
+                    {
+                        string name = slash > sp ? line.Substring(sp + 1, slash - sp - 1) : line.Substring(sp + 1);
+                        if (!codecs.Contains(name)) codecs.Add(name);
+                    }
+                }
+            }
+            // Unified Plan carries a=msid on the m-section; Plan B exposes the stream via a=ssrc ... msid.
+            string semantics = msid ? "unified?" : (planBssrc ? "planB?" : "?");
+            return "[dir=" + dir + " setup=" + setup + " mux=" + (mux ? "y" : "n") +
+                   " bundle=" + (bundle ? "y" : "n") + " sem=" + semantics +
+                   " mids=" + (mids.Count > 0 ? string.Join(",", mids) : "-") +
+                   " codecs=" + (codecs.Count > 0 ? string.Join(",", codecs) : "-") + "]";
         }
 
         /// <summary>
