@@ -39,6 +39,10 @@ namespace UniMatrix.Services
         private string _callId;
         private string _roomId;
         private bool _inCall;
+        // MSC2746 party identifiers: our own id for this call (sent on every event we emit) and the
+        // remote's id (captured from their invite/answer, echoed back in m.call.select_answer).
+        private string _localPartyId;
+        private string _remotePartyId;
 
         /// <summary>True when this build actually has the native WebRTC library available.</summary>
         public bool IsWebRtcAvailable
@@ -91,6 +95,14 @@ namespace UniMatrix.Services
         private const string KCandidate = "candidate";
         private const string KSdpMid = "sdpMid";
         private const string KSdpMLineIndex = "sdpMLineIndex";
+        // MSC2746 (VoIP v1) keys. Modern Element ties answer/candidate events to a party_id and
+        // drops events whose party_id it doesn't recognise, so a v0 (party-less) answer leaves the
+        // peer stuck "Connecting". We therefore signal version "1" with a party_id throughout.
+        private const string KPartyId = "party_id";
+        private const string KCapabilities = "capabilities";
+        private const string KSelectedPartyId = "selected_party_id";
+        // VoIP version we advertise. MSC2746 uses the string "1" (v0 used the number 0).
+        private static IJsonValue CallVersionValue { get { return JsonValue.CreateStringValue("1"); } }
 
         private void Status(string s)
         {
@@ -349,7 +361,8 @@ namespace UniMatrix.Services
             var content = new JsonObject
             {
                 { KCallId, JsonValue.CreateStringValue(callId) },
-                { KVersion, JsonValue.CreateNumberValue(0) },
+                { KPartyId, JsonValue.CreateStringValue(_localPartyId ?? "") },
+                { KVersion, CallVersionValue },
                 { KCandidates, arr }
             };
             Status("Sending " + arr.Count + " local candidate(s).");
@@ -388,6 +401,8 @@ namespace UniMatrix.Services
                 _roomId = roomId;
                 _callId = "c" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() +
                           Guid.NewGuid().ToString("N").Substring(0, 8);
+                _localPartyId = NewPartyId();
+                _remotePartyId = null;
                 _isCaller = true;
                 _inCall = true;
                 _remoteDescriptionSet = false;
@@ -418,7 +433,9 @@ namespace UniMatrix.Services
                     var content = new JsonObject
                     {
                         { KCallId, JsonValue.CreateStringValue(_callId) },
-                        { KVersion, JsonValue.CreateNumberValue(0) },
+                        { KPartyId, JsonValue.CreateStringValue(_localPartyId) },
+                        { KVersion, CallVersionValue },
+                        { KCapabilities, BuildCapabilities() },
                         { KLifetime, JsonValue.CreateNumberValue(60000) },
                         { KOffer, offerJson }
                     };
@@ -451,6 +468,7 @@ namespace UniMatrix.Services
             }
             try
             {
+                _localPartyId = NewPartyId();
                 if (!await PrepareCallAsync()) { EndCallLocal(notifyRemote: true); return; }
 
                 // Build the connection and craft the answer off the UI thread (see PlaceCallAsync).
@@ -474,7 +492,9 @@ namespace UniMatrix.Services
                     var content = new JsonObject
                     {
                         { KCallId, JsonValue.CreateStringValue(_callId) },
-                        { KVersion, JsonValue.CreateNumberValue(0) },
+                        { KPartyId, JsonValue.CreateStringValue(_localPartyId) },
+                        { KVersion, CallVersionValue },
+                        { KCapabilities, BuildCapabilities() },
                         { KAnswer, answerJson }
                     };
                     await _client.SendEventAsync(_roomId, "m.call.answer", content);
@@ -530,6 +550,20 @@ namespace UniMatrix.Services
                     case "m.call.candidates":
                         await OnRemoteCandidates(signal, callId);
                         break;
+                    case "m.call.select_answer":
+                        // MSC2746: caller tells everyone which answerer won. If we answered and a
+                        // different party was selected, the caller picked another device — stop.
+                        if (callId == _callId && _inCall && !_isCaller)
+                        {
+                            string selected = MatrixClient.GetString(signal.Content, KSelectedPartyId);
+                            if (!string.IsNullOrEmpty(selected) && !string.IsNullOrEmpty(_localPartyId) &&
+                                selected != _localPartyId)
+                            {
+                                Status("Another device answered; ending here.");
+                                EndCallLocal(notifyRemote: false);
+                            }
+                        }
+                        break;
                     case "m.call.hangup":
                     case "m.call.reject":
                         if (callId == _callId && _inCall)
@@ -575,6 +609,7 @@ namespace UniMatrix.Services
 
             _roomId = signal.RoomId;
             _callId = callId;
+            _remotePartyId = MatrixClient.GetString(signal.Content, KPartyId);
             _isCaller = false;
             _inCall = true;
             _remoteDescriptionSet = false;
@@ -598,10 +633,31 @@ namespace UniMatrix.Services
             string sdp = answer != null ? MatrixClient.GetString(answer, KSdp) : null;
             if (string.IsNullOrEmpty(sdp)) return;
 
+            // MSC2746: the first answerer wins. Record their party_id and tell every device in the
+            // room which answer we picked, so the others stop ringing. Ignore later answers.
+            if (!string.IsNullOrEmpty(_remotePartyId))
+            {
+                Status("Ignoring extra answer from a second party.");
+                return;
+            }
+            _remotePartyId = MatrixClient.GetString(signal.Content, KPartyId);
+
             var init = new RTCSessionDescriptionInit { Sdp = sdp, Type = RTCSdpType.Answer };
             await _pc.SetRemoteDescription(new RTCSessionDescription(init));
             _remoteDescriptionSet = true;
             FlushPendingCandidates();
+
+            if (_remotePartyId != null)
+            {
+                var selectContent = new JsonObject
+                {
+                    { KCallId, JsonValue.CreateStringValue(_callId) },
+                    { KPartyId, JsonValue.CreateStringValue(_localPartyId ?? "") },
+                    { KVersion, CallVersionValue },
+                    { KSelectedPartyId, JsonValue.CreateStringValue(_remotePartyId) }
+                };
+                SendSignal("m.call.select_answer", selectContent);
+            }
             Status("Answer received; negotiating media.");
         }
 
@@ -694,7 +750,8 @@ namespace UniMatrix.Services
                 var content = new JsonObject
                 {
                     { KCallId, JsonValue.CreateStringValue(_callId) },
-                    { KVersion, JsonValue.CreateNumberValue(0) }
+                    { KPartyId, JsonValue.CreateStringValue(_localPartyId ?? "") },
+                    { KVersion, CallVersionValue }
                 };
                 SendSignal("m.call.hangup", content);
             }
@@ -738,6 +795,8 @@ namespace UniMatrix.Services
             _inCall = false;
             _callId = null;
             _roomId = null;
+            _localPartyId = null;
+            _remotePartyId = null;
 
             Status("Call ended.");
             RunOnUi(() => CallEnded?.Invoke());
@@ -748,6 +807,22 @@ namespace UniMatrix.Services
             if (_dispatcher == null) { action(); return; }
             if (_dispatcher.HasThreadAccess) { action(); return; }
             var _ = _dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => action());
+        }
+
+        /// <summary>Generates an opaque MSC2746 party_id identifying this client for one call.</summary>
+        private static string NewPartyId()
+        {
+            return Guid.NewGuid().ToString("N").Substring(0, 12);
+        }
+
+        /// <summary>Builds the MSC2746 capabilities object (audio-only; no transfer or DTMF).</summary>
+        private static JsonObject BuildCapabilities()
+        {
+            return new JsonObject
+            {
+                { "m.call.transferee", JsonValue.CreateBooleanValue(false) },
+                { "m.call.dtmf", JsonValue.CreateBooleanValue(false) }
+            };
         }
 
         // ---- small JSON helpers (mirror SyncProcessor's) ----
