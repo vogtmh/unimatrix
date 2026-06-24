@@ -864,8 +864,12 @@
                 <!-- Avatar + name + status, centered (~50% height). -->
                 <StackPanel Grid.Row="1" Grid.RowSpan="2" HorizontalAlignment="Center"
                             VerticalAlignment="Center">
-                    <Ellipse Width="96" Height="96" Fill="{StaticResource AppCardBrush}"
-                             HorizontalAlignment="Center" />
+                    <Grid Width="96" Height="96" HorizontalAlignment="Center">
+                        <Ellipse x:Name="CallAvatarFallback" Fill="{StaticResource AppCardBrush}" />
+                        <TextBlock x:Name="CallAvatarInitial" Foreground="White" FontSize="40"
+                                   FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Ellipse x:Name="CallAvatarImage" Visibility="Collapsed" />
+                    </Grid>
                     <TextBlock x:Name="CallPeerName" Text="" Foreground="White" FontSize="22"
                                FontWeight="SemiBold" HorizontalAlignment="Center"
                                TextAlignment="Center" TextWrapping="Wrap" Margin="0,20,0,4" />

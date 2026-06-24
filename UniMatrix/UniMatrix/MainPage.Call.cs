@@ -1,6 +1,7 @@
 using System;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Media;
 using UniMatrix.Models;
 using UniMatrix.Services;
 
@@ -35,8 +36,8 @@ namespace UniMatrix
             }
             if (_callService.InCall) return;
 
-            ShowCallOverlay(incoming: false, peerName: GetRoomDisplayName(_currentRoomId),
-                            status: "Calling\u2026");
+            ShowCallOverlay(incoming: false, roomId: _currentRoomId,
+                            peerName: GetRoomDisplayName(_currentRoomId), status: "Calling\u2026");
             await _callService.PlaceCallAsync(_currentRoomId);
         }
 
@@ -79,8 +80,8 @@ namespace UniMatrix
 
         private void CallService_IncomingCall(string roomId)
         {
-            ShowCallOverlay(incoming: true, peerName: GetRoomDisplayName(roomId),
-                            status: "Incoming call\u2026");
+            ShowCallOverlay(incoming: true, roomId: roomId,
+                            peerName: GetRoomDisplayName(roomId), status: "Incoming call\u2026");
         }
 
         private void CallService_CallConnected()
@@ -169,11 +170,12 @@ namespace UniMatrix
 
         // ---- Overlay helpers ----
 
-        private void ShowCallOverlay(bool incoming, string peerName, string status)
+        private void ShowCallOverlay(bool incoming, string roomId, string peerName, string status)
         {
             if (CallOverlay == null) return;
             if (CallPeerName != null) CallPeerName.Text = peerName ?? "";
             if (CallStatusText != null) CallStatusText.Text = status ?? "";
+            SetCallAvatar(roomId, peerName);
             if (CallAcceptDeclinePanel != null)
                 CallAcceptDeclinePanel.Visibility = incoming ? Visibility.Visible : Visibility.Collapsed;
             // The active-call panel (mute + hang up) shows for an outgoing call right away and for an
@@ -190,6 +192,40 @@ namespace UniMatrix
         private void HideCallOverlay()
         {
             if (CallOverlay != null) CallOverlay.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// Fills the call avatar from the room: the room avatar image when one exists, otherwise a
+        /// coloured circle with the peer's initial (e.g. "V"). Mirrors the room-info avatar.
+        /// </summary>
+        private void SetCallAvatar(string roomId, string peerName)
+        {
+            if (CallAvatarFallback == null) return;
+
+            Room room = null;
+            try { room = _db?.GetRoom(roomId); } catch { }
+
+            string initial = room != null ? room.AvatarInitial : null;
+            if (string.IsNullOrEmpty(initial))
+                initial = string.IsNullOrEmpty(peerName) ? "?" : peerName.Substring(0, 1).ToUpper();
+            if (CallAvatarInitial != null) CallAvatarInitial.Text = initial;
+            if (room != null) CallAvatarFallback.Fill = room.AvatarBrush;
+
+            if (room != null && room.HasAvatar)
+            {
+                CallAvatarImage.Fill = new ImageBrush
+                {
+                    ImageSource = new Windows.UI.Xaml.Media.Imaging.BitmapImage(new Uri(room.AvatarUrl)),
+                    Stretch = Stretch.UniformToFill
+                };
+                CallAvatarImage.Visibility = Visibility.Visible;
+                if (CallAvatarInitial != null) CallAvatarInitial.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                CallAvatarImage.Visibility = Visibility.Collapsed;
+                if (CallAvatarInitial != null) CallAvatarInitial.Visibility = Visibility.Visible;
+            }
         }
 
         private string GetRoomDisplayName(string roomId)
