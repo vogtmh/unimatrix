@@ -404,6 +404,27 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Fetches a user's global profile avatar (the mxc:// url), or null if they have none /
+        /// the lookup fails. Used as a fallback for invite screens when the stripped invite_state
+        /// doesn't carry the inviter's avatar. Profile lookups are unauthenticated in the spec.
+        /// </summary>
+        public async Task<string> GetProfileAvatarAsync(string userId)
+        {
+            if (string.IsNullOrEmpty(userId)) return null;
+            try
+            {
+                string path = "/_matrix/client/r0/profile/" + Uri.EscapeDataString(userId) + "/avatar_url";
+                var resp = await GetAsync(path, CancellationToken.None);
+                return GetString(resp, "avatar_url");
+            }
+            catch (Exception ex)
+            {
+                App.Log("Profile avatar lookup failed for " + userId + ": " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Queries the public room directory. Pass an empty <paramref name="searchTerm"/> to
         /// list the most popular rooms, or a term to filter. <paramref name="server"/> may name a
         /// remote homeserver's directory (e.g. "matrix.org"); leave empty for the user's own.

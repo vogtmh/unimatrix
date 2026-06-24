@@ -146,17 +146,30 @@ namespace UniMatrix.Services
             }
         }
 
-        /// <summary>Builds the factory, peer connection, audio track and wires events. UI-thread only.</summary>
-        private async Task<bool> CreatePeerConnectionAsync()
+        /// <summary>
+        /// Initializes the native library and requests the microphone. Must run on the UI thread
+        /// (the WebRTC event queue is bound to the UI dispatcher and the OS mic prompt needs the
+        /// UI thread). Call this before <see cref="CreatePeerConnection"/>.
+        /// </summary>
+        private async Task<bool> PrepareCallAsync()
         {
             EnsureLibrary();
-
             if (!await RequestMicAsync())
             {
                 Status("Microphone permission denied.");
                 return false;
             }
+            return true;
+        }
 
+        /// <summary>
+        /// Builds the factory, peer connection, audio track and wires events. Runs on a BACKGROUND
+        /// thread on purpose: the native constructors block the calling thread until the library
+        /// pumps work through the dispatcher they're bound to, so invoking them on the UI thread
+        /// deadlocks the whole app (frozen call screen, dead Hang up button).
+        /// </summary>
+        private bool CreatePeerConnection()
+        {
             string captureId = "";
             string renderId = "";
             try
@@ -283,29 +296,41 @@ namespace UniMatrix.Services
                 _inCall = true;
                 _remoteDescriptionSet = false;
 
-                if (!await CreatePeerConnectionAsync()) { EndCallLocal(notifyRemote: false); return; }
+                if (!await PrepareCallAsync()) { EndCallLocal(notifyRemote: false); return; }
 
-                var offerOptions = new RTCOfferOptions
+                // The native WebRTC calls block the calling thread until the library pumps work
+                // through the dispatcher they're bound to. Running them on the UI thread therefore
+                // freezes the call screen (stuck "Calling...", unresponsive Hang up button), so we
+                // build the connection and create the offer on a background thread.
+                bool ok = await Task.Run(async () =>
                 {
-                    OfferToReceiveAudio = true,
-                    OfferToReceiveVideo = false
-                };
-                var offer = await _pc.CreateOffer(offerOptions);
-                await _pc.SetLocalDescription(offer);
+                    if (!CreatePeerConnection()) return false;
 
-                var offerJson = new JsonObject
-                {
-                    { KType, JsonValue.CreateStringValue("offer") },
-                    { KSdp, JsonValue.CreateStringValue(offer.Sdp) }
-                };
-                var content = new JsonObject
-                {
-                    { KCallId, JsonValue.CreateStringValue(_callId) },
-                    { KVersion, JsonValue.CreateNumberValue(0) },
-                    { KLifetime, JsonValue.CreateNumberValue(60000) },
-                    { KOffer, offerJson }
-                };
-                await _client.SendEventAsync(roomId, "m.call.invite", content);
+                    var offerOptions = new RTCOfferOptions
+                    {
+                        OfferToReceiveAudio = true,
+                        OfferToReceiveVideo = false
+                    };
+                    var offer = await _pc.CreateOffer(offerOptions);
+                    await _pc.SetLocalDescription(offer);
+
+                    var offerJson = new JsonObject
+                    {
+                        { KType, JsonValue.CreateStringValue("offer") },
+                        { KSdp, JsonValue.CreateStringValue(offer.Sdp) }
+                    };
+                    var content = new JsonObject
+                    {
+                        { KCallId, JsonValue.CreateStringValue(_callId) },
+                        { KVersion, JsonValue.CreateNumberValue(0) },
+                        { KLifetime, JsonValue.CreateNumberValue(60000) },
+                        { KOffer, offerJson }
+                    };
+                    await _client.SendEventAsync(roomId, "m.call.invite", content);
+                    return true;
+                });
+
+                if (!ok) { EndCallLocal(notifyRemote: false); return; }
                 Status("Calling...");
             }
             catch (Exception ex)
@@ -330,28 +355,37 @@ namespace UniMatrix.Services
             }
             try
             {
-                if (!await CreatePeerConnectionAsync()) { EndCallLocal(notifyRemote: true); return; }
+                if (!await PrepareCallAsync()) { EndCallLocal(notifyRemote: true); return; }
 
-                var remoteInit = new RTCSessionDescriptionInit { Sdp = _pendingOfferSdp, Type = RTCSdpType.Offer };
-                await _pc.SetRemoteDescription(new RTCSessionDescription(remoteInit));
-                _remoteDescriptionSet = true;
-                FlushPendingCandidates();
-
-                var answer = await _pc.CreateAnswer(new RTCAnswerOptions());
-                await _pc.SetLocalDescription(answer);
-
-                var answerJson = new JsonObject
+                // Build the connection and craft the answer off the UI thread (see PlaceCallAsync).
+                bool ok = await Task.Run(async () =>
                 {
-                    { KType, JsonValue.CreateStringValue("answer") },
-                    { KSdp, JsonValue.CreateStringValue(answer.Sdp) }
-                };
-                var content = new JsonObject
-                {
-                    { KCallId, JsonValue.CreateStringValue(_callId) },
-                    { KVersion, JsonValue.CreateNumberValue(0) },
-                    { KAnswer, answerJson }
-                };
-                await _client.SendEventAsync(_roomId, "m.call.answer", content);
+                    if (!CreatePeerConnection()) return false;
+
+                    var remoteInit = new RTCSessionDescriptionInit { Sdp = _pendingOfferSdp, Type = RTCSdpType.Offer };
+                    await _pc.SetRemoteDescription(new RTCSessionDescription(remoteInit));
+                    _remoteDescriptionSet = true;
+                    FlushPendingCandidates();
+
+                    var answer = await _pc.CreateAnswer(new RTCAnswerOptions());
+                    await _pc.SetLocalDescription(answer);
+
+                    var answerJson = new JsonObject
+                    {
+                        { KType, JsonValue.CreateStringValue("answer") },
+                        { KSdp, JsonValue.CreateStringValue(answer.Sdp) }
+                    };
+                    var content = new JsonObject
+                    {
+                        { KCallId, JsonValue.CreateStringValue(_callId) },
+                        { KVersion, JsonValue.CreateNumberValue(0) },
+                        { KAnswer, answerJson }
+                    };
+                    await _client.SendEventAsync(_roomId, "m.call.answer", content);
+                    return true;
+                });
+
+                if (!ok) { EndCallLocal(notifyRemote: true); return; }
                 _pendingOfferSdp = null;
                 Status("Call accepted.");
             }

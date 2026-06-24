@@ -276,8 +276,17 @@ namespace UniMatrix
                 : AppViewBackButtonVisibility.Collapsed;
         }
 
-        private void OnBackRequested(object sender, BackRequestedEventArgs e)
+        private async void OnBackRequested(object sender, BackRequestedEventArgs e)
         {
+            // The call overlay sits on top of everything, so Back ends the call first.
+            if (CallOverlay != null && CallOverlay.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                HideCallOverlay();
+                if (_callService != null) await _callService.HangupAsync();
+                return;
+            }
+
             // The full-screen image viewer overlays any view, so it gets first dibs on Back.
             if (ImageViewerPanel.Visibility == Visibility.Visible)
             {
@@ -453,7 +462,10 @@ namespace UniMatrix
 
             ShowView(View.Invite);
 
-            if (!room.HasAvatar && !string.IsNullOrEmpty(room.AvatarMxc))
+            // Resolve the avatar in the background when it isn't ready yet. If the room has no
+            // avatar mxc at all (common for DM invites whose stripped state omits it) we still try,
+            // because LoadInviteAvatarAsync falls back to the inviter's global profile avatar.
+            if (!room.HasAvatar && (!string.IsNullOrEmpty(room.AvatarMxc) || !string.IsNullOrEmpty(room.Inviter)))
             {
                 var _ = LoadInviteAvatarAsync(room);
             }
@@ -482,7 +494,17 @@ namespace UniMatrix
         {
             try
             {
-                string uri = await _media.GetThumbnailUriAsync(room.AvatarMxc, AvatarThumbSize);
+                // The stripped invite_state often omits the inviter's avatar, so if we have no mxc
+                // fall back to their global profile avatar (this is what Element shows).
+                string mxc = room.AvatarMxc;
+                if (string.IsNullOrEmpty(mxc) && !string.IsNullOrEmpty(room.Inviter))
+                {
+                    mxc = await _client.GetProfileAvatarAsync(room.Inviter);
+                    if (!string.IsNullOrEmpty(mxc)) room.AvatarMxc = mxc;
+                }
+                if (string.IsNullOrEmpty(mxc)) return;
+
+                string uri = await _media.GetThumbnailUriAsync(mxc, AvatarThumbSize);
                 if (!string.IsNullOrEmpty(uri))
                 {
                     room.AvatarUrl = uri;
