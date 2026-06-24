@@ -95,7 +95,10 @@ namespace UniMatrix.Services
         private void Status(string s)
         {
             App.Log("CALL: " + s);
-            CallStatusChanged?.Invoke(s);
+            // Status is raised from many threads (UI, background Task.Run, the native WebRTC
+            // callback thread), so marshal to the UI thread before notifying the call screen.
+            var handler = CallStatusChanged;
+            if (handler != null) RunOnUi(() => handler(s));
         }
 
 #if WEBRTC

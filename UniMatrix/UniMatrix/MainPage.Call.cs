@@ -77,6 +77,34 @@ namespace UniMatrix
             HideCallOverlay();
         }
 
+        /// <summary>
+        /// Reflects the CallService's progress on the call screen. The service raises this on the
+        /// UI thread with diagnostic strings; we map the meaningful ones to short user-facing text
+        /// so the caller no longer appears frozen on "Calling…" while signalling/ICE is underway.
+        /// Unknown strings are ignored so raw debug noise never reaches the screen.
+        /// </summary>
+        private void CallService_StatusChanged(string status)
+        {
+            if (CallOverlay == null || CallOverlay.Visibility != Visibility.Visible) return;
+            if (CallStatusText == null || string.IsNullOrEmpty(status)) return;
+
+            // Once the accept/decline buttons are gone we're past the ringing stage; don't let a
+            // late status overwrite the incoming-call prompt before the user has answered.
+            bool ringing = CallAcceptDeclinePanel != null &&
+                           CallAcceptDeclinePanel.Visibility == Visibility.Visible;
+            if (ringing) return;
+
+            string friendly = null;
+            if (status.StartsWith("Calling")) friendly = "Calling\u2026";
+            else if (status.StartsWith("TURN servers") || status.StartsWith("No TURN")) friendly = "Connecting\u2026";
+            else if (status.StartsWith("Answer received")) friendly = "Connecting\u2026";
+            else if (status.StartsWith("ICE state: Checking")) friendly = "Connecting\u2026";
+            else if (status.StartsWith("ICE state: Connected") ||
+                     status.StartsWith("ICE state: Completed")) friendly = "Connected";
+
+            if (friendly != null) CallStatusText.Text = friendly;
+        }
+
         // ---- Overlay helpers ----
 
         private void ShowCallOverlay(bool incoming, string peerName, string status)

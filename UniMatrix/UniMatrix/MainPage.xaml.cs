@@ -208,7 +208,7 @@ namespace UniMatrix
             _callService.IncomingCall += CallService_IncomingCall;
             _callService.CallConnected += CallService_CallConnected;
             _callService.CallEnded += CallService_CallEnded;
-
+            _callService.CallStatusChanged += CallService_StatusChanged;
             string token = _settings.GetAccessToken();
             if (!string.IsNullOrEmpty(token) && !string.IsNullOrEmpty(_settings.UserId))
             {
