@@ -314,6 +314,7 @@ namespace UniMatrix.Services
         public async Task<string> CreateDirectChatAsync(string userId)
         {
             userId = (userId ?? "").Trim();
+            App.Log("DM: createRoom invite=[" + userId + "] is_direct=true preset=trusted_private_chat");
             var body = new JsonObject
             {
                 // trusted_private_chat = invite-only, and invitees get the creator's power level
@@ -322,15 +323,27 @@ namespace UniMatrix.Services
                 ["is_direct"] = JsonValue.CreateBooleanValue(true),
                 ["invite"] = new JsonArray { JsonValue.CreateStringValue(userId) }
             };
-            var resp = await PostAsync("/_matrix/client/r0/createRoom", body, requireAuth: true);
+            JsonObject resp;
+            try
+            {
+                resp = await PostAsync("/_matrix/client/r0/createRoom", body, requireAuth: true);
+            }
+            catch (Exception ex)
+            {
+                // A failed invite (unknown user, wrong server, federation off) surfaces here.
+                App.Log("DM: createRoom FAILED: " + ex.Message);
+                throw;
+            }
             string roomId = GetString(resp, "room_id");
+            App.Log("DM: createRoom ok room_id=" + (roomId ?? "<null>") +
+                    " resp=" + (resp != null ? resp.Stringify() : "<null>"));
 
             if (!string.IsNullOrEmpty(roomId))
             {
                 // Best-effort: the room already works as a DM; flagging it in m.direct just lets
                 // clients label/sort it as one. Don't fail the whole operation if this PUT fails.
-                try { await AddDirectRoomAsync(userId, roomId); }
-                catch { }
+                try { await AddDirectRoomAsync(userId, roomId); App.Log("DM: m.direct updated for " + userId); }
+                catch (Exception ex) { App.Log("DM: m.direct update failed (non-fatal): " + ex.Message); }
             }
             return roomId;
         }

@@ -62,6 +62,12 @@ namespace UniMatrix.Services
             if (rooms == null) return result;
 
             JsonObject join = GetObject(rooms, "join");
+            JsonObject invite = GetObject(rooms, "invite");
+            JsonObject leave = GetObject(rooms, "leave");
+            App.Log("SYNC rooms: join=" + (join != null ? join.Keys.Count : 0) +
+                    " invite=" + (invite != null ? invite.Keys.Count : 0) +
+                    " leave=" + (leave != null ? leave.Keys.Count : 0));
+
             if (join != null)
             {
                 foreach (var roomId in join.Keys)
@@ -82,13 +88,13 @@ namespace UniMatrix.Services
 
             // Rooms the user has been invited to but not joined. Without this, an invitation
             // (including a new direct message) would never surface in the app.
-            JsonObject invite = GetObject(rooms, "invite");
             if (invite != null)
             {
                 foreach (var roomId in invite.Keys)
                 {
                     try
                     {
+                        App.Log("SYNC invite received: " + roomId);
                         JsonObject roomObj = GetObject(invite, roomId);
                         if (roomObj == null) continue;
                         ProcessInvitedRoom(roomId, roomObj, result);
@@ -102,7 +108,6 @@ namespace UniMatrix.Services
 
             // Rooms the user has left / declined / been removed from: drop them locally so a
             // declined invite or a left room disappears from the list on the next sync.
-            JsonObject leave = GetObject(rooms, "leave");
             if (leave != null)
             {
                 foreach (var roomId in leave.Keys)
@@ -352,6 +357,9 @@ namespace UniMatrix.Services
             _db.UpsertRoom(room);
             _db.SetRoomInvite(roomId, true);
             if (isDirect) _db.SetRoomDirect(roomId, true);
+
+            App.Log("SYNC invite stored: " + roomId + " from=" + (inviter ?? "<none>") +
+                    " isDirect=" + isDirect + " name=" + room.Name + " new=" + isNew);
 
             result.ChangedRooms.Add(roomId);
         }
