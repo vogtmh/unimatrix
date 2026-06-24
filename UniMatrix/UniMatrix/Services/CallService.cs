@@ -133,6 +133,12 @@ namespace UniMatrix.Services
 
         private bool _isCaller;
         private bool _remoteDescriptionSet;
+        // A stream id we attach to our outgoing audio track's SDP. Org.WebRtc emits the local
+        // track with NO media stream ("a=msid:- SELF_AUDIO"), which Element/matrix-js-sdk discards
+        // (it builds its remote CallFeed from the ontrack event's streams[]), so the peer hears
+        // nothing from us and stays "Connecting". We label the wire SDP with this id so the track
+        // belongs to a stream. Regenerated per call.
+        private string _mediaStreamId;
         // ICE candidates that arrive before the remote description is applied must be buffered,
         // otherwise AddIceCandidate throws. They're flushed once SetRemoteDescription succeeds.
         private readonly List<RTCIceCandidateInit> _pendingRemoteCandidates = new List<RTCIceCandidateInit>();
@@ -413,6 +419,7 @@ namespace UniMatrix.Services
                           Guid.NewGuid().ToString("N").Substring(0, 8);
                 _localPartyId = NewPartyId();
                 _remotePartyId = null;
+                _mediaStreamId = NewStreamId();
                 _isCaller = true;
                 _inCall = true;
                 _remoteDescriptionSet = false;
@@ -435,11 +442,15 @@ namespace UniMatrix.Services
                     var offer = await _pc.CreateOffer(offerOptions);
                     await _pc.SetLocalDescription(offer);
                     LogSdp("local offer", offer.Sdp);
+                    // Label the wire copy with a real media stream id so Element renders our audio
+                    // (the peer connection keeps its own valid, unmunged local description).
+                    string wireOffer = AddStreamIdToSdp(offer.Sdp, _mediaStreamId);
+                    LogSdp("wire offer", wireOffer);
 
                     var offerJson = new JsonObject
                     {
                         { KType, JsonValue.CreateStringValue("offer") },
-                        { KSdp, JsonValue.CreateStringValue(offer.Sdp) }
+                        { KSdp, JsonValue.CreateStringValue(wireOffer) }
                     };
                     var content = new JsonObject
                     {
@@ -482,6 +493,7 @@ namespace UniMatrix.Services
             try
             {
                 _localPartyId = NewPartyId();
+                _mediaStreamId = NewStreamId();
                 if (!await PrepareCallAsync()) { EndCallLocal(notifyRemote: true); return; }
 
                 // Build the connection and craft the answer off the UI thread (see PlaceCallAsync).
@@ -498,11 +510,15 @@ namespace UniMatrix.Services
                     var answer = await _pc.CreateAnswer(new RTCAnswerOptions());
                     await _pc.SetLocalDescription(answer);
                     LogSdp("local answer", answer.Sdp);
+                    // Label the wire copy with a real media stream id so Element renders our audio
+                    // (the peer connection keeps its own valid, unmunged local description).
+                    string wireAnswer = AddStreamIdToSdp(answer.Sdp, _mediaStreamId);
+                    LogSdp("wire answer", wireAnswer);
 
                     var answerJson = new JsonObject
                     {
                         { KType, JsonValue.CreateStringValue("answer") },
-                        { KSdp, JsonValue.CreateStringValue(answer.Sdp) }
+                        { KSdp, JsonValue.CreateStringValue(wireAnswer) }
                     };
                     var content = new JsonObject
                     {
@@ -857,6 +873,7 @@ namespace UniMatrix.Services
             _remoteDescriptionSet = false;
             _pendingRemoteCandidates.Clear();
             _pendingOfferSdp = null;
+            _mediaStreamId = null;
             _isCaller = false;
             _localCandCount = 0;
             _remoteCandApplied = 0;
@@ -893,6 +910,88 @@ namespace UniMatrix.Services
         private static string NewPartyId()
         {
             return Guid.NewGuid().ToString("N").Substring(0, 12);
+        }
+
+        /// <summary>Generates a media stream id to label our outgoing audio track in the wire SDP.</summary>
+        private static string NewStreamId()
+        {
+            return "um" + Guid.NewGuid().ToString("N").Substring(0, 16);
+        }
+
+        /// <summary>
+        /// Associates our outgoing audio track with a media stream in the SDP we put on the wire.
+        ///
+        /// Org.WebRtc emits the local track unattached to any stream — the m-section carries
+        /// "a=msid:- SELF_AUDIO" and the a=ssrc line has no msid. matrix-js-sdk (Element) builds its
+        /// remote audio feed from the ontrack event's streams[]; a stream-less track yields an empty
+        /// streams[], so Element receives our track but never renders it and stays "Connecting"
+        /// (one-way audio: we hear them, they don't hear us). libwebrtc-to-libwebrtc (phone↔phone)
+        /// works regardless because it renders stream-less tracks anyway.
+        ///
+        /// We only relabel the copy we SEND; the peer connection keeps its own valid local
+        /// description (we pass the original SDP to SetLocalDescription). The real SSRC is preserved,
+        /// so the stream we advertise maps to the RTP the phone actually transmits. We set both the
+        /// Unified-Plan form (a=msid on the m-section) and the Plan-B form (a=ssrc … msid) so either
+        /// kind of receiver picks it up.
+        /// </summary>
+        private static string AddStreamIdToSdp(string sdp, string streamId)
+        {
+            if (string.IsNullOrEmpty(sdp) || string.IsNullOrEmpty(streamId)) return sdp;
+            string nl = sdp.IndexOf("\r\n", StringComparison.Ordinal) >= 0 ? "\r\n" : "\n";
+            var lines = new List<string>(sdp.Replace("\r\n", "\n").Split('\n'));
+
+            string track = "SELF_AUDIO";
+            string ssrc = null;
+            bool replacedMsid = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                string line = lines[i];
+                if (ssrc == null && line.StartsWith("a=ssrc:", StringComparison.Ordinal))
+                {
+                    int colon = "a=ssrc:".Length;
+                    int sp = line.IndexOf(' ', colon);
+                    ssrc = sp > colon ? line.Substring(colon, sp - colon) : line.Substring(colon);
+                }
+                if (line.StartsWith("a=msid:", StringComparison.Ordinal))
+                {
+                    // Replace a stream-less ("a=msid:- TRACK") or any existing msid with our stream.
+                    string rest = line.Substring("a=msid:".Length);
+                    int sp = rest.IndexOf(' ');
+                    if (sp >= 0 && !string.IsNullOrEmpty(rest.Substring(sp + 1))) track = rest.Substring(sp + 1).Trim();
+                    lines[i] = "a=msid:" + streamId + " " + track;
+                    replacedMsid = true;
+                }
+            }
+
+            // If the m-section had no a=msid at all, add one right after the a=mid line (Unified Plan).
+            if (!replacedMsid)
+            {
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    if (lines[i].StartsWith("a=mid:", StringComparison.Ordinal))
+                    {
+                        lines.Insert(i + 1, "a=msid:" + streamId + " " + track);
+                        break;
+                    }
+                }
+            }
+
+            // Ensure an a=ssrc … msid association exists (Plan B / older receivers rely on it).
+            if (ssrc != null)
+            {
+                string ssrcMsidPrefix = "a=ssrc:" + ssrc + " msid:";
+                bool hasSsrcMsid = false;
+                int lastSsrcIdx = -1;
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    if (lines[i].StartsWith(ssrcMsidPrefix, StringComparison.Ordinal)) hasSsrcMsid = true;
+                    if (lines[i].StartsWith("a=ssrc:" + ssrc, StringComparison.Ordinal)) lastSsrcIdx = i;
+                }
+                if (!hasSsrcMsid && lastSsrcIdx >= 0)
+                    lines.Insert(lastSsrcIdx + 1, "a=ssrc:" + ssrc + " msid:" + streamId + " " + track);
+            }
+
+            return string.Join(nl, lines);
         }
 
         /// <summary>Builds the MSC2746 capabilities object (audio-only; no transfer or DTMF).</summary>
