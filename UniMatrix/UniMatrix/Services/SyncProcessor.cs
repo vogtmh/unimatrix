@@ -364,6 +364,12 @@ namespace UniMatrix.Services
             result.ChangedRooms.Add(roomId);
         }
 
+        /// <summary>
+        /// Builds a display name for a nameless room from the summary's m.heroes (the other
+        /// members), resolving each to a known display name where possible and otherwise to the
+        /// localpart of the Matrix id. Returns null if there are no heroes to name it after.
+        /// </summary>
+        private string BuildHeroName(string roomId, JsonObject summary)
         {
             JsonArray heroes = GetArray(summary, "m.heroes");
             if (heroes == null || heroes.Count == 0) return null;
