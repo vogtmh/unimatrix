@@ -12,6 +12,24 @@ namespace UniMatrix.Services
         public string NextBatch { get; set; }
         public HashSet<string> ChangedRooms { get; } = new HashSet<string>();
         public bool HasChanges { get { return ChangedRooms.Count > 0; } }
+
+        /// <summary>
+        /// Raw WebRTC call signalling events (m.call.*) seen in this sync pass, in arrival order.
+        /// The sync loop hands these to the CallService on the UI thread. We pass the raw content
+        /// through rather than the timeline marker because the CallService needs the full SDP/ICE
+        /// payload, not just a display label.
+        /// </summary>
+        public List<CallSignal> CallSignals { get; } = new List<CallSignal>();
+    }
+
+    /// <summary>A single m.call.* signalling event captured from /sync for the CallService.</summary>
+    internal class CallSignal
+    {
+        public string RoomId { get; set; }
+        public string Type { get; set; }      // e.g. "m.call.invite"
+        public string Sender { get; set; }
+        public long Timestamp { get; set; }    // origin_server_ts
+        public JsonObject Content { get; set; }
     }
 
     /// <summary>
@@ -163,6 +181,21 @@ namespace UniMatrix.Services
                         }
                         else if (type != null && type.StartsWith("m.call."))
                         {
+                            // Capture the raw signalling event for the CallService (it needs the full
+                            // SDP/ICE payload). The sync loop delivers these on the UI thread.
+                            JsonObject callContent = GetObject(ev, "content");
+                            if (callContent != null)
+                            {
+                                result.CallSignals.Add(new CallSignal
+                                {
+                                    RoomId = roomId,
+                                    Type = type,
+                                    Sender = MatrixClient.GetString(ev, "sender"),
+                                    Timestamp = (long)GetNumber(ev, "origin_server_ts", 0),
+                                    Content = callContent
+                                });
+                            }
+
                             var msg = ApplyCallEvent(roomId, type, ev);
                             if (msg != null && msg.Timestamp > latestTs)
                             {

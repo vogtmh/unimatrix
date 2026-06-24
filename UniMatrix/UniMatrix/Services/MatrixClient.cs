@@ -182,6 +182,26 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Sends an arbitrary room event with a caller-supplied content object. Used for WebRTC
+        /// call signalling (m.call.invite/answer/candidates/hangup), where the content shape is
+        /// defined by the Matrix VoIP spec rather than the message helpers above. Returns the
+        /// event_id, or null on failure (signalling is best-effort; a dropped candidate just
+        /// slows ICE rather than breaking the call).
+        /// </summary>
+        public async Task<string> SendEventAsync(string roomId, string eventType, JsonObject content)
+        {
+            if (string.IsNullOrEmpty(roomId) || string.IsNullOrEmpty(eventType) || content == null)
+                return null;
+
+            string txnId = "m" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
+                          "/send/" + Uri.EscapeDataString(eventType) + "/" + Uri.EscapeDataString(txnId);
+
+            var resp = await PutAsync(path, content);
+            return GetString(resp, "event_id");
+        }
+
+        /// <summary>
         /// Uploads raw media bytes to the homeserver's content repository and returns the
         /// resulting mxc:// URI (null on failure). Tries the current v3 endpoint first, then
         /// falls back to the legacy r0 one for older servers. Authentication uses ONLY the

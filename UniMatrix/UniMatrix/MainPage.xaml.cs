@@ -28,6 +28,7 @@ namespace UniMatrix
         private PreferencesService _settings;
         private MediaService _media;
         private SyncProcessor _syncProcessor;
+        private CallService _callService;
 
         private CancellationTokenSource _syncCts;
         private string _currentRoomId;
@@ -197,6 +198,14 @@ namespace UniMatrix
             _db.CreateSchema();
 
             _media = new MediaService(_client, _db);
+
+            // WebRTC audio calling. WebRTC requires a CoreDispatcher (its event queue binds to the
+            // UI thread) so it is created here rather than in a service constructor.
+            _callService = new CallService();
+            _callService.Initialize(Dispatcher, _client);
+            _callService.IncomingCall += CallService_IncomingCall;
+            _callService.CallConnected += CallService_CallConnected;
+            _callService.CallEnded += CallService_CallEnded;
 
             string token = _settings.GetAccessToken();
             if (!string.IsNullOrEmpty(token) && !string.IsNullOrEmpty(_settings.UserId))
@@ -1312,6 +1321,18 @@ namespace UniMatrix
 
                     SetSyncLed(Color.FromArgb(255, 0x4C, 0xD9, 0x64)); // green
                     ClearSyncError();
+
+                    // Deliver any WebRTC call signalling events to the CallService. We're already
+                    // on the UI thread here (the await resumed on it), which is required because the
+                    // WebRTC event queue is bound to this thread.
+                    if (_callService != null && result.CallSignals.Count > 0)
+                    {
+                        foreach (var sig in result.CallSignals)
+                        {
+                            try { await _callService.HandleSignalAsync(sig); }
+                            catch (Exception ex) { App.Log("CALL: signal dispatch failed: " + ex.Message); }
+                        }
+                    }
 
                     if (result.HasChanges)
                     {

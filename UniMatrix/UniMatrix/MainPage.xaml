@@ -275,10 +275,17 @@
                     <TextBlock x:Name="ChatRoomMembers" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="12" TextTrimming="CharacterEllipsis" MaxLines="1" />
                 </StackPanel>
-                <Button Grid.Column="2" Click="RoomInfoButton_Click" Background="Transparent"
-                        BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
-                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE946;" FontSize="18" Foreground="White" />
-                </Button>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="CallButton" Click="CallButton_Click" Background="Transparent"
+                            BorderThickness="0" Padding="12,8" VerticalAlignment="Center"
+                            ToolTipService.ToolTip="Audio call">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE717;" FontSize="18" Foreground="White" />
+                    </Button>
+                    <Button Click="RoomInfoButton_Click" Background="Transparent"
+                            BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE946;" FontSize="18" Foreground="White" />
+                    </Button>
+                </StackPanel>
             </Grid>
 
             <!-- Messages -->
@@ -767,6 +774,60 @@
                     Background="#80000000" BorderThickness="0" Padding="12,12">
                 <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="18" Foreground="White" />
             </Button>
+        </Grid>
+
+        <!-- ===================== CALL OVERLAY ===================== -->
+        <!-- Top-most overlay for an active or incoming audio call. The same panel serves both:
+             AcceptDeclinePanel shows while an incoming call is ringing, then it collapses and
+             only the Hang up button remains for the connected call. -->
+        <Grid x:Name="CallOverlay" Background="#F0101418" Visibility="Collapsed">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                        MaxWidth="360" Padding="24">
+                <Ellipse Width="96" Height="96" Fill="{StaticResource AppCardBrush}"
+                         HorizontalAlignment="Center" />
+                <TextBlock x:Name="CallPeerName" Text="" Foreground="White" FontSize="22"
+                           FontWeight="SemiBold" HorizontalAlignment="Center"
+                           TextAlignment="Center" TextWrapping="Wrap" Margin="0,20,0,4" />
+                <TextBlock x:Name="CallStatusText" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                           FontSize="15" HorizontalAlignment="Center" Margin="0,0,0,32" />
+
+                <!-- Incoming-call accept/decline -->
+                <Grid x:Name="CallAcceptDeclinePanel" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Click="CallDeclineButton_Click"
+                            HorizontalAlignment="Stretch" Margin="0,0,8,0" Padding="0,14"
+                            Background="#3A1414" Foreground="#FF6B6B" BorderThickness="0">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE778;" FontSize="18"
+                                      Foreground="#FF6B6B" VerticalAlignment="Center" />
+                            <TextBlock Text="Decline" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="1" Click="CallAcceptButton_Click"
+                            HorizontalAlignment="Stretch" Margin="8,0,0,0" Padding="0,14"
+                            Background="#14401C" Foreground="#4CD964" BorderThickness="0">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE717;" FontSize="18"
+                                      Foreground="#4CD964" VerticalAlignment="Center" />
+                            <TextBlock Text="Accept" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <!-- Hang up (active/outgoing call) -->
+                <Button x:Name="CallHangupButton" Click="CallHangupButton_Click"
+                        HorizontalAlignment="Stretch" Padding="0,14"
+                        Background="#3A1414" Foreground="#FF6B6B" BorderThickness="0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE778;" FontSize="18"
+                                  Foreground="#FF6B6B" VerticalAlignment="Center" />
+                        <TextBlock Text="Hang up" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
         </Grid>
 
     </Grid>

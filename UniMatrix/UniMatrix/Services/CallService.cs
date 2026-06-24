@@ -1,0 +1,591 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Windows.Data.Json;
+using Windows.UI.Core;
+
+#if WEBRTC
+using Org.WebRtc;
+#endif
+
+namespace UniMatrix.Services
+{
+    /// <summary>
+    /// 1:1 WebRTC audio calling over Matrix VoIP signalling (m.call.*).
+    ///
+    /// This is the UniMatrix counterpart of the PeerCC sample's Conductor, but the signalling
+    /// channel is Matrix room events instead of the sample's socket server:
+    ///   - outgoing: CreateOffer -> m.call.invite ; local ICE -> m.call.candidates ; HangupAsync -> m.call.hangup
+    ///   - incoming: m.call.invite -> (user accepts) -> CreateAnswer -> m.call.answer ; remote ICE consumed from m.call.candidates
+    ///
+    /// All Org.WebRtc usage is compiled only when the WEBRTC constant is defined (ARM configs, where
+    /// libs\webrtc\ARM\Org.WebRtc.winmd is referenced). On other platforms the class still exists so
+    /// the rest of the app compiles, but the call methods report that calling is unavailable.
+    ///
+    /// We target Matrix VoIP version 0 (the simplest 1:1 profile: no party_id, no glare resolution,
+    /// no select_answer) which is enough for a first on-device audio test.
+    /// </summary>
+    internal sealed class CallService
+    {
+        private CoreDispatcher _dispatcher;
+        private MatrixClient _client;
+
+        // Active-call identity (shared between platforms so the UI logic is identical).
+        private string _callId;
+        private string _roomId;
+        private bool _inCall;
+
+        /// <summary>True when this build actually has the native WebRTC library available.</summary>
+        public bool IsWebRtcAvailable
+        {
+            get
+            {
+#if WEBRTC
+                return true;
+#else
+                return false;
+#endif
+            }
+        }
+
+        /// <summary>True while a call is being set up or is connected.</summary>
+        public bool InCall { get { return _inCall; } }
+
+        /// <summary>The room of the active (or pending) call, or null.</summary>
+        public string CurrentRoomId { get { return _roomId; } }
+
+        // ---- Events for the UI (all raised on the UI thread) ----
+
+        /// <summary>An incoming call is ringing. Argument is the room id. UI should prompt accept/decline.</summary>
+        public event Action<string> IncomingCall;
+
+        /// <summary>Media is flowing (ICE connected).</summary>
+        public event Action CallConnected;
+
+        /// <summary>The call ended (hung up, declined, failed or remote gone).</summary>
+        public event Action CallEnded;
+
+        /// <summary>Human-readable status for the debug overlay / call UI.</summary>
+        public event Action<string> CallStatusChanged;
+
+        public void Initialize(CoreDispatcher dispatcher, MatrixClient client)
+        {
+            _dispatcher = dispatcher;
+            _client = client;
+        }
+
+        // ---- Matrix VoIP signalling key names (spec) ----
+        private const string KVersion = "version";
+        private const string KCallId = "call_id";
+        private const string KOffer = "offer";
+        private const string KAnswer = "answer";
+        private const string KCandidates = "candidates";
+        private const string KSdp = "sdp";
+        private const string KType = "type";
+        private const string KLifetime = "lifetime";
+        private const string KCandidate = "candidate";
+        private const string KSdpMid = "sdpMid";
+        private const string KSdpMLineIndex = "sdpMLineIndex";
+
+        private void Status(string s)
+        {
+            App.Log("CALL: " + s);
+            CallStatusChanged?.Invoke(s);
+        }
+
+#if WEBRTC
+        private static bool _libInitialized;
+
+        private WebRtcFactory _factory;
+        private RTCPeerConnection _pc;
+        private IMediaStreamTrack _selfAudioTrack;
+        private IMediaStreamTrack _peerAudioTrack;
+
+        private bool _isCaller;
+        private bool _remoteDescriptionSet;
+        // ICE candidates that arrive before the remote description is applied must be buffered,
+        // otherwise AddIceCandidate throws. They're flushed once SetRemoteDescription succeeds.
+        private readonly List<RTCIceCandidateInit> _pendingRemoteCandidates = new List<RTCIceCandidateInit>();
+        // For an incoming call we hold the offer until the user accepts (so we don't grab the mic
+        // or create the peer connection for a call that's about to be declined).
+        private string _pendingOfferSdp;
+
+        /// <summary>Initializes the native WebRTC library exactly once, on the UI thread.</summary>
+        private void EnsureLibrary()
+        {
+            if (_libInitialized) return;
+            var queue = EventQueueMaker.Bind(_dispatcher);
+            var cfg = new WebRtcLibConfiguration { Queue = queue };
+            cfg.AudioCaptureFrameProcessingQueue = EventQueue.GetOrCreateThreadQueueByName("AudioCaptureProcessingQueue");
+            cfg.AudioRenderFrameProcessingQueue = EventQueue.GetOrCreateThreadQueueByName("AudioRenderProcessingQueue");
+            cfg.VideoFrameProcessingQueue = EventQueue.GetOrCreateThreadQueueByName("VideoFrameProcessingQueue");
+            WebRtcLib.Setup(cfg);
+            _libInitialized = true;
+            Status("WebRTC library initialized.");
+        }
+
+        /// <summary>Requests microphone access (the OS prompts on first use). UI-thread only.</summary>
+        private static async Task<bool> RequestMicAsync()
+        {
+            try
+            {
+                var capture = new Windows.Media.Capture.MediaCapture();
+                var settings = new Windows.Media.Capture.MediaCaptureInitializationSettings
+                {
+                    StreamingCaptureMode = Windows.Media.Capture.StreamingCaptureMode.Audio,
+                    AudioDeviceId = "",
+                    VideoDeviceId = ""
+                };
+                await capture.InitializeAsync(settings);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: mic access failed: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Builds the factory, peer connection, audio track and wires events. UI-thread only.</summary>
+        private async Task<bool> CreatePeerConnectionAsync()
+        {
+            EnsureLibrary();
+
+            if (!await RequestMicAsync())
+            {
+                Status("Microphone permission denied.");
+                return false;
+            }
+
+            string captureId = "";
+            string renderId = "";
+            try
+            {
+                captureId = Windows.Media.Devices.MediaDevice.GetDefaultAudioCaptureId(
+                    Windows.Media.Devices.AudioDeviceRole.Communications) ?? "";
+                renderId = Windows.Media.Devices.MediaDevice.GetDefaultAudioRenderId(
+                    Windows.Media.Devices.AudioDeviceRole.Communications) ?? "";
+            }
+            catch { /* fall back to "" = default device */ }
+
+            var factoryConfig = new WebRtcFactoryConfiguration
+            {
+                AudioCaptureDeviceId = captureId,
+                AudioRenderDeviceId = renderId
+            };
+            _factory = new WebRtcFactory(factoryConfig);
+
+            var iceServers = new List<RTCIceServer>
+            {
+                new RTCIceServer { Urls = new List<string> { "stun:stun.l.google.com:19302" } }
+            };
+
+            var config = new RTCConfiguration
+            {
+                Factory = _factory,
+                BundlePolicy = RTCBundlePolicy.Balanced,
+                IceTransportPolicy = RTCIceTransportPolicy.All,
+                IceServers = iceServers
+            };
+
+            _pc = new RTCPeerConnection(config);
+            _pc.OnIceCandidate += Pc_OnIceCandidate;
+            _pc.OnTrack += Pc_OnTrack;
+            _pc.OnIceConnectionStateChange += Pc_OnIceConnectionStateChange;
+
+            // Audio-only: create a single local audio track. No video capturer/track.
+            var audioOptions = new AudioOptions { Factory = _factory };
+            var audioSource = AudioTrackSource.Create(audioOptions);
+            _selfAudioTrack = MediaStreamTrack.CreateAudioTrack("SELF_AUDIO", audioSource);
+            _pc.AddTrack(_selfAudioTrack);
+
+            Status("Peer connection created.");
+            return true;
+        }
+
+        private void Pc_OnIceConnectionStateChange()
+        {
+            var pc = _pc;
+            if (pc == null) return;
+            var state = pc.IceConnectionState;
+            Status("ICE state: " + state);
+            if (state == RTCIceConnectionState.Connected || state == RTCIceConnectionState.Completed)
+            {
+                RunOnUi(() => CallConnected?.Invoke());
+            }
+            else if (state == RTCIceConnectionState.Failed ||
+                     state == RTCIceConnectionState.Closed ||
+                     state == RTCIceConnectionState.Disconnected)
+            {
+                // A disconnect can be transient; only tear down on failed/closed.
+                if (state != RTCIceConnectionState.Disconnected)
+                    RunOnUi(() => EndCallLocal(notifyRemote: false));
+            }
+        }
+
+        private void Pc_OnTrack(IRTCTrackEvent evt)
+        {
+            // Remote audio renders through the audio device automatically once the track arrives;
+            // we just keep a reference so it isn't collected.
+            if (evt?.Track != null && evt.Track.Kind == "audio")
+            {
+                _peerAudioTrack = evt.Track;
+                Status("Remote audio track received.");
+            }
+        }
+
+        private void Pc_OnIceCandidate(IRTCPeerConnectionIceEvent evt)
+        {
+            var cand = evt?.Candidate;
+            if (cand == null) return; // null = end-of-candidates
+            if (string.IsNullOrEmpty(_callId) || string.IsNullOrEmpty(_roomId)) return;
+
+            var candJson = new JsonObject
+            {
+                { KCandidate, JsonValue.CreateStringValue(cand.Candidate ?? "") },
+                { KSdpMid, JsonValue.CreateStringValue(cand.SdpMid ?? "") },
+                { KSdpMLineIndex, JsonValue.CreateNumberValue(cand.SdpMLineIndex) }
+            };
+            var arr = new JsonArray { candJson };
+            var content = new JsonObject
+            {
+                { KCallId, JsonValue.CreateStringValue(_callId) },
+                { KVersion, JsonValue.CreateNumberValue(0) },
+                { KCandidates, arr }
+            };
+            SendSignal("m.call.candidates", content);
+        }
+
+        private void FlushPendingCandidates()
+        {
+            if (_pc == null) return;
+            foreach (var init in _pendingRemoteCandidates)
+            {
+                try { var _ = _pc.AddIceCandidate(new RTCIceCandidate(init)); }
+                catch (Exception ex) { App.Log("CALL: AddIceCandidate (flush) failed: " + ex.Message); }
+            }
+            _pendingRemoteCandidates.Clear();
+        }
+#endif
+
+        /// <summary>Places an outgoing audio call to the given room.</summary>
+        public async Task PlaceCallAsync(string roomId)
+        {
+            if (string.IsNullOrEmpty(roomId)) return;
+            if (_inCall) { Status("Already in a call."); return; }
+#if WEBRTC
+            try
+            {
+                _roomId = roomId;
+                _callId = "c" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() +
+                          Guid.NewGuid().ToString("N").Substring(0, 8);
+                _isCaller = true;
+                _inCall = true;
+                _remoteDescriptionSet = false;
+
+                if (!await CreatePeerConnectionAsync()) { EndCallLocal(notifyRemote: false); return; }
+
+                var offerOptions = new RTCOfferOptions
+                {
+                    OfferToReceiveAudio = true,
+                    OfferToReceiveVideo = false
+                };
+                var offer = await _pc.CreateOffer(offerOptions);
+                await _pc.SetLocalDescription(offer);
+
+                var offerJson = new JsonObject
+                {
+                    { KType, JsonValue.CreateStringValue("offer") },
+                    { KSdp, JsonValue.CreateStringValue(offer.Sdp) }
+                };
+                var content = new JsonObject
+                {
+                    { KCallId, JsonValue.CreateStringValue(_callId) },
+                    { KVersion, JsonValue.CreateNumberValue(0) },
+                    { KLifetime, JsonValue.CreateNumberValue(60000) },
+                    { KOffer, offerJson }
+                };
+                await _client.SendEventAsync(roomId, "m.call.invite", content);
+                Status("Calling...");
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: PlaceCall failed: " + ex);
+                EndCallLocal(notifyRemote: false);
+            }
+#else
+            Status("Calling is not available in this build (WebRTC library not linked).");
+            await Task.CompletedTask;
+#endif
+        }
+
+        /// <summary>Accepts the currently ringing incoming call.</summary>
+        public async Task AcceptIncomingAsync()
+        {
+#if WEBRTC
+            if (!_inCall || _isCaller || _pendingOfferSdp == null)
+            {
+                Status("No incoming call to accept.");
+                return;
+            }
+            try
+            {
+                if (!await CreatePeerConnectionAsync()) { EndCallLocal(notifyRemote: true); return; }
+
+                var remoteInit = new RTCSessionDescriptionInit { Sdp = _pendingOfferSdp, Type = RTCSdpType.Offer };
+                await _pc.SetRemoteDescription(new RTCSessionDescription(remoteInit));
+                _remoteDescriptionSet = true;
+                FlushPendingCandidates();
+
+                var answer = await _pc.CreateAnswer(new RTCAnswerOptions());
+                await _pc.SetLocalDescription(answer);
+
+                var answerJson = new JsonObject
+                {
+                    { KType, JsonValue.CreateStringValue("answer") },
+                    { KSdp, JsonValue.CreateStringValue(answer.Sdp) }
+                };
+                var content = new JsonObject
+                {
+                    { KCallId, JsonValue.CreateStringValue(_callId) },
+                    { KVersion, JsonValue.CreateNumberValue(0) },
+                    { KAnswer, answerJson }
+                };
+                await _client.SendEventAsync(_roomId, "m.call.answer", content);
+                _pendingOfferSdp = null;
+                Status("Call accepted.");
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: Accept failed: " + ex);
+                EndCallLocal(notifyRemote: true);
+            }
+#else
+            await Task.CompletedTask;
+#endif
+        }
+
+        /// <summary>Hangs up / declines the active or ringing call.</summary>
+        public async Task HangupAsync()
+        {
+            if (!_inCall) return;
+            await Task.Run(() => { }); // keep signature async-friendly
+            EndCallLocal(notifyRemote: true);
+        }
+
+        /// <summary>
+        /// Feeds a raw m.call.* signalling event (from /sync) into the state machine. Safe to call
+        /// for every call event; events for other/old calls or our own echoes are filtered out.
+        /// </summary>
+        public async Task HandleSignalAsync(CallSignal signal)
+        {
+            if (signal == null || signal.Content == null) return;
+            // Ignore our own events echoed back by sync.
+            if (!string.IsNullOrEmpty(_client?.UserId) && signal.Sender == _client.UserId) return;
+
+#if WEBRTC
+            string type = signal.Type;
+            string callId = MatrixClient.GetString(signal.Content, KCallId);
+
+            try
+            {
+                switch (type)
+                {
+                    case "m.call.invite":
+                        await OnRemoteInvite(signal, callId);
+                        break;
+                    case "m.call.answer":
+                        await OnRemoteAnswer(signal, callId);
+                        break;
+                    case "m.call.candidates":
+                        await OnRemoteCandidates(signal, callId);
+                        break;
+                    case "m.call.hangup":
+                    case "m.call.reject":
+                        if (callId == _callId && _inCall)
+                        {
+                            Status("Remote ended the call.");
+                            EndCallLocal(notifyRemote: false);
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: HandleSignal (" + type + ") failed: " + ex);
+            }
+#else
+            await Task.CompletedTask;
+#endif
+        }
+
+#if WEBRTC
+        private async Task OnRemoteInvite(CallSignal signal, string callId)
+        {
+            // Drop stale invites (replayed history) and reject if already busy.
+            long ageMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - signal.Timestamp;
+            if (signal.Timestamp > 0 && ageMs > 60000)
+            {
+                Status("Ignoring stale invite (" + (ageMs / 1000) + "s old).");
+                return;
+            }
+            if (_inCall)
+            {
+                Status("Busy; ignoring incoming invite.");
+                return;
+            }
+
+            JsonObject offer = GetObject(signal.Content, KOffer);
+            string sdp = offer != null ? MatrixClient.GetString(offer, KSdp) : null;
+            if (string.IsNullOrEmpty(sdp))
+            {
+                Status("Invite without SDP; ignoring.");
+                return;
+            }
+
+            _roomId = signal.RoomId;
+            _callId = callId;
+            _isCaller = false;
+            _inCall = true;
+            _remoteDescriptionSet = false;
+            _pendingOfferSdp = sdp;
+
+            Status("Incoming call from " + (signal.Sender ?? "unknown"));
+            RunOnUi(() => IncomingCall?.Invoke(_roomId));
+            await Task.CompletedTask;
+        }
+
+        private async Task OnRemoteAnswer(CallSignal signal, string callId)
+        {
+            if (!_inCall || !_isCaller || callId != _callId || _pc == null) return;
+
+            JsonObject answer = GetObject(signal.Content, KAnswer);
+            string sdp = answer != null ? MatrixClient.GetString(answer, KSdp) : null;
+            if (string.IsNullOrEmpty(sdp)) return;
+
+            var init = new RTCSessionDescriptionInit { Sdp = sdp, Type = RTCSdpType.Answer };
+            await _pc.SetRemoteDescription(new RTCSessionDescription(init));
+            _remoteDescriptionSet = true;
+            FlushPendingCandidates();
+            Status("Answer received; negotiating media.");
+        }
+
+        private async Task OnRemoteCandidates(CallSignal signal, string callId)
+        {
+            if (!_inCall || callId != _callId) return;
+
+            JsonArray candidates = GetArray(signal.Content, KCandidates);
+            if (candidates == null) return;
+
+            foreach (var item in candidates)
+            {
+                if (item.ValueType != JsonValueType.Object) continue;
+                JsonObject c = item.GetObject();
+                string cand = MatrixClient.GetString(c, KCandidate);
+                if (string.IsNullOrEmpty(cand)) continue; // end-of-candidates marker
+                string sdpMid = MatrixClient.GetString(c, KSdpMid);
+                ushort sdpMLineIndex = 0;
+                if (c.ContainsKey(KSdpMLineIndex) && c[KSdpMLineIndex].ValueType == JsonValueType.Number)
+                    sdpMLineIndex = (ushort)c.GetNamedNumber(KSdpMLineIndex);
+
+                var init = new RTCIceCandidateInit
+                {
+                    Candidate = cand,
+                    SdpMid = sdpMid,
+                    SdpMLineIndex = sdpMLineIndex
+                };
+
+                if (_remoteDescriptionSet && _pc != null)
+                {
+                    try { await _pc.AddIceCandidate(new RTCIceCandidate(init)); }
+                    catch (Exception ex) { App.Log("CALL: AddIceCandidate failed: " + ex.Message); }
+                }
+                else
+                {
+                    _pendingRemoteCandidates.Add(init);
+                }
+            }
+        }
+#endif
+
+        /// <summary>Sends a signalling event without blocking the caller (best-effort).</summary>
+        private void SendSignal(string eventType, JsonObject content)
+        {
+            string roomId = _roomId;
+            if (string.IsNullOrEmpty(roomId) || _client == null) return;
+            var _ = SendSignalAsync(eventType, content, roomId);
+        }
+
+        private async Task SendSignalAsync(string eventType, JsonObject content, string roomId)
+        {
+            try { await _client.SendEventAsync(roomId, eventType, content); }
+            catch (Exception ex) { App.Log("CALL: send " + eventType + " failed: " + ex.Message); }
+        }
+
+        /// <summary>Tears down the active call, optionally notifying the peer with m.call.hangup.</summary>
+        private void EndCallLocal(bool notifyRemote)
+        {
+            if (!_inCall && _callId == null) return;
+
+            if (notifyRemote && !string.IsNullOrEmpty(_callId) && !string.IsNullOrEmpty(_roomId))
+            {
+                var content = new JsonObject
+                {
+                    { KCallId, JsonValue.CreateStringValue(_callId) },
+                    { KVersion, JsonValue.CreateNumberValue(0) }
+                };
+                SendSignal("m.call.hangup", content);
+            }
+
+#if WEBRTC
+            try
+            {
+                if (_pc != null)
+                {
+                    _pc.OnIceCandidate -= Pc_OnIceCandidate;
+                    _pc.OnTrack -= Pc_OnTrack;
+                    _pc.OnIceConnectionStateChange -= Pc_OnIceConnectionStateChange;
+                }
+                (_selfAudioTrack as IDisposable)?.Dispose();
+                (_peerAudioTrack as IDisposable)?.Dispose();
+                (_pc as IDisposable)?.Dispose();
+            }
+            catch (Exception ex) { App.Log("CALL: teardown error: " + ex.Message); }
+            _pc = null;
+            _factory = null;
+            _selfAudioTrack = null;
+            _peerAudioTrack = null;
+            _remoteDescriptionSet = false;
+            _pendingRemoteCandidates.Clear();
+            _pendingOfferSdp = null;
+            _isCaller = false;
+#endif
+            _inCall = false;
+            _callId = null;
+            _roomId = null;
+
+            Status("Call ended.");
+            RunOnUi(() => CallEnded?.Invoke());
+        }
+
+        private void RunOnUi(Action action)
+        {
+            if (_dispatcher == null) { action(); return; }
+            if (_dispatcher.HasThreadAccess) { action(); return; }
+            var _ = _dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => action());
+        }
+
+        // ---- small JSON helpers (mirror SyncProcessor's) ----
+        private static JsonObject GetObject(JsonObject parent, string key)
+        {
+            if (parent == null || !parent.ContainsKey(key)) return null;
+            return parent[key].ValueType == JsonValueType.Object ? parent.GetNamedObject(key) : null;
+        }
+
+        private static JsonArray GetArray(JsonObject parent, string key)
+        {
+            if (parent == null || !parent.ContainsKey(key)) return null;
+            return parent[key].ValueType == JsonValueType.Array ? parent.GetNamedArray(key) : null;
+        }
+    }
+}

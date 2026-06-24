@@ -26,6 +26,9 @@ BundleArtifacts/
 *.pfx
 *.snk
 
+# Vendored WebRTC native libs: keep winmd + dll, never the (large) symbols
+libs/webrtc/**/*.pdb
+
 # NuGet
 packages/
 *.nupkg
