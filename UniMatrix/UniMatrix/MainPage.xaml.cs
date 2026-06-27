@@ -287,6 +287,14 @@ namespace UniMatrix
 
         private async void OnBackRequested(object sender, BackRequestedEventArgs e)
         {
+            // The debug log is a full-screen overlay; Back just closes it.
+            if (DebugOverlay != null && DebugOverlay.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                DebugOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             // The call overlay sits on top of everything, so Back ends the call first.
             if (CallOverlay != null && CallOverlay.Visibility == Visibility.Visible)
             {

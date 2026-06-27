@@ -5,6 +5,7 @@ using Windows.UI;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Media;
+using Windows.UI.Xaml.Media.Animation;
 using UniMatrix.Services;
 
 namespace UniMatrix
@@ -127,26 +128,77 @@ namespace UniMatrix
 
         /// <summary>
         /// Removes a single device's card from the list in place (after it was signed out) instead of
-        /// reloading the whole list, and keeps the session count, bulk-action button and the tracked
-        /// other-device ids in sync.
+        /// reloading the whole list. The card slides out to the right and fades before it's pulled from
+        /// the panel; the session count, bulk-action button and tracked other-device ids are then kept
+        /// in sync.
         /// </summary>
         private void RemoveDeviceCardFromUi(string deviceId)
         {
             if (DeviceListPanel == null || string.IsNullOrEmpty(deviceId)) return;
 
+            Border target = null;
             for (int i = 0; i < DeviceListPanel.Children.Count; i++)
             {
                 var border = DeviceListPanel.Children[i] as Border;
                 if (border != null && (border.Tag as string) == deviceId)
                 {
-                    DeviceListPanel.Children.RemoveAt(i);
+                    target = border;
                     break;
                 }
             }
 
             _otherDeviceIds.Remove(deviceId);
 
-            int remaining = DeviceListPanel.Children.Count;
+            if (target == null)
+            {
+                // Card already gone; just resync the surrounding chrome.
+                UpdateDeviceListChrome();
+                return;
+            }
+
+            // Slide the card out to the right while fading it, then drop it from the panel.
+            var transform = new TranslateTransform();
+            target.RenderTransform = transform;
+
+            double distance = DeviceListPanel.ActualWidth > 0 ? DeviceListPanel.ActualWidth : 400;
+            var duration = new Duration(TimeSpan.FromMilliseconds(220));
+            var ease = new CubicEase { EasingMode = EasingMode.EaseIn };
+
+            var slide = new DoubleAnimation
+            {
+                To = distance,
+                Duration = duration,
+                EasingFunction = ease
+            };
+            Storyboard.SetTarget(slide, transform);
+            Storyboard.SetTargetProperty(slide, "X");
+
+            var fade = new DoubleAnimation
+            {
+                To = 0,
+                Duration = duration
+            };
+            Storyboard.SetTarget(fade, target);
+            Storyboard.SetTargetProperty(fade, "Opacity");
+
+            var story = new Storyboard();
+            story.Children.Add(slide);
+            story.Children.Add(fade);
+            story.Completed += (s, e) =>
+            {
+                DeviceListPanel.Children.Remove(target);
+                UpdateDeviceListChrome();
+            };
+            story.Begin();
+        }
+
+        /// <summary>
+        /// Resyncs the session count text and the bulk "sign out other sessions" button to the current
+        /// contents of the device list.
+        /// </summary>
+        private void UpdateDeviceListChrome()
+        {
+            int remaining = DeviceListPanel != null ? DeviceListPanel.Children.Count : 0;
             if (DeviceListStatus != null)
                 DeviceListStatus.Text = remaining == 1 ? "1 active session." : remaining + " active sessions.";
 
