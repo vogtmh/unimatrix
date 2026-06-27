@@ -105,6 +105,9 @@ if ($Build) {
     # -A <arch> picks the target architecture for the VS generator.
     # BUILD_SHARED_LIBS=ON yields olm.dll (+ olm.lib import lib). Tests/fuzzers are off — they
     # are desktop console programs that won't link under the WindowsStore toolchain.
+    # CMAKE_POLICY_VERSION_MINIMUM=3.5: libolm's CMakeLists declares cmake_minimum_required at a
+    # version below 3.5, and CMake 3.31+ removed that compatibility. This flag lets the old
+    # project configure under a modern CMake without editing the vendored source.
     $cmakeArgs = @(
         "-S", $srcDir,
         "-B", $buildDir,
@@ -112,6 +115,7 @@ if ($Build) {
         "-A", $Platform,
         "-DCMAKE_SYSTEM_NAME=WindowsStore",
         "-DCMAKE_SYSTEM_VERSION=10.0",
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
         "-DBUILD_SHARED_LIBS=ON",
         "-DOLM_TESTS=OFF"
     )
