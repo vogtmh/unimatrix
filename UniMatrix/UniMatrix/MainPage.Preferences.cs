@@ -37,6 +37,9 @@ namespace UniMatrix
 
             // Refresh the device-verification (cross-signing) status.
             RefreshCrossSigningStatus();
+
+            // Show our own avatar in the Account tab (loads once, then re-applies from cache).
+            var ___ = LoadOwnAvatarAsync();
         }
 
         // ---- Settings tabs (bottom navigation) ----
@@ -174,6 +177,9 @@ namespace UniMatrix
             await EnsureCryptoAsync();
             StartSync();
 
+            // Pull our own profile avatar for the header / settings (best effort).
+            var _av = LoadOwnAvatarAsync();
+
             // Start the periodic message-notification background task now that we're signed in.
             var _ = Services.NotificationTask.RegisterAsync();
         }
@@ -268,6 +274,11 @@ namespace UniMatrix
             Rooms.Clear();
             Messages.Clear();
             _currentRoomId = null;
+
+            // Reset the cached own-avatar so the next account fetches its own.
+            _ownAvatarUri = null;
+            _ownAvatarLoaded = false;
+            ApplyOwnAvatar();
 
             LoginUserBox.Text = "";
             LoginPassBox.Password = "";

@@ -236,6 +236,9 @@ namespace UniMatrix
                 // on a "Logging in…" animation waiting for the network.
                 ShowView(View.RoomList);
 
+                // Pull our own profile avatar for the header / settings (best effort).
+                var _av = LoadOwnAvatarAsync();
+
                 // Keep the periodic message-notification background task registered while signed in.
                 var _ = NotificationTask.RegisterAsync();
 
@@ -1408,6 +1411,94 @@ namespace UniMatrix
             EnableEncryptionButton.Visibility = (!encrypted && cryptoOk) ? Visibility.Visible : Visibility.Collapsed;
 
             ShowView(View.RoomInfo);
+        }
+
+        // ---- Own profile avatar (header + settings account tab) ----
+
+        private string _ownAvatarUri;    // cached ms-appdata uri of my profile avatar, or null
+        private bool _ownAvatarLoaded;   // guard so the profile lookup only runs once per session
+
+        /// <summary>
+        /// Fetches the signed-in user's own profile avatar once and shows it as a circle in the
+        /// room-list header (in place of the gear icon) and in the settings Account tab. Best
+        /// effort: if there's no avatar or the lookup fails, the gear icon / initial stays.
+        /// </summary>
+        private async Task LoadOwnAvatarAsync()
+        {
+            if (_ownAvatarLoaded)
+            {
+                ApplyOwnAvatar();
+                return;
+            }
+            if (_client == null || _media == null || string.IsNullOrEmpty(_settings?.UserId)) return;
+            _ownAvatarLoaded = true;
+            try
+            {
+                string mxc = await _client.GetProfileAvatarAsync(_settings.UserId);
+                if (!string.IsNullOrEmpty(mxc))
+                {
+                    string uri = await _media.GetThumbnailUriAsync(mxc, AvatarThumbSize);
+                    if (!string.IsNullOrEmpty(uri)) _ownAvatarUri = uri;
+                }
+            }
+            catch { /* best effort — keep the fallback */ }
+            ApplyOwnAvatar();
+        }
+
+        private void ApplyOwnAvatar()
+        {
+            bool has = !string.IsNullOrEmpty(_ownAvatarUri);
+
+            // Room-list header: the circle avatar replaces the gear icon when present.
+            if (HeaderAvatarImage != null && SettingsNavIcon != null)
+            {
+                if (has)
+                {
+                    HeaderAvatarImage.Fill = new ImageBrush
+                    {
+                        ImageSource = new Windows.UI.Xaml.Media.Imaging.BitmapImage(new Uri(_ownAvatarUri)),
+                        Stretch = Stretch.UniformToFill
+                    };
+                    HeaderAvatarImage.Visibility = Visibility.Visible;
+                    SettingsNavIcon.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    HeaderAvatarImage.Visibility = Visibility.Collapsed;
+                    SettingsNavIcon.Visibility = Visibility.Visible;
+                }
+            }
+
+            // Settings Account tab: circle avatar with an initial fallback.
+            if (AccountAvatarImage != null && AccountAvatarInitial != null)
+            {
+                AccountAvatarInitial.Text = OwnAvatarInitial();
+                if (has)
+                {
+                    AccountAvatarImage.Fill = new ImageBrush
+                    {
+                        ImageSource = new Windows.UI.Xaml.Media.Imaging.BitmapImage(new Uri(_ownAvatarUri)),
+                        Stretch = Stretch.UniformToFill
+                    };
+                    AccountAvatarImage.Visibility = Visibility.Visible;
+                    AccountAvatarInitial.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    AccountAvatarImage.Visibility = Visibility.Collapsed;
+                    AccountAvatarInitial.Visibility = Visibility.Visible;
+                }
+            }
+        }
+
+        private string OwnAvatarInitial()
+        {
+            string uid = _settings?.UserId;
+            if (string.IsNullOrEmpty(uid)) return "?";
+            string s = uid.StartsWith("@") ? uid.Substring(1) : uid;
+            int colon = s.IndexOf(':');
+            if (colon > 0) s = s.Substring(0, colon);
+            return s.Length > 0 ? s.Substring(0, 1).ToUpperInvariant() : "?";
         }
 
         private void RoomInfoCloseButton_Click(object sender, RoutedEventArgs e) => ShowView(View.Chat);
