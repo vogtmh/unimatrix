@@ -38,6 +38,11 @@ cd olm-build
 Output lands in `UniMatrix\UniMatrix\libs\olm\ARM\olm.dll`. The app's `CRYPTO` build define
 expects it there.
 
+The CRT is linked **statically (/MT)** by default, so `olm.dll` is self-contained and loads in
+the appcontainer with no `Microsoft.VCLibs.140.00` framework package on the device. (A
+dynamic-CRT build is available via `-SharedCrt`, but then the VCLibs framework package must be
+deployed to the device or `olm.dll` fails to load with `ERROR_MOD_NOT_FOUND`.)
+
 ## webrtc-test — WebRTC (calls, experimental)
 
 A standalone feasibility harness for the deprecated **webrtc-uwp-sdk (M71)** — the only WebRTC

@@ -43,6 +43,13 @@
 .PARAMETER Harvest
     Copy the built olm.dll into the UniMatrix project's libs\olm\<Platform>\ folder.
 
+.PARAMETER SharedCrt
+    Link the VC++ runtime dynamically (/MD), which makes olm.dll depend on the
+    Microsoft.VCLibs.140.00 framework package (MSVCP140_APP.dll / VCRUNTIME140_APP.dll) being
+    deployed on the device. By default this is OFF and the CRT is linked STATICALLY (/MT) so
+    olm.dll is self-contained and loads in the appcontainer without any framework package. Use
+    this only if you specifically want the dynamic-CRT build.
+
 .PARAMETER HarvestDir
     Override the harvest destination root. Defaults to the project libs\olm folder resolved
     relative to this script (..\..\UniMatrix\UniMatrix\libs\olm).
@@ -65,6 +72,7 @@ param(
     [switch]$Clone,
     [switch]$Build,
     [switch]$Harvest,
+    [switch]$SharedCrt,
     [string]$HarvestDir
 )
 
@@ -127,6 +135,25 @@ if ($Build) {
         "-DBUILD_SHARED_LIBS=ON",
         "-DOLM_TESTS=OFF"
     )
+
+    # CRT linkage. By default link the CRT STATICALLY (/MT) so olm.dll embeds the C/C++
+    # runtime and carries NO dependency on the Microsoft.VCLibs.140.00 framework package
+    # (MSVCP140_APP.dll / VCRUNTIME140_APP.dll). On Windows 10 Mobile that framework package is
+    # awkward to deploy, and a missing one makes olm.dll fail to load in the appcontainer with
+    # ERROR_MOD_NOT_FOUND (126) -> surfaced as "Unresolved P/Invoke". libolm is pure
+    # computation (no OS calls), so the static-CRT functions it pulls in are appcontainer-safe.
+    # CMAKE_POLICY_DEFAULT_CMP0091=NEW activates the CMAKE_MSVC_RUNTIME_LIBRARY abstraction.
+    if ($SharedCrt) {
+        Write-Host "CRT: dynamic (/MD) -> requires Microsoft.VCLibs.140.00 on the device." -ForegroundColor Yellow
+        $cmakeArgs += "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
+        $cmakeArgs += "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
+    }
+    else {
+        Write-Host "CRT: static (/MT) -> self-contained olm.dll, no VCLibs dependency." -ForegroundColor Green
+        $cmakeArgs += "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
+        $cmakeArgs += "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+    }
+
     cmake @cmakeArgs
 
     Write-Step "Building"
