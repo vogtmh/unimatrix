@@ -75,6 +75,8 @@ namespace UniMatrix.Services
         {
             try
             {
+                ProbeNativeLoad();
+
                 _userId = _client.UserId;
                 _deviceId = _prefs.DeviceId;
                 if (string.IsNullOrEmpty(_userId) || string.IsNullOrEmpty(_deviceId))
@@ -117,6 +119,56 @@ namespace UniMatrix.Services
             {
                 _available = false;
                 App.Log("CRYPTO: init failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Diagnostic: tries to load olm.dll through the appcontainer-legal loader so a
+        /// load failure (missing dependency, wrong arch, blocked DLL) surfaces as a real
+        /// Win32 error code instead of the opaque .NET Native "Unresolved P/Invoke" message.
+        /// Also probes a single trivial export to separate "DLL won't load" from "export missing".
+        /// </summary>
+        private static void ProbeNativeLoad()
+        {
+            try
+            {
+                IntPtr h = OlmNative.LoadPackagedLibrary("olm.dll", 0);
+                int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                if (h == IntPtr.Zero)
+                {
+                    App.Log("CRYPTO: LoadPackagedLibrary(olm.dll) FAILED win32=" + err + " (" + Win32Hint(err) + ")");
+                    return;
+                }
+                App.Log("CRYPTO: LoadPackagedLibrary(olm.dll) OK handle=0x" + h.ToInt64().ToString("X"));
+
+                // The DLL loaded; now confirm the simplest export is callable.
+                try
+                {
+                    byte mj, mn, pt;
+                    OlmNative.olm_get_library_version(out mj, out mn, out pt);
+                    App.Log("CRYPTO: olm version " + mj + "." + mn + "." + pt);
+                }
+                catch (Exception ex)
+                {
+                    App.Log("CRYPTO: olm export call FAILED: " + ex.GetType().Name + " " + ex.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log("CRYPTO: ProbeNativeLoad EXC: " + ex.GetType().Name + " " + ex.Message);
+            }
+        }
+
+        private static string Win32Hint(int err)
+        {
+            switch (err)
+            {
+                case 0: return "no error reported";
+                case 126: return "ERROR_MOD_NOT_FOUND - olm.dll or one of its dependencies (VC++ runtime) not found";
+                case 193: return "ERROR_BAD_EXE_FORMAT - wrong architecture (expect ARM)";
+                case 1114: return "ERROR_DLL_INIT_FAILED - DllMain failed";
+                case 5: return "ERROR_ACCESS_DENIED - blocked/unsigned in appcontainer";
+                default: return "see winerror.h";
             }
         }
 

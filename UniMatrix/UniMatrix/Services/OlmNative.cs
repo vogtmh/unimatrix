@@ -27,6 +27,14 @@ namespace UniMatrix.Services
         private const string Dll = "olm.dll";
         private const CallingConvention Cdecl = CallingConvention.Cdecl;
 
+        // ---- Diagnostics -----------------------------------------------------------------
+        // LoadPackagedLibrary is the only loader allowed inside an appcontainer. We use it to
+        // probe whether olm.dll (and its dependency chain, e.g. the VC++ appcontainer runtime)
+        // can actually be loaded, so a load failure produces a real Win32 error code instead of
+        // the opaque .NET Native "Unresolved P/Invoke" message.
+        [DllImport("api-ms-win-core-libraryloader-l2-1-0.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern IntPtr LoadPackagedLibrary(string libFileName, uint reserved);
+
         // Sentinel returned by libolm calls on error (== (size_t)-1).
         [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_error();
 
