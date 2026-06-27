@@ -149,6 +149,7 @@
     <Compile Include="Services\OlmNative.cs" />
     <Compile Include="Services\OlmWrappers.cs" />
     <Compile Include="Services\MatrixClient.cs" />
+    <Compile Include="Services\MasClient.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
     <Compile Include="Services\PreferencesService.cs" />

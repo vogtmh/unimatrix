@@ -23,6 +23,10 @@ namespace UniMatrix
         // Used by the bulk "sign out all other sessions" action.
         private readonly List<string> _otherDeviceIds = new List<string>();
 
+        // Cached MAS (next-gen-auth) account session for removing sessions on matrix.org. Created
+        // and signed in on demand so the user enters their password at most once per app run.
+        private MasClient _mas;
+
         private async void RefreshDevicesButton_Click(object sender, RoutedEventArgs e)
         {
             await RefreshDevicesAsync();
@@ -321,6 +325,36 @@ namespace UniMatrix
             var choice = await confirm.ShowAsync();
             if (choice == null || choice.Label != "Remove") return;
 
+            // matrix.org and other next-gen-auth (MSC3861/MAS) servers disable the Client-Server
+            // device-delete endpoints for app tokens. Use the MAS account API (same thing the web
+            // page does) instead; a legacy password DELETE is used on classic homeservers.
+            string acctUri = null;
+            try { acctUri = await _client.GetAccountManagementUriAsync(); } catch { }
+            if (!string.IsNullOrEmpty(acctUri))
+            {
+                if (!await EnsureMasLoginAsync(acctUri)) return;
+                try
+                {
+                    var sessions = await _mas.ListSessionsAsync();
+                    var match = sessions.Find(s => s.DeviceId == deviceId);
+                    if (match == null)
+                    {
+                        await ShowErrorAsync("That session is already gone.");
+                    }
+                    else if (!await _mas.EndSessionAsync(match))
+                    {
+                        await ShowErrorAsync("Couldn't remove the session. Check the debug log.");
+                    }
+                    await RefreshDevicesAsync();
+                }
+                catch (Exception ex)
+                {
+                    App.Log("DEVICES: MAS remove failed: " + ex.Message);
+                    await ShowErrorAsync("Couldn't remove the session: " + ex.Message);
+                }
+                return;
+            }
+
             string password = await PromptInputAsync(
                 "Confirm it's you",
                 "Enter your account password to remove this session.",
@@ -357,6 +391,16 @@ namespace UniMatrix
             var choice = await confirm.ShowAsync();
             if (choice == null || choice.Label != "Sign out") return;
 
+            // On next-gen-auth servers (matrix.org/MAS) the C-S bulk + per-device delete are disabled
+            // for app tokens; use the MAS account API (one password sign-in, then no per-delete prompt).
+            string acctUri = null;
+            try { acctUri = await _client.GetAccountManagementUriAsync(); } catch { }
+            if (!string.IsNullOrEmpty(acctUri))
+            {
+                await SignOutOthersViaMasAsync(acctUri);
+                return;
+            }
+
             string password = await PromptInputAsync(
                 "Confirm it's you",
                 "Enter your account password to sign out your other sessions.",
@@ -388,7 +432,94 @@ namespace UniMatrix
             }
         }
 
+        /// <summary>Signs out every other session through the MAS account API (matrix.org).</summary>
+        private async Task SignOutOthersViaMasAsync(string acctUri)
+        {
+            if (!await EnsureMasLoginAsync(acctUri)) return;
+
+            string current = _settings != null ? _settings.DeviceId : null;
+            try
+            {
+                if (SignOutOthersButton != null)
+                {
+                    SignOutOthersButton.IsEnabled = false;
+                    SignOutOthersButton.Content = "Signing out\u2026";
+                }
+
+                var sessions = await _mas.ListSessionsAsync();
+                var targets = sessions.FindAll(s => s.DeviceId != current);
+                if (targets.Count == 0)
+                {
+                    await ShowErrorAsync("There are no other sessions to sign out.");
+                    await RefreshDevicesAsync();
+                    return;
+                }
+
+                int removed = 0;
+                for (int i = 0; i < targets.Count; i++)
+                {
+                    try { if (await _mas.EndSessionAsync(targets[i])) removed++; }
+                    catch (Exception ex) { App.Log("DEVICES: MAS end failed: " + ex.Message); }
+                    if (SignOutOthersButton != null)
+                        SignOutOthersButton.Content = "Signing out\u2026 " + (i + 1) + "/" + targets.Count;
+                }
+
+                App.Log("DEVICES: MAS bulk removed " + removed + "/" + targets.Count);
+                await RefreshDevicesAsync();
+                if (removed < targets.Count)
+                    await ShowErrorAsync("Signed out " + removed + " of " + targets.Count +
+                        " sessions. The rest couldn't be removed \u2014 check the debug log.");
+            }
+            catch (Exception ex)
+            {
+                App.Log("DEVICES: MAS bulk failed: " + ex.Message);
+                await ShowErrorAsync("Couldn't sign out the other sessions: " + ex.Message);
+            }
+            finally
+            {
+                if (SignOutOthersButton != null) SignOutOthersButton.IsEnabled = true;
+            }
+        }
+
         // ---- Helpers ----
+
+        /// <summary>
+        /// Ensures we have a signed-in MAS account session for next-gen-auth homeservers, prompting
+        /// once for the account password. Returns false if the user cancels or sign-in fails (wrong
+        /// password, or an SSO/2FA account that can't be driven from the app). The login is cached
+        /// in <see cref="_mas"/> so a run of removals only asks for the password once.
+        /// </summary>
+        private async Task<bool> EnsureMasLoginAsync(string accountUri)
+        {
+            if (_mas != null && _mas.IsLoggedIn) return true;
+
+            // MAS accepts the localpart or full MXID; derive the localpart from @user:server.
+            string username = _client != null ? _client.UserId : null;
+            if (!string.IsNullOrEmpty(username) && username.StartsWith("@"))
+            {
+                int colon = username.IndexOf(':');
+                username = colon > 1 ? username.Substring(1, colon - 1) : username.Substring(1);
+            }
+
+            string password = await PromptInputAsync(
+                "Sign in to manage sessions",
+                "matrix.org manages sign-ins on the web. Enter your account password once to remove " +
+                "sessions from here \u2014 you won't be asked again for each one. (Won't work for " +
+                "SSO or two-factor accounts.)",
+                "Password", null, "Sign in", isPassword: true);
+            if (password == null) return false; // cancelled
+            if (password.Length == 0) { await ShowErrorAsync("Enter your password to continue."); return false; }
+
+            if (_mas == null) _mas = new MasClient();
+            bool ok;
+            try { ok = await _mas.LoginAsync(accountUri, username, password); }
+            catch (Exception ex) { App.Log("DEVICES: MAS login exc: " + ex.Message); ok = false; }
+
+            if (!ok)
+                await ShowErrorAsync("Couldn't sign in. Check your password \u2014 or this account " +
+                                     "uses SSO/two-factor sign-in, which can't be managed from the app.");
+            return ok;
+        }
 
         /// <summary>Shows a single-field dialog (text or password). Returns the text, or null if cancelled.</summary>
         private async Task<string> PromptInputAsync(string title, string message, string placeholder,
