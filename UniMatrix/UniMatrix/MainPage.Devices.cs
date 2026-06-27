@@ -125,6 +125,41 @@ namespace UniMatrix
             finally { _devicesLoading = false; }
         }
 
+        /// <summary>
+        /// Removes a single device's card from the list in place (after it was signed out) instead of
+        /// reloading the whole list, and keeps the session count, bulk-action button and the tracked
+        /// other-device ids in sync.
+        /// </summary>
+        private void RemoveDeviceCardFromUi(string deviceId)
+        {
+            if (DeviceListPanel == null || string.IsNullOrEmpty(deviceId)) return;
+
+            for (int i = 0; i < DeviceListPanel.Children.Count; i++)
+            {
+                var border = DeviceListPanel.Children[i] as Border;
+                if (border != null && (border.Tag as string) == deviceId)
+                {
+                    DeviceListPanel.Children.RemoveAt(i);
+                    break;
+                }
+            }
+
+            _otherDeviceIds.Remove(deviceId);
+
+            int remaining = DeviceListPanel.Children.Count;
+            if (DeviceListStatus != null)
+                DeviceListStatus.Text = remaining == 1 ? "1 active session." : remaining + " active sessions.";
+
+            if (SignOutOthersButton != null)
+            {
+                SignOutOthersButton.Visibility = _otherDeviceIds.Count > 0
+                    ? Visibility.Visible : Visibility.Collapsed;
+                SignOutOthersButton.Content = _otherDeviceIds.Count == 1
+                    ? "Sign out 1 other session"
+                    : "Sign out all " + _otherDeviceIds.Count + " other sessions";
+            }
+        }
+
         private FrameworkElement BuildDeviceCard(DeviceListEntry d, bool isCurrent, int trust)
         {
             var card = new Border
@@ -132,7 +167,8 @@ namespace UniMatrix
                 Background = Res("AppCardBrush"),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(12),
-                Margin = new Thickness(0, 0, 0, 8)
+                Margin = new Thickness(0, 0, 0, 8),
+                Tag = d.DeviceId   // lets us find & remove just this card after a delete
             };
             var stack = new StackPanel();
 
@@ -339,13 +375,17 @@ namespace UniMatrix
                     var match = sessions.Find(s => s.DeviceId == deviceId);
                     if (match == null)
                     {
-                        await ShowErrorAsync("That session is already gone.");
+                        // Already gone server-side — just drop the stale card.
+                        RemoveDeviceCardFromUi(deviceId);
                     }
-                    else if (!await _mas.EndSessionAsync(match))
+                    else if (await _mas.EndSessionAsync(match))
+                    {
+                        RemoveDeviceCardFromUi(deviceId);
+                    }
+                    else
                     {
                         await ShowErrorAsync("Couldn't remove the session. Check the debug log.");
                     }
-                    await RefreshDevicesAsync();
                 }
                 catch (Exception ex)
                 {
@@ -365,7 +405,7 @@ namespace UniMatrix
             try
             {
                 await _client.DeleteDeviceAsync(deviceId, password);
-                await RefreshDevicesAsync();
+                RemoveDeviceCardFromUi(deviceId);
             }
             catch (Exception ex)
             {
