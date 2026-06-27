@@ -688,7 +688,7 @@ namespace UniMatrix.Services
                     sharedTo.Add(dev.UserId + "|" + dev.DeviceId);
                 }
 
-                if (messages.Size > 0)
+                if (messages.Count > 0)
                 {
                     await _client.SendToDeviceAsync("m.room.encrypted", messages);
                     rec.SharedTo = SerializeSharedTo(sharedTo);

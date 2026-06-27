@@ -4,6 +4,9 @@ using System.Text;
 using Windows.Security.Cryptography;
 using Windows.Security.Cryptography.Core;
 using Windows.Storage.Streams;
+// Windows.Storage.Streams also defines a 'Buffer' type, which collides with System.Buffer
+// (used here for BlockCopy). Alias it so the unqualified name resolves to the BCL helper.
+using Buffer = System.Buffer;
 
 namespace UniMatrix.Crypto
 {

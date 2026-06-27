@@ -564,7 +564,7 @@ namespace UniMatrix.Services
                     if (!string.IsNullOrEmpty(algo))
                     {
                         long rotMs = (long)GetNumber(content, "rotation_period_ms", 604800000);
-                        long rotMsgs = (long)GetNumber(content, "rotation_period_msgs", 100);
+                        int rotMsgs = (int)GetNumber(content, "rotation_period_msgs", 100);
                         _db.SetRoomEncryption(roomId, algo, rotMs, rotMsgs);
                     }
                     return false;
