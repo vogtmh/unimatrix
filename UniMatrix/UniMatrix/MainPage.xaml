@@ -715,6 +715,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <Grid Grid.Row="0" Background="{StaticResource AppPanelBrush}" Padding="6,8" Height="64">
                 <Grid.ColumnDefinitions>
@@ -725,10 +726,11 @@
                         BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
                     <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
                 </Button>
-                <TextBlock Grid.Column="1" Text="Settings" Foreground="White" FontSize="18"
+                <TextBlock Grid.Column="1" x:Name="SettingsTitle" Text="Account" Foreground="White" FontSize="18"
                            FontWeight="SemiBold" VerticalAlignment="Center" />
             </Grid>
-            <ScrollViewer Grid.Row="1">
+            <!-- ===== Tab 0: User (account, sign out, version) ===== -->
+            <ScrollViewer x:Name="SettingsTab0" Grid.Row="1" Visibility="Visible">
                 <StackPanel Padding="20" MaxWidth="480">
                     <TextBlock Text="ACCOUNT" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
@@ -738,20 +740,22 @@
                     <TextBlock x:Name="SettingsHomeserver" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="13" Margin="0,4,0,0" />
 
-                    <TextBlock Text="HISTORY" Foreground="{StaticResource AppFaintTextBrush}"
-                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
-                    <TextBlock Text="Days of history to load per room" Foreground="White" FontSize="14" />
-                    <Slider x:Name="HistoryDaysSlider" Minimum="7" Maximum="365" StepFrequency="1"
-                            TickFrequency="30" ValueChanged="HistoryDaysSlider_ValueChanged"
-                            Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
-                    <TextBlock x:Name="HistoryDaysValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
-                               FontSize="13" />
-                    <TextBlock Text="Quiet rooms fall back to the last 50 messages."
-                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
-                               Margin="0,4,0,0" TextWrapping="Wrap" />
+                    <Button x:Name="LogoutButton" Content="Sign out" Click="LogoutButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12" Margin="0,32,0,0"
+                            Background="#3A1414" Foreground="#FF6B6B" FontWeight="SemiBold" />
 
+                    <TextBlock Text="ABOUT" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,32,0,8" />
+                    <TextBlock x:Name="SettingsBuild" Text="" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="12" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ===== Tab 1: Look and feel (accent, notifications, live tile) ===== -->
+            <ScrollViewer x:Name="SettingsTab1" Grid.Row="1" Visibility="Collapsed">
+                <StackPanel Padding="20" MaxWidth="480">
                     <TextBlock Text="APPEARANCE" Foreground="{StaticResource AppFaintTextBrush}"
-                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                               FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <ToggleSwitch x:Name="UseAccentToggle" Header="Use system accent color"
                                   OffContent="UniMatrix green" OnContent="System accent"
                                   Foreground="White" Toggled="UseAccentToggle_Toggled" />
@@ -779,9 +783,14 @@
                     <TextBlock Text="Shows the latest matching message on the Start screen tile."
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,4,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </ScrollViewer>
 
+            <!-- ===== Tab 2: Security (key backup + device verification) ===== -->
+            <ScrollViewer x:Name="SettingsTab2" Grid.Row="1" Visibility="Collapsed">
+                <StackPanel Padding="20" MaxWidth="480">
                     <TextBlock Text="ENCRYPTION &amp; BACKUP" Foreground="{StaticResource AppFaintTextBrush}"
-                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                               FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBlock x:Name="BackupStatusText" Text="Checking key backup…"
                                Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
                                Margin="0,0,0,12" TextWrapping="Wrap" />
@@ -809,6 +818,23 @@
                     <TextBlock Text="Verifying this session cross-signs it with your account so your other devices (and contacts) trust it."
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ===== Tab 3: Maintenance (history, storage, wipe) ===== -->
+            <ScrollViewer x:Name="SettingsTab3" Grid.Row="1" Visibility="Collapsed">
+                <StackPanel Padding="20" MaxWidth="480">
+                    <TextBlock Text="HISTORY" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Days of history to load per room" Foreground="White" FontSize="14" />
+                    <Slider x:Name="HistoryDaysSlider" Minimum="7" Maximum="365" StepFrequency="1"
+                            TickFrequency="30" ValueChanged="HistoryDaysSlider_ValueChanged"
+                            Foreground="{StaticResource AppAccentBrush}" Margin="0,8,0,0" />
+                    <TextBlock x:Name="HistoryDaysValue" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="13" />
+                    <TextBlock Text="Quiet rooms fall back to the last 50 messages."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,4,0,0" TextWrapping="Wrap" />
 
                     <TextBlock Text="MAINTENANCE" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
@@ -822,15 +848,42 @@
                     <TextBlock Text="Clears all locally cached rooms and messages, then re-downloads everything from the server. You stay signed in."
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,6,0,0" TextWrapping="Wrap" />
-
-                    <Button x:Name="LogoutButton" Content="Sign out" Click="LogoutButton_Click"
-                            HorizontalAlignment="Stretch" Padding="0,12" Margin="0,32,0,0"
-                            Background="#3A1414" Foreground="#FF6B6B" FontWeight="SemiBold" />
-
-                    <TextBlock x:Name="SettingsBuild" Text="" Foreground="{StaticResource AppFaintTextBrush}"
-                               FontSize="11" HorizontalAlignment="Center" Margin="0,24,0,0" />
                 </StackPanel>
             </ScrollViewer>
+
+            <!-- ===== Bottom tab bar (accent-highlighted active tab) ===== -->
+            <Grid Grid.Row="2" Background="{StaticResource AppPanelBrush}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="SettingsNav0" Grid.Column="0" Click="SettingsNav0_Click"
+                        Background="{StaticResource AppAccentBrush}" BorderThickness="0"
+                        HorizontalAlignment="Stretch" Padding="0,12"
+                        ToolTipService.ToolTip="Account">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE77B;" FontSize="20" Foreground="White" />
+                </Button>
+                <Button x:Name="SettingsNav1" Grid.Column="1" Click="SettingsNav1_Click"
+                        Background="Transparent" BorderThickness="0"
+                        HorizontalAlignment="Stretch" Padding="0,12"
+                        ToolTipService.ToolTip="Look &amp; feel">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE790;" FontSize="20" Foreground="White" />
+                </Button>
+                <Button x:Name="SettingsNav2" Grid.Column="2" Click="SettingsNav2_Click"
+                        Background="Transparent" BorderThickness="0"
+                        HorizontalAlignment="Stretch" Padding="0,12"
+                        ToolTipService.ToolTip="Security">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xEA18;" FontSize="20" Foreground="White" />
+                </Button>
+                <Button x:Name="SettingsNav3" Grid.Column="3" Click="SettingsNav3_Click"
+                        Background="Transparent" BorderThickness="0"
+                        HorizontalAlignment="Stretch" Padding="0,12"
+                        ToolTipService.ToolTip="Maintenance">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE90F;" FontSize="20" Foreground="White" />
+                </Button>
+            </Grid>
         </Grid>
 
         <!-- ========================= DEBUG OVERLAY ========================= -->

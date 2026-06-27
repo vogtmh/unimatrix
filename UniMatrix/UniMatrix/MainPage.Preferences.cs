@@ -24,6 +24,9 @@ namespace UniMatrix
             NotifyGroupsToggle.IsOn = _settings.NotifyGroupRooms;
             LiveTileModeCombo.SelectedIndex = (int)_settings.LiveTileMode;
 
+            // Always open on the first tab.
+            SetSettingsTab(0);
+
             ShowView(View.Settings);
 
             // Compute on-disk usage off the UI thread; update the label when ready.
@@ -35,6 +38,43 @@ namespace UniMatrix
             // Refresh the device-verification (cross-signing) status.
             RefreshCrossSigningStatus();
         }
+
+        // ---- Settings tabs (bottom navigation) ----
+
+        private void SettingsNav0_Click(object sender, RoutedEventArgs e) => SetSettingsTab(0);
+        private void SettingsNav1_Click(object sender, RoutedEventArgs e) => SetSettingsTab(1);
+        private void SettingsNav2_Click(object sender, RoutedEventArgs e) => SetSettingsTab(2);
+        private void SettingsNav3_Click(object sender, RoutedEventArgs e) => SetSettingsTab(3);
+
+        // 0 = Account, 1 = Look & feel, 2 = Security, 3 = Maintenance.
+        private void SetSettingsTab(int tab)
+        {
+            SettingsTab0.Visibility = tab == 0 ? Visibility.Visible : Visibility.Collapsed;
+            SettingsTab1.Visibility = tab == 1 ? Visibility.Visible : Visibility.Collapsed;
+            SettingsTab2.Visibility = tab == 2 ? Visibility.Visible : Visibility.Collapsed;
+            SettingsTab3.Visibility = tab == 3 ? Visibility.Visible : Visibility.Collapsed;
+
+            SettingsNav0.Background = tab == 0 ? SettingsAccentBrush : SettingsInactiveTabBrush;
+            SettingsNav1.Background = tab == 1 ? SettingsAccentBrush : SettingsInactiveTabBrush;
+            SettingsNav2.Background = tab == 2 ? SettingsAccentBrush : SettingsInactiveTabBrush;
+            SettingsNav3.Background = tab == 3 ? SettingsAccentBrush : SettingsInactiveTabBrush;
+
+            switch (tab)
+            {
+                case 1: SettingsTitle.Text = "Look & feel"; break;
+                case 2: SettingsTitle.Text = "Security"; break;
+                case 3: SettingsTitle.Text = "Maintenance"; break;
+                default: SettingsTitle.Text = "Account"; break;
+            }
+        }
+
+        private static Windows.UI.Xaml.Media.Brush SettingsAccentBrush
+        {
+            get { return (Windows.UI.Xaml.Media.Brush)Application.Current.Resources["AppAccentBrush"]; }
+        }
+
+        private static readonly Windows.UI.Xaml.Media.Brush SettingsInactiveTabBrush =
+            new Windows.UI.Xaml.Media.SolidColorBrush(Windows.UI.Colors.Transparent);
 
         private async System.Threading.Tasks.Task UpdateStorageUsageAsync()
         {
