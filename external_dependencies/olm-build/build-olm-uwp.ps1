@@ -50,6 +50,10 @@
     shipping them app-local avoids requiring the Microsoft.VCLibs.140.00 framework package on
     the device (which is hard to deploy on Windows 10 Mobile).
 
+.PARAMETER CrtSource
+    Optional override for -HarvestCrt: a folder to search for the runtime DLLs, or a direct
+    path to a Microsoft.VCLibs.140.00.appx. Use this if the automatic search can't find them.
+
 .PARAMETER HarvestDir
     Override the harvest destination root. Defaults to the project libs\olm folder resolved
     relative to this script (..\..\UniMatrix\UniMatrix\libs\olm).
@@ -73,6 +77,7 @@ param(
     [switch]$Build,
     [switch]$Harvest,
     [switch]$HarvestCrt,
+    [string]$CrtSource,
     [string]$HarvestDir
 )
 
@@ -194,41 +199,101 @@ if ($HarvestCrt) {
     $destDir = Join-Path $HarvestDir $Platform
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
 
-    # The appcontainer VC++ runtime DLLs (the *_APP variants) ship inside the VCLibs extension
-    # SDK appx. We extract MSVCP140_APP.dll + VCRUNTIME140_APP.dll for the target arch and place
-    # them next to olm.dll so they are packaged app-local (no framework dependency required).
+    # The appcontainer VC++ runtime DLLs (the *_APP variants) that olm.dll links against. We
+    # place MSVCP140_APP.dll + VCRUNTIME140_APP.dll next to olm.dll so they are packaged
+    # app-local (no Microsoft.VCLibs.140.00 framework dependency required on the device).
+    # These files live in different spots depending on the VS/SDK install, so we search both
+    # for the raw DLLs and for the VCLibs appx that contains them, across the usual roots.
     Write-Step "Harvesting app-local VC++ runtime ($Platform)"
 
-    $archMap = @{ "ARM" = "arm"; "Win32" = "x86"; "x64" = "x64" }
-    $arch = $archMap[$Platform]
+    $needed = @("MSVCP140_APP.dll", "VCRUNTIME140_APP.dll")
 
-    $vclibsRoots = @(
-        "C:\Program Files (x86)\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Retail\$Platform",
-        "C:\Program Files (x86)\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Debug\$Platform"
-    )
-    $appx = $null
-    foreach ($r in $vclibsRoots) {
-        $cand = Join-Path $r "Microsoft.VCLibs.140.00.appx"
-        if (Test-Path $cand) { $appx = $cand; break }
-    }
-    if (-not $appx) {
-        throw "Could not find Microsoft.VCLibs.140.00.appx for $Platform under the Windows SDK ExtensionSDKs. Searched:`n  $($vclibsRoots -join "`n  ")"
-    }
+    # Path token that identifies the target architecture within a redist/appx path.
+    # ARM -> '\arm\' (won't match '\arm64\'); Win32 -> '\x86\'; x64 -> '\x64\'.
+    $archToken = @{ "ARM" = "\\arm\\"; "Win32" = "\\x86\\"; "x64" = "\\x64\\" }[$Platform]
 
-    $tmp = Join-Path $env:TEMP ("vclibs_" + [System.IO.Path]::GetRandomFileName())
-    $zip = "$tmp.zip"
-    Copy-Item $appx $zip -Force
-    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    # Roots to search (VS install + Windows SDK ExtensionSDKs). Only existing ones are scanned.
+    $searchRoots = @(
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2017",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2017",
+        "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2019",
+        "${env:ProgramFiles}\Microsoft Visual Studio\2022",
+        "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs",
+        "${env:ProgramFiles(x86)}\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs"
+    ) | Where-Object { $_ -and (Test-Path $_) }
 
-    foreach ($name in @("MSVCP140_APP.dll", "VCRUNTIME140_APP.dll")) {
-        $found = Get-ChildItem -Path $tmp -Recurse -Filter $name | Select-Object -First 1
-        if (-not $found) { throw "$name not found inside $appx." }
-        Copy-Item $found.FullName (Join-Path $destDir $name) -Force
-        Write-Host "  + $name" -ForegroundColor Green
+    # If the user pointed us at a specific appx or folder, search that first.
+    if ($CrtSource) {
+        if (-not (Test-Path $CrtSource)) { throw "CrtSource path not found: $CrtSource" }
+        if ((Get-Item $CrtSource).PSIsContainer) { $searchRoots = @($CrtSource) + $searchRoots }
+        elseif ($CrtSource -like "*.appx") { $searchRoots = @() ; $explicitAppx = $CrtSource }
     }
 
-    Remove-Item $zip -Force -ErrorAction SilentlyContinue
-    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    function Copy-CrtFrom([string]$folder) {
+        $copied = 0
+        foreach ($name in $needed) {
+            $hit = Get-ChildItem -Path $folder -Recurse -Filter $name -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match $archToken } | Select-Object -First 1
+            if ($hit) {
+                Copy-Item $hit.FullName (Join-Path $destDir $name) -Force
+                Write-Host "  + $name  <- $($hit.FullName)" -ForegroundColor Green
+                $copied++
+            }
+        }
+        return $copied
+    }
+
+    $got = 0
+
+    # 1) Explicit appx file provided.
+    if ($explicitAppx) {
+        $tmp = Join-Path $env:TEMP ("vclibs_" + [System.IO.Path]::GetRandomFileName())
+        $zip = "$tmp.zip"; Copy-Item $explicitAppx $zip -Force
+        Expand-Archive -Path $zip -DestinationPath $tmp -Force
+        $got = Copy-CrtFrom $tmp
+        Remove-Item $zip -Force -ErrorAction SilentlyContinue
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # 2) Look for the raw DLLs already present on disk (VC redist / extracted VCLibs).
+    if ($got -lt $needed.Count) {
+        foreach ($r in $searchRoots) {
+            $got = Copy-CrtFrom $r
+            if ($got -ge $needed.Count) { break }
+        }
+    }
+
+    # 3) Fall back to finding a VCLibs appx for this arch and extracting from it.
+    if ($got -lt $needed.Count) {
+        $appx = $null
+        foreach ($r in $searchRoots) {
+            $appx = Get-ChildItem -Path $r -Recurse -Filter "Microsoft.VCLibs.140.00.appx" -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -match $archToken } | Select-Object -First 1
+            if ($appx) { break }
+        }
+        if ($appx) {
+            $tmp = Join-Path $env:TEMP ("vclibs_" + [System.IO.Path]::GetRandomFileName())
+            $zip = "$tmp.zip"; Copy-Item $appx.FullName $zip -Force
+            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+            $got = Copy-CrtFrom $tmp
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+            Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($got -lt $needed.Count) {
+        throw @"
+Could not locate the appcontainer VC++ runtime ($($needed -join ', ')) for $Platform.
+Searched these roots recursively for the raw DLLs and for Microsoft.VCLibs.140.00.appx:
+  $($searchRoots -join "`n  ")
+
+Fix: find the files yourself, e.g.
+  Get-ChildItem 'C:\Program Files (x86)' -Recurse -Filter VCRUNTIME140_APP.dll -ErrorAction SilentlyContinue | ? FullName -match '\\arm\\'
+then re-run pointing at the containing folder (or the VCLibs appx):
+  .\build-olm-uwp.ps1 -HarvestCrt -CrtSource 'C:\path\to\folder-or-Microsoft.VCLibs.140.00.appx'
+"@
+    }
+
     Write-Step "Harvested app-local CRT -> $destDir"
     Write-Host "Ensure UniMatrix.csproj packages MSVCP140_APP.dll and VCRUNTIME140_APP.dll as <Content>." -ForegroundColor Yellow
 }
