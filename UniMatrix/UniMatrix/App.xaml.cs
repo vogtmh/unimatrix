@@ -61,6 +61,19 @@ namespace UniMatrix
             catch { }
         }
 
+        /// <summary>Erases the on-disk startup.log so saving afterwards won't include old history.</summary>
+        internal static void ClearLog()
+        {
+            try
+            {
+                string path = Path.Combine(
+                    Windows.Storage.ApplicationData.Current.LocalFolder.Path,
+                    "startup.log");
+                if (File.Exists(path)) File.WriteAllText(path, string.Empty);
+            }
+            catch { }
+        }
+
         /// <summary>
         /// Raised for every <see cref="Log"/> call so an on-screen debug overlay can
         /// display log lines live. Handlers must marshal to the UI thread themselves.

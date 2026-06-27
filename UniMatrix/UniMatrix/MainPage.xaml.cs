@@ -1802,6 +1802,9 @@ namespace UniMatrix
         {
             _debugBuffer.Clear();
             if (DebugText != null) DebugText.Text = "";
+            // Also erase the on-disk log so a later Save reflects the cleared state
+            // instead of replaying the full history.
+            App.ClearLog();
         }
 
         /// <summary>
