@@ -115,7 +115,7 @@ namespace UniMatrix.Services
                 "appSessions(first: 100, state: ACTIVE, after: $after) { " +
                 "edges { node { __typename " +
                 "... on CompatSession { id deviceId } " +
-                "... on Oauth2Session { id deviceId } } } " +
+                "... on Oauth2Session { id scope } } } " +
                 "pageInfo { hasNextPage endCursor } } } } }";
 
             string after = null;
@@ -126,6 +126,8 @@ namespace UniMatrix.Services
 
                 var data = await GraphQLAsync(query, vars);
                 if (data == null) break;
+                if (data.ContainsKey("errors"))
+                    App.Log("MAS: list errors :: " + Trunc(data.GetNamedArray("errors").Stringify()));
 
                 JsonObject conn = TryGetAppSessions(data);
                 if (conn == null) break;
@@ -141,13 +143,18 @@ namespace UniMatrix.Services
                             var node = edge.GetObject().GetNamedObject("node");
                             string tn = node.GetNamedString("__typename", "");
                             string id = node.GetNamedString("id", "");
-                            string dev = node.GetNamedString("deviceId", "");
                             if (string.IsNullOrEmpty(id)) continue;
+                            bool isOauth = tn == "Oauth2Session";
+                            // CompatSession exposes deviceId directly; Oauth2Session encodes it in
+                            // its OAuth scope (MSC2967: ...client:device:<id>).
+                            string dev = isOauth
+                                ? DeviceIdFromScope(node.GetNamedString("scope", ""))
+                                : node.GetNamedString("deviceId", "");
                             result.Add(new MasSession
                             {
                                 Id = id,
                                 DeviceId = string.IsNullOrEmpty(dev) ? null : dev,
-                                IsOauth2 = tn == "Oauth2Session"
+                                IsOauth2 = isOauth
                             });
                         }
                         catch { }
@@ -198,6 +205,20 @@ namespace UniMatrix.Services
             // Tolerate attribute order (value before name).
             m = Regex.Match(html, "value=\"([^\"]+)\"\\s+name=\"csrf\"");
             return m.Success ? m.Groups[1].Value : null;
+        }
+
+        /// <summary>Extracts the Matrix device id from an OAuth scope string (MSC2967 device scope,
+        /// e.g. "urn:matrix:org.matrix.msc2967.client:device:ABCD" or the stable
+        /// "urn:matrix:client:device:ABCD"). Returns null if the scope has no device token.</summary>
+        private static string DeviceIdFromScope(string scope)
+        {
+            if (string.IsNullOrEmpty(scope)) return null;
+            foreach (var token in scope.Split(' '))
+            {
+                int idx = token.IndexOf(":device:");
+                if (idx >= 0) return token.Substring(idx + ":device:".Length);
+            }
+            return null;
         }
 
         private async Task<JsonObject> GraphQLAsync(string query, JsonObject variables)
