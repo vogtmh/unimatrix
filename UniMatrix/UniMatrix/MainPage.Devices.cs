@@ -492,6 +492,12 @@ namespace UniMatrix
         private async Task<bool> EnsureMasLoginAsync(string accountUri)
         {
             if (_mas != null && _mas.IsLoggedIn) return true;
+            if (_mas == null) _mas = new MasClient();
+
+            // A session cookie from a previous run is often still valid — reuse it silently so we
+            // don't ask for the password again.
+            try { if (await _mas.TryResumeAsync(accountUri)) return true; }
+            catch (Exception ex) { App.Log("DEVICES: MAS resume exc: " + ex.Message); }
 
             // MAS accepts the localpart or full MXID; derive the localpart from @user:server.
             string username = _client != null ? _client.UserId : null;
@@ -510,7 +516,6 @@ namespace UniMatrix
             if (password == null) return false; // cancelled
             if (password.Length == 0) { await ShowErrorAsync("Enter your password to continue."); return false; }
 
-            if (_mas == null) _mas = new MasClient();
             bool ok;
             try { ok = await _mas.LoginAsync(accountUri, username, password); }
             catch (Exception ex) { App.Log("DEVICES: MAS login exc: " + ex.Message); ok = false; }

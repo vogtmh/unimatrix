@@ -55,15 +55,16 @@ namespace UniMatrix.Services
         public async Task<bool> LoginAsync(string accountUri, string username, string password)
         {
             _loggedIn = false;
-            try
+            if (!SetOrigin(accountUri)) return false;
+
+            // WinRT's HttpBaseProtocolFilter shares the app cookie store, so a session from a
+            // previous run may still be valid — in which case GET /login redirects to the account
+            // page (no login form) and there's nothing to do. Check before trying to sign in.
+            if (await IsAuthenticatedAsync())
             {
-                var acct = new Uri(accountUri);
-                _masOrigin = acct.GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped);
-            }
-            catch (Exception ex)
-            {
-                App.Log("MAS: bad account uri '" + accountUri + "': " + ex.Message);
-                return false;
+                _loggedIn = true;
+                App.Log("MAS: resumed existing session user=" + username);
+                return true;
             }
 
             var loginUri = new Uri(_masOrigin + "/login?kind=manage_account");
@@ -80,6 +81,14 @@ namespace UniMatrix.Services
             string csrf = ExtractCsrf(html);
             if (string.IsNullOrEmpty(csrf))
             {
+                // No form on the page usually means we're already authenticated (cookie persisted)
+                // — confirm that rather than failing outright.
+                if (await IsAuthenticatedAsync())
+                {
+                    _loggedIn = true;
+                    App.Log("MAS: already authenticated (no login form) user=" + username);
+                    return true;
+                }
                 App.Log("MAS: no csrf token on login page (form changed or SSO-only?)");
                 return false;
             }
@@ -99,11 +108,44 @@ namespace UniMatrix.Services
             catch (Exception ex) { App.Log("MAS: login POST failed: " + ex.Message); return false; }
 
             // 3. Confirm the session is authenticated by asking who we are.
-            var who = await GraphQLAsync("{ viewer { __typename } }", null);
-            _loggedIn = ViewerIsUser(who);
+            _loggedIn = await IsAuthenticatedAsync();
             App.Log("MAS: login " + (_loggedIn ? "ok" : "failed (wrong password / SSO / 2FA?)") +
                     " user=" + username);
             return _loggedIn;
+        }
+
+        /// <summary>
+        /// Tries to reuse a still-valid account session (from a persisted cookie) without prompting
+        /// for a password. Returns true if already signed in. Sets the MAS origin from accountUri.
+        /// </summary>
+        public async Task<bool> TryResumeAsync(string accountUri)
+        {
+            if (!SetOrigin(accountUri)) return false;
+            _loggedIn = await IsAuthenticatedAsync();
+            if (_loggedIn) App.Log("MAS: resumed existing session (no password needed)");
+            return _loggedIn;
+        }
+
+        private bool SetOrigin(string accountUri)
+        {
+            try
+            {
+                var acct = new Uri(accountUri);
+                _masOrigin = acct.GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                App.Log("MAS: bad account uri '" + accountUri + "': " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>True if the current cookies authenticate us as a real user (not Anonymous).</summary>
+        private async Task<bool> IsAuthenticatedAsync()
+        {
+            var who = await GraphQLAsync("{ viewer { __typename } }", null);
+            return ViewerIsUser(who);
         }
 
         /// <summary>Lists every active app session (Matrix client sign-in) on the account.</summary>
