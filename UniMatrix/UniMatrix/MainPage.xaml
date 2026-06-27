@@ -910,7 +910,7 @@
                                    TextWrapping="Wrap" Margin="0,12,0,0" />
                         <TextBox x:Name="RecoveryKeyDisplay" IsReadOnly="True" TextWrapping="Wrap"
                                  Margin="0,12,0,0" Background="{StaticResource AppCardBrush}" Foreground="White"
-                                 BorderThickness="0" FontFamily="Consolas" IsTextSelectionEnabled="True" />
+                                 BorderThickness="0" FontFamily="Consolas" />
                         <Grid Margin="0,16,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
