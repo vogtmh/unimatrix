@@ -74,43 +74,54 @@ namespace UniMatrix
 
             try
             {
-                // 1. Device-list deltas.
-                if (result.DeviceListChanged.Count > 0)
+                // Steps 1-5 are CPU-heavy native libolm work (device-key updates, Olm to-device
+                // decryption, Megolm decryption loops, one-time-key generation). On the slow Lumia
+                // ARM CPU these block for seconds, so run them on a background thread instead of the
+                // UI thread (which would freeze the app — even past the point of being closable).
+                // The DB is thread-safe (its own _gate lock) and the sync loop is serialized, so no
+                // crypto/DB state is touched concurrently. Only the UI-touching step 6 stays on the
+                // UI thread, after this await resumes on it.
+                await Task.Run(async () =>
                 {
-                    _crypto.MarkUsersDirty(result.DeviceListChanged);
-                    await _crypto.UpdateDeviceKeysAsync(result.DeviceListChanged);
-                }
-                foreach (var left in result.DeviceListLeft)
-                {
-                    try { _db.DeleteDevicesForUser(left); } catch { }
-                }
-
-                // 2. To-device messages (Olm) carry room keys + secrets. Returns rooms that gained
-                //    a Megolm session, so we can retry their stored ciphertexts.
-                HashSet<string> newKeyRooms = await _crypto.HandleToDeviceEventsAsync(result.ToDeviceEvents);
-
-                // 3. Decrypt the encrypted timeline events from this sync.
-                foreach (var enc in result.EncryptedEvents)
-                {
-                    if (DecryptAndStore(enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
-                        result.ChangedRooms.Add(enc.RoomId);
-                }
-
-                // 4. Retry any earlier undecryptable rows in rooms that just got a key.
-                if (newKeyRooms != null)
-                {
-                    foreach (var roomId in newKeyRooms)
+                    // 1. Device-list deltas.
+                    if (result.DeviceListChanged.Count > 0)
                     {
-                        if (RetryDecryptRoom(roomId))
-                            result.ChangedRooms.Add(roomId);
+                        _crypto.MarkUsersDirty(result.DeviceListChanged);
+                        await _crypto.UpdateDeviceKeysAsync(result.DeviceListChanged);
                     }
-                }
+                    foreach (var left in result.DeviceListLeft)
+                    {
+                        try { _db.DeleteDevicesForUser(left); } catch { }
+                    }
 
-                // 5. Replenish one-time keys when the server reports a low count.
-                if (result.OneTimeKeyCount.HasValue)
-                    await _crypto.EnsureOneTimeKeysAsync(result.OneTimeKeyCount.Value);
+                    // 2. To-device messages (Olm) carry room keys + secrets. Returns rooms that gained
+                    //    a Megolm session, so we can retry their stored ciphertexts.
+                    HashSet<string> newKeyRooms = await _crypto.HandleToDeviceEventsAsync(result.ToDeviceEvents);
+
+                    // 3. Decrypt the encrypted timeline events from this sync.
+                    foreach (var enc in result.EncryptedEvents)
+                    {
+                        if (DecryptAndStore(enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
+                            result.ChangedRooms.Add(enc.RoomId);
+                    }
+
+                    // 4. Retry any earlier undecryptable rows in rooms that just got a key.
+                    if (newKeyRooms != null)
+                    {
+                        foreach (var roomId in newKeyRooms)
+                        {
+                            if (RetryDecryptRoom(roomId))
+                                result.ChangedRooms.Add(roomId);
+                        }
+                    }
+
+                    // 5. Replenish one-time keys when the server reports a low count.
+                    if (result.OneTimeKeyCount.HasValue)
+                        await _crypto.EnsureOneTimeKeysAsync(result.OneTimeKeyCount.Value);
+                });
 
                 // 6. One-time nudge: if the server holds a backup we haven't unlocked, offer recovery.
+                //    UI work — runs on the UI thread (the await above resumed here).
                 if (!_recoveryPromptShown && _backup != null && _backup.ExistsButLocked)
                 {
                     _recoveryPromptShown = true;
@@ -118,6 +129,12 @@ namespace UniMatrix
                     RecoveryProgress.Visibility = Windows.UI.Xaml.Visibility.Collapsed;
                     RecoveryPanel.Visibility = Windows.UI.Xaml.Visibility.Visible;
                 }
+            }
+            catch (Exception ex)
+            {
+                App.Log("CRYPTO: ProcessCryptoSyncAsync error: " + ex.Message);
+            }
+        }
             }
             catch (Exception ex)
             {

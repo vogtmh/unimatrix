@@ -1520,8 +1520,10 @@ namespace UniMatrix
 
                     // Process encryption: device-list refreshes, to-device room keys, decrypting
                     // new encrypted events and retrying ones whose key just arrived, OTK top-up.
-                    // Runs on the UI thread (the await resumed here); it may add decrypted rooms to
-                    // result.ChangedRooms so the refresh below repaints them.
+                    // The heavy native libolm work runs on a background thread (see
+                    // ProcessCryptoSyncAsync) to keep the UI responsive; the await resumes here on
+                    // the UI thread. It may add decrypted rooms to result.ChangedRooms so the
+                    // refresh below repaints them.
                     await ProcessCryptoSyncAsync(result);
 
                     // Deliver any WebRTC call signalling events to the CallService. We're already
