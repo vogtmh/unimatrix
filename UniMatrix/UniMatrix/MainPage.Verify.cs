@@ -1,9 +1,9 @@
 using System;
+using System.Threading.Tasks;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Media;
 using UniMatrix.Services;
-
 namespace UniMatrix
 {
     public sealed partial class MainPage
@@ -74,6 +74,7 @@ namespace UniMatrix
             VerifyProgress.IsActive = false;
             VerifyStatusText.Text = ok ? "Verified \u2713\n" + msg : "Verification failed\n" + msg;
             VerifyCloseButton.Visibility = Visibility.Visible;
+            VerifyCancelButton.Visibility = Visibility.Collapsed;
             VerifyStatusPanel.Visibility = Visibility.Visible;
             VerifyOverlay.Visibility = Visibility.Visible;
 
@@ -95,6 +96,7 @@ namespace UniMatrix
             VerifyStatusText.Text = text;
             VerifyProgress.IsActive = true;
             VerifyCloseButton.Visibility = Visibility.Collapsed;
+            VerifyCancelButton.Visibility = Visibility.Visible;
             VerifyStatusPanel.Visibility = Visibility.Visible;
             VerifyOverlay.Visibility = Visibility.Visible;
         }
@@ -167,6 +169,25 @@ namespace UniMatrix
         private void VerifyCloseButton_Click(object sender, RoutedEventArgs e)
         {
             CloseVerifyOverlay();
+        }
+
+        /// <summary>Cancels an in-progress verification (e.g. while waiting for the other device) and
+        /// closes the overlay. Also used by the hardware Back button.</summary>
+        private async void VerifyCancelButton_Click(object sender, RoutedEventArgs e)
+        {
+            await CancelActiveVerificationAsync();
+        }
+
+        /// <summary>Sends a cancel for the current transaction (if any) and dismisses the overlay.</summary>
+        private async Task CancelActiveVerificationAsync()
+        {
+            string txn = _verifyTxnId;
+            CloseVerifyOverlay();
+            if (_verify != null && !string.IsNullOrEmpty(txn))
+            {
+                try { await _verify.CancelAsync(txn, "m.user", "cancelled"); }
+                catch (Exception ex) { App.Log("VERIFY: cancel failed: " + ex.Message); }
+            }
         }
     }
 }

@@ -1299,6 +1299,12 @@
                                 Visibility="Collapsed">
                             <TextBlock Text="Close" HorizontalAlignment="Center" FontSize="15" />
                         </Button>
+                        <Button x:Name="VerifyCancelButton" Click="VerifyCancelButton_Click" Margin="0,18,0,0"
+                                HorizontalAlignment="Stretch" Padding="16,14"
+                                Background="#3A1414" Foreground="#FF6B6B" BorderThickness="0"
+                                Visibility="Collapsed">
+                            <TextBlock Text="Cancel" HorizontalAlignment="Center" FontSize="15" />
+                        </Button>
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>

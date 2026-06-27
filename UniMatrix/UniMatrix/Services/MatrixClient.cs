@@ -485,58 +485,15 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Deletes (signs out) a session. The endpoint is guarded by user-interactive auth: the
-        /// first call returns a 401 carrying a session id, then we resubmit with the account
-        /// password. Throws <see cref="MatrixException"/> if the deletion ultimately fails.
+        /// Deletes (signs out) a single session. Routes through the same POST /delete_devices
+        /// endpoint as the bulk path: a DELETE /devices/{id} with a request body is rejected by
+        /// matrix.org with M_UNRECOGNIZED (the WinRT HTTP stack's DELETE-with-body isn't recognised
+        /// as a valid route), whereas the POST form is accepted just like every other POST flow.
+        /// Guarded by user-interactive auth. Throws <see cref="MatrixException"/> on failure.
         /// </summary>
-        public async Task DeleteDeviceAsync(string deviceId, string password)
+        public Task DeleteDeviceAsync(string deviceId, string password)
         {
-            string path = "/_matrix/client/r0/devices/" + Uri.EscapeDataString(deviceId) +
-                          "?access_token=" + Uri.EscapeDataString(_accessToken);
-            var uri = new Uri(_baseUrl + path);
-
-            // First attempt with no auth dict — expected to 401 with a UIA session id.
-            var first = await SendDeleteAsync(uri, new JsonObject());
-            if (first.Item1) return;
-
-            string session = null;
-            try
-            {
-                JsonObject info;
-                if (JsonObject.TryParse(first.Item2, out info)) session = GetString(info, "session");
-            }
-            catch { }
-
-            var auth = new JsonObject
-            {
-                ["type"] = JsonValue.CreateStringValue("m.login.password"),
-                ["identifier"] = new JsonObject
-                {
-                    ["type"] = JsonValue.CreateStringValue("m.id.user"),
-                    ["user"] = JsonValue.CreateStringValue(UserId ?? "")
-                },
-                ["password"] = JsonValue.CreateStringValue(password ?? "")
-            };
-            if (!string.IsNullOrEmpty(session)) auth["session"] = JsonValue.CreateStringValue(session);
-
-            var second = await SendDeleteAsync(uri, new JsonObject { ["auth"] = auth });
-            if (second.Item1) return;
-
-            // Surface a useful error message from the server's JSON body.
-            string message = "Couldn't remove the session.";
-            try
-            {
-                JsonObject err;
-                if (JsonObject.TryParse(second.Item2, out err))
-                {
-                    string detail = GetString(err, "error");
-                    string code = GetString(err, "errcode");
-                    if (!string.IsNullOrEmpty(detail))
-                        message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
-                }
-            }
-            catch { }
-            throw new MatrixException(message, 0, 0);
+            return DeleteDevicesAsync(new[] { deviceId }, password);
         }
 
         /// <summary>
@@ -554,10 +511,11 @@ namespace UniMatrix.Services
             string path = "/_matrix/client/r0/delete_devices?access_token=" +
                           Uri.EscapeDataString(_accessToken);
             var uri = new Uri(_baseUrl + path);
+            App.Log("DEVICES: delete_devices POST count=" + ids.Count);
 
             // First attempt with just the device list — expected to 401 with a UIA session id.
             var first = await SendPostRawAsync(uri, new JsonObject { ["devices"] = ids });
-            if (first.Item1) return;
+            if (first.Item1) { App.Log("DEVICES: delete_devices succeeded (no UIA)"); return; }
 
             string session = null;
             try
@@ -566,6 +524,7 @@ namespace UniMatrix.Services
                 if (JsonObject.TryParse(first.Item2, out info)) session = GetString(info, "session");
             }
             catch { }
+            App.Log("DEVICES: delete_devices UIA session=" + (string.IsNullOrEmpty(session) ? "<none>" : "ok"));
 
             var auth = new JsonObject
             {
@@ -580,7 +539,7 @@ namespace UniMatrix.Services
             if (!string.IsNullOrEmpty(session)) auth["session"] = JsonValue.CreateStringValue(session);
 
             var second = await SendPostRawAsync(uri, new JsonObject { ["devices"] = ids, ["auth"] = auth });
-            if (second.Item1) return;
+            if (second.Item1) { App.Log("DEVICES: delete_devices succeeded after UIA"); return; }
 
             string message = "Couldn't remove the sessions.";
             try
@@ -607,20 +566,11 @@ namespace UniMatrix.Services
             using (var resp = await _http.PostAsync(uri, content))
             {
                 string text = await resp.Content.ReadAsStringAsync();
-                return Tuple.Create(resp.IsSuccessStatusCode, text);
-            }
-        }
-
-        /// <summary>Sends a DELETE with an optional JSON body. Returns (success, responseBody).</summary>
-        private async Task<Tuple<bool, string>> SendDeleteAsync(Uri uri, JsonObject body)
-        {
-            var request = new HttpRequestMessage(HttpMethod.Delete, uri);
-            if (body != null)
-                request.Content = new HttpStringContent(body.Stringify(),
-                    Windows.Storage.Streams.UnicodeEncoding.Utf8, "application/json");
-            using (var resp = await _http.SendRequestAsync(request))
-            {
-                string text = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode && (int)resp.StatusCode != 401)
+                {
+                    string snippet = text == null ? "" : (text.Length > 200 ? text.Substring(0, 200) : text);
+                    App.Log("DEVICES: POST " + (int)resp.StatusCode + " " + uri.AbsolutePath + " :: " + snippet);
+                }
                 return Tuple.Create(resp.IsSuccessStatusCode, text);
             }
         }

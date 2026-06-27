@@ -304,6 +304,15 @@ namespace UniMatrix
                 return;
             }
 
+            // The verification overlay sits above everything else; Back cancels the in-progress
+            // verification and dismisses it.
+            if (VerifyOverlay != null && VerifyOverlay.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                await CancelActiveVerificationAsync();
+                return;
+            }
+
             // The full-screen sessions manager overlays the Settings view.
             if (SessionsOverlay != null && SessionsOverlay.Visibility == Visibility.Visible)
             {
