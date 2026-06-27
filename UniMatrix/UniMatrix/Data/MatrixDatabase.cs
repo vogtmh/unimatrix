@@ -208,6 +208,25 @@ namespace UniMatrix.Data
         }
 
         /// <summary>
+        /// Updates a room's last-message preview, but only when the supplied timestamp is at least
+        /// as new as the stored last_ts. Used after an encrypted event is decrypted: the encrypted
+        /// placeholder preview ("Encrypted message") is replaced with the real text, while older
+        /// messages that decrypt later (retry path) never clobber a newer preview.
+        /// </summary>
+        public void SetRoomPreviewIfLatest(string roomId, long ts, string preview)
+        {
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = "UPDATE rooms SET last_preview = @p WHERE id = @id AND last_ts <= @ts";
+                cmd.Parameters.AddWithValue("@p", (object)preview ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@ts", ts);
+                cmd.Parameters.AddWithValue("@id", roomId);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        /// <summary>
         /// Sets a room's name ONLY when it doesn't already have one. Used to give nameless rooms
         /// (notably direct messages) a sensible fallback derived from their members, without ever
         /// overwriting a real m.room.name that was set by the room.

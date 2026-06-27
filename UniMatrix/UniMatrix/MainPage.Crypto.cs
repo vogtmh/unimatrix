@@ -252,6 +252,11 @@ namespace UniMatrix
                 Mxc = mxc,
                 IsLocalEcho = false
             });
+
+            // Replace the "🔒 Encrypted message" room-list preview with the decrypted text, but only
+            // when this is the latest event (so older messages decrypting later don't clobber it).
+            string preview = msgType == "m.image" ? "\uD83D\uDCF7 Photo" : body;
+            _db.SetRoomPreviewIfLatest(roomId, ts, preview);
             return true;
         }
 
