@@ -267,9 +267,21 @@
     with external_dependencies\olm-build\build-olm-uwp.ps1 on the Windows box and harvest to
     libs\olm\ARM. ARM is the
     only arch harvested so far (the Lumia 930 target); add x86/x64 groups as those are built.
+
+    MSVCP140_APP.dll / VCRUNTIME140_APP.dll are the appcontainer VC++ runtime that olm.dll links
+    against (the UWP toolchain forbids static-CRT DLLs, MSB8024). We ship them APP-LOCAL here so
+    the loader resolves them from the package folder and we don't depend on the
+    Microsoft.VCLibs.140.00 framework package being installed on the device (which fails to load
+    with ERROR_MOD_NOT_FOUND/126 on Windows 10 Mobile). Harvest them with the script's -HarvestCrt.
   -->
   <ItemGroup Condition="'$(Platform)' == 'ARM'">
     <Content Include="libs\olm\ARM\olm.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libs\olm\ARM\MSVCP140_APP.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libs\olm\ARM\VCRUNTIME140_APP.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

@@ -43,20 +43,20 @@
 .PARAMETER Harvest
     Copy the built olm.dll into the UniMatrix project's libs\olm\<Platform>\ folder.
 
-.PARAMETER SharedCrt
-    Link the VC++ runtime dynamically (/MD), which makes olm.dll depend on the
-    Microsoft.VCLibs.140.00 framework package (MSVCP140_APP.dll / VCRUNTIME140_APP.dll) being
-    deployed on the device. By default this is OFF and the CRT is linked STATICALLY (/MT) so
-    olm.dll is self-contained and loads in the appcontainer without any framework package. Use
-    this only if you specifically want the dynamic-CRT build.
+.PARAMETER HarvestCrt
+    Copy the appcontainer VC++ runtime DLLs (MSVCP140_APP.dll / VCRUNTIME140_APP.dll) for the
+    target architecture next to olm.dll, extracted from the VCLibs extension-SDK appx. The
+    UWP toolchain forbids static-CRT DLLs (MSB8024), so olm.dll always needs these at runtime;
+    shipping them app-local avoids requiring the Microsoft.VCLibs.140.00 framework package on
+    the device (which is hard to deploy on Windows 10 Mobile).
 
 .PARAMETER HarvestDir
     Override the harvest destination root. Defaults to the project libs\olm folder resolved
     relative to this script (..\..\UniMatrix\UniMatrix\libs\olm).
 
 .EXAMPLE
-    # One-shot: clone, build ARM/Release, harvest into the project.
-    .\build-olm-uwp.ps1 -Clone -Build -Harvest
+    # One-shot: clone, build ARM/Release, harvest olm.dll + the app-local VC++ runtime.
+    .\build-olm-uwp.ps1 -Clone -Build -Harvest -HarvestCrt
 
 .EXAMPLE
     # Rebuild after a source update and re-harvest.
@@ -72,7 +72,7 @@ param(
     [switch]$Clone,
     [switch]$Build,
     [switch]$Harvest,
-    [switch]$SharedCrt,
+    [switch]$HarvestCrt,
     [string]$HarvestDir
 )
 
@@ -84,9 +84,9 @@ $olmUrl = "https://gitlab.matrix.org/matrix-org/olm.git"
 
 function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
-if (-not ($Clone -or $Build -or $Harvest)) {
-    Write-Host "Nothing to do. Pass -Clone and/or -Build and/or -Harvest." -ForegroundColor Yellow
-    Write-Host "Typical first run:  .\build-olm-uwp.ps1 -Clone -Build -Harvest"
+if (-not ($Clone -or $Build -or $Harvest -or $HarvestCrt)) {
+    Write-Host "Nothing to do. Pass -Clone and/or -Build and/or -Harvest and/or -HarvestCrt." -ForegroundColor Yellow
+    Write-Host "Typical first run:  .\build-olm-uwp.ps1 -Clone -Build -Harvest -HarvestCrt"
     return
 }
 
@@ -136,28 +136,25 @@ if ($Build) {
         "-DOLM_TESTS=OFF"
     )
 
-    # CRT linkage. By default link the CRT STATICALLY (/MT) so olm.dll embeds the C/C++
-    # runtime and carries NO dependency on the Microsoft.VCLibs.140.00 framework package
-    # (MSVCP140_APP.dll / VCRUNTIME140_APP.dll). On Windows 10 Mobile that framework package is
-    # awkward to deploy, and a missing one makes olm.dll fail to load in the appcontainer with
-    # ERROR_MOD_NOT_FOUND (126) -> surfaced as "Unresolved P/Invoke". libolm is pure
-    # computation (no OS calls), so the static-CRT functions it pulls in are appcontainer-safe.
-    # CMAKE_POLICY_DEFAULT_CMP0091=NEW activates the CMAKE_MSVC_RUNTIME_LIBRARY abstraction.
-    if ($SharedCrt) {
-        Write-Host "CRT: dynamic (/MD) -> requires Microsoft.VCLibs.140.00 on the device." -ForegroundColor Yellow
-        $cmakeArgs += "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
-        $cmakeArgs += "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL"
-    }
-    else {
-        Write-Host "CRT: static (/MT) -> self-contained olm.dll, no VCLibs dependency." -ForegroundColor Green
-        $cmakeArgs += "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW"
-        $cmakeArgs += "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
-    }
+    # CRT linkage: the VC++ runtime is linked DYNAMICALLY (/MD). The UWP/WindowsStore toolchain
+    # does NOT support static-CRT DLLs (MSB8024), so /MT is not an option. The dynamic build
+    # makes olm.dll depend on the appcontainer runtime (MSVCP140_APP.dll / VCRUNTIME140_APP.dll).
+    # Rather than rely on the Microsoft.VCLibs.140.00 framework package being installed on the
+    # device (hard to deploy on Windows 10 Mobile -> ERROR_MOD_NOT_FOUND/126), we ship those two
+    # runtime DLLs APP-LOCALLY: the -HarvestCrt step copies them next to olm.dll and the csproj
+    # packages them as Content, so the appcontainer loader resolves them from the install folder.
+    Write-Host "CRT: dynamic (/MD). Runtime DLLs are shipped app-local via -HarvestCrt." -ForegroundColor Cyan
 
     cmake @cmakeArgs
+    if ($LASTEXITCODE -ne 0) { throw "CMake configure failed (exit $LASTEXITCODE)." }
 
     Write-Step "Building"
+    # Remove any stale output so a failed build cannot masquerade as success below.
+    $staleDll = Join-Path $buildDir "$Configuration\olm.dll"
+    if (Test-Path $staleDll) { Remove-Item $staleDll -Force }
+
     cmake --build $buildDir --config $Configuration
+    if ($LASTEXITCODE -ne 0) { throw "Build FAILED (exit $LASTEXITCODE). olm.dll was NOT produced." }
 
     $dll = Join-Path $buildDir "$Configuration\olm.dll"
     if (-not (Test-Path $dll)) {
@@ -188,6 +185,52 @@ if ($Harvest) {
     Copy-Item $dll (Join-Path $destDir "olm.dll") -Force
     Write-Step "Harvested olm.dll -> $destDir"
     Write-Host "Now ensure UniMatrix.csproj has the matching <Content> item for libs\olm\$Platform\olm.dll." -ForegroundColor Yellow
+}
+
+if ($HarvestCrt) {
+    if (-not $HarvestDir) {
+        $HarvestDir = Join-Path $root "..\..\UniMatrix\UniMatrix\libs\olm"
+    }
+    $destDir = Join-Path $HarvestDir $Platform
+    New-Item -ItemType Directory -Force -Path $destDir | Out-Null
+
+    # The appcontainer VC++ runtime DLLs (the *_APP variants) ship inside the VCLibs extension
+    # SDK appx. We extract MSVCP140_APP.dll + VCRUNTIME140_APP.dll for the target arch and place
+    # them next to olm.dll so they are packaged app-local (no framework dependency required).
+    Write-Step "Harvesting app-local VC++ runtime ($Platform)"
+
+    $archMap = @{ "ARM" = "arm"; "Win32" = "x86"; "x64" = "x64" }
+    $arch = $archMap[$Platform]
+
+    $vclibsRoots = @(
+        "C:\Program Files (x86)\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Retail\$Platform",
+        "C:\Program Files (x86)\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs\14.0\Appx\Debug\$Platform"
+    )
+    $appx = $null
+    foreach ($r in $vclibsRoots) {
+        $cand = Join-Path $r "Microsoft.VCLibs.140.00.appx"
+        if (Test-Path $cand) { $appx = $cand; break }
+    }
+    if (-not $appx) {
+        throw "Could not find Microsoft.VCLibs.140.00.appx for $Platform under the Windows SDK ExtensionSDKs. Searched:`n  $($vclibsRoots -join "`n  ")"
+    }
+
+    $tmp = Join-Path $env:TEMP ("vclibs_" + [System.IO.Path]::GetRandomFileName())
+    $zip = "$tmp.zip"
+    Copy-Item $appx $zip -Force
+    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+
+    foreach ($name in @("MSVCP140_APP.dll", "VCRUNTIME140_APP.dll")) {
+        $found = Get-ChildItem -Path $tmp -Recurse -Filter $name | Select-Object -First 1
+        if (-not $found) { throw "$name not found inside $appx." }
+        Copy-Item $found.FullName (Join-Path $destDir $name) -Force
+        Write-Host "  + $name" -ForegroundColor Green
+    }
+
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Step "Harvested app-local CRT -> $destDir"
+    Write-Host "Ensure UniMatrix.csproj packages MSVCP140_APP.dll and VCRUNTIME140_APP.dll as <Content>." -ForegroundColor Yellow
 }
 
 Write-Host "Done." -ForegroundColor Green
