@@ -36,6 +36,10 @@ namespace UniMatrix.Services
         private string _baseUrl;
         private string _accessToken;
 
+        // Cached OAuth 2.0 (MSC2965) account-management URL; "" once checked and absent.
+        private bool _accountMgmtChecked;
+        private string _accountManagementUri;
+
         public MatrixClient()
         {
             _http.DefaultRequestHeaders.UserAgent.TryParseAdd("UniMatrix/1.0");
@@ -485,15 +489,127 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Deletes (signs out) a single session. Routes through the same POST /delete_devices
-        /// endpoint as the bulk path: a DELETE /devices/{id} with a request body is rejected by
-        /// matrix.org with M_UNRECOGNIZED (the WinRT HTTP stack's DELETE-with-body isn't recognised
-        /// as a valid route), whereas the POST form is accepted just like every other POST flow.
-        /// Guarded by user-interactive auth. Throws <see cref="MatrixException"/> on failure.
+        /// On next-gen-auth (OAuth 2.0 / MSC2965) homeservers — e.g. matrix.org via the Matrix
+        /// Authentication Service — the Client-Server password device-delete flow is disabled and
+        /// sessions are managed through the server's account-management web page instead. Returns
+        /// that page's URL when the server advertises OAuth 2.0 auth, or null for a legacy
+        /// password-auth homeserver (in which case the in-app DELETE flow is used). Cached.
         /// </summary>
-        public Task DeleteDeviceAsync(string deviceId, string password)
+        public async Task<string> GetAccountManagementUriAsync()
         {
-            return DeleteDevicesAsync(new[] { deviceId }, password);
+            if (_accountMgmtChecked)
+                return string.IsNullOrEmpty(_accountManagementUri) ? null : _accountManagementUri;
+            _accountMgmtChecked = true;
+            _accountManagementUri = "";
+
+            // Preferred: GET /_matrix/client/v1/auth_metadata (spec v1.15+) exposes the OAuth 2.0
+            // server metadata, including account_management_uri.
+            try
+            {
+                var uri = new Uri(_baseUrl + "/_matrix/client/v1/auth_metadata");
+                using (var resp = await _http.GetAsync(uri))
+                {
+                    string text = await resp.Content.ReadAsStringAsync();
+                    JsonObject meta;
+                    if (resp.IsSuccessStatusCode && JsonObject.TryParse(text, out meta))
+                    {
+                        string amu = GetString(meta, "account_management_uri");
+                        if (!string.IsNullOrEmpty(amu))
+                        {
+                            _accountManagementUri = amu;
+                            App.Log("DEVICES: OAuth account_management_uri=" + amu);
+                            return amu;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { App.Log("DEVICES: auth_metadata lookup failed: " + ex.Message); }
+
+            // Fallback: the .well-known document's org.matrix.msc2965.authentication.account field.
+            try
+            {
+                var uri = new Uri(_baseUrl + "/.well-known/matrix/client");
+                using (var resp = await _http.GetAsync(uri))
+                {
+                    string text = await resp.Content.ReadAsStringAsync();
+                    JsonObject wk;
+                    if (resp.IsSuccessStatusCode && JsonObject.TryParse(text, out wk) &&
+                        wk.ContainsKey("org.matrix.msc2965.authentication"))
+                    {
+                        var auth = wk.GetNamedObject("org.matrix.msc2965.authentication");
+                        string acc = GetString(auth, "account");
+                        if (!string.IsNullOrEmpty(acc))
+                        {
+                            _accountManagementUri = acc;
+                            App.Log("DEVICES: OAuth account uri (well-known)=" + acc);
+                            return acc;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { App.Log("DEVICES: well-known lookup failed: " + ex.Message); }
+
+            App.Log("DEVICES: server uses legacy password auth (no account_management_uri)");
+            return null;
+        }
+
+        /// <summary>
+        /// Deletes (signs out) a single session on a legacy password-auth homeserver via
+        /// DELETE /devices/{id}. Guarded by user-interactive auth: the first call returns a 401
+        /// carrying a UIA session id, then we resubmit with the account password. On OAuth 2.0
+        /// servers use <see cref="GetAccountManagementUriAsync"/> instead — this endpoint is
+        /// disabled there. Throws <see cref="MatrixException"/> if the deletion ultimately fails.
+        /// </summary>
+        public async Task DeleteDeviceAsync(string deviceId, string password)
+        {
+            string path = "/_matrix/client/r0/devices/" + Uri.EscapeDataString(deviceId) +
+                          "?access_token=" + Uri.EscapeDataString(_accessToken);
+            var uri = new Uri(_baseUrl + path);
+            App.Log("DEVICES: DELETE /devices/" + deviceId);
+
+            // First attempt with no auth dict — expected to 401 with a UIA session id.
+            var first = await SendDeleteAsync(uri, new JsonObject());
+            if (first.Item1) { App.Log("DEVICES: delete succeeded (no UIA)"); return; }
+
+            string session = null;
+            try
+            {
+                JsonObject info;
+                if (JsonObject.TryParse(first.Item2, out info)) session = GetString(info, "session");
+            }
+            catch { }
+            App.Log("DEVICES: delete UIA session=" + (string.IsNullOrEmpty(session) ? "<none>" : "ok"));
+
+            var auth = new JsonObject
+            {
+                ["type"] = JsonValue.CreateStringValue("m.login.password"),
+                ["identifier"] = new JsonObject
+                {
+                    ["type"] = JsonValue.CreateStringValue("m.id.user"),
+                    ["user"] = JsonValue.CreateStringValue(UserId ?? "")
+                },
+                ["password"] = JsonValue.CreateStringValue(password ?? "")
+            };
+            if (!string.IsNullOrEmpty(session)) auth["session"] = JsonValue.CreateStringValue(session);
+
+            var second = await SendDeleteAsync(uri, new JsonObject { ["auth"] = auth });
+            if (second.Item1) { App.Log("DEVICES: delete succeeded after UIA"); return; }
+
+            // Surface a useful error message from the server's JSON body.
+            string message = "Couldn't remove the session.";
+            try
+            {
+                JsonObject err;
+                if (JsonObject.TryParse(second.Item2, out err))
+                {
+                    string detail = GetString(err, "error");
+                    string code = GetString(err, "errcode");
+                    if (!string.IsNullOrEmpty(detail))
+                        message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
+                }
+            }
+            catch { }
+            throw new MatrixException(message, 0, 0);
         }
 
         /// <summary>
@@ -570,6 +686,26 @@ namespace UniMatrix.Services
                 {
                     string snippet = text == null ? "" : (text.Length > 200 ? text.Substring(0, 200) : text);
                     App.Log("DEVICES: POST " + (int)resp.StatusCode + " " + uri.AbsolutePath + " :: " + snippet);
+                }
+                return Tuple.Create(resp.IsSuccessStatusCode, text);
+            }
+        }
+
+        /// <summary>Sends a DELETE with an optional JSON body. Returns (success, responseBody)
+        /// without throwing on non-success status codes (used for the UIA challenge flow).</summary>
+        private async Task<Tuple<bool, string>> SendDeleteAsync(Uri uri, JsonObject body)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Delete, uri);
+            if (body != null)
+                request.Content = new HttpStringContent(body.Stringify(),
+                    Windows.Storage.Streams.UnicodeEncoding.Utf8, "application/json");
+            using (var resp = await _http.SendRequestAsync(request))
+            {
+                string text = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode && (int)resp.StatusCode != 401)
+                {
+                    string snippet = text == null ? "" : (text.Length > 200 ? text.Substring(0, 200) : text);
+                    App.Log("DEVICES: DELETE " + (int)resp.StatusCode + " " + uri.AbsolutePath + " :: " + snippet);
                 }
                 return Tuple.Create(resp.IsSuccessStatusCode, text);
             }
