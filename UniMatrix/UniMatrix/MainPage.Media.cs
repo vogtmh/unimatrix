@@ -97,6 +97,12 @@ namespace UniMatrix
 
             try
             {
+                if (RoomNeedsEncryption(roomId))
+                {
+                    await SendEncryptedImageAsync(roomId, file, buffer, contentType, width, height, size, echo);
+                    return;
+                }
+
                 string mxc = await _client.UploadMediaAsync(buffer, contentType, file.Name);
                 if (string.IsNullOrEmpty(mxc))
                 {
@@ -117,6 +123,53 @@ namespace UniMatrix
                 echo.Body = file.Name + "  (not sent)";
                 await ShowErrorAsync("Could not send image: " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Encrypts a picked image, uploads the ciphertext, persists its decryption key against the
+        /// resulting mxc, and sends an m.image event carrying the encrypted-attachment "file" block
+        /// (wrapped in Megolm by <see cref="SendRoomMessageAsync"/>). Mirrors the plaintext path.
+        /// </summary>
+        private async Task SendEncryptedImageAsync(string roomId, StorageFile file,
+            Windows.Storage.Streams.IBuffer buffer, string contentType, int width, int height, ulong size, Message echo)
+        {
+            byte[] plain;
+            Windows.Security.Cryptography.CryptographicBuffer.CopyToByteArray(buffer, out plain);
+
+            var enc = Services.AttachmentCrypto.Encrypt(plain);
+            var cipherBuf = Windows.Security.Cryptography.CryptographicBuffer.CreateFromByteArray(enc.Ciphertext);
+
+            string mxc = await _client.UploadMediaAsync(cipherBuf, "application/octet-stream", null);
+            if (string.IsNullOrEmpty(mxc))
+            {
+                echo.Body = file.Name + "  (not sent)";
+                await ShowErrorAsync("Could not upload image.");
+                return;
+            }
+
+            // Fill in the mxc and persist the key so we (and the media layer) can decrypt later.
+            enc.FileInfo["url"] = Windows.Data.Json.JsonValue.CreateStringValue(mxc);
+            _db.SaveAttachmentKey(mxc, enc.FileInfo.Stringify());
+
+            // Our own decrypted copy is already on disk; bind it to the mxc for instant display.
+            await _media.CacheLocalFileForMxcAsync(file, mxc);
+
+            var info = new Windows.Data.Json.JsonObject();
+            if (!string.IsNullOrEmpty(contentType)) info["mimetype"] = Windows.Data.Json.JsonValue.CreateStringValue(contentType);
+            if (width > 0) info["w"] = Windows.Data.Json.JsonValue.CreateNumberValue(width);
+            if (height > 0) info["h"] = Windows.Data.Json.JsonValue.CreateNumberValue(height);
+            if (size > 0) info["size"] = Windows.Data.Json.JsonValue.CreateNumberValue(size);
+
+            var content = new Windows.Data.Json.JsonObject
+            {
+                ["msgtype"] = Windows.Data.Json.JsonValue.CreateStringValue("m.image"),
+                ["body"] = Windows.Data.Json.JsonValue.CreateStringValue(string.IsNullOrEmpty(file.Name) ? "image" : file.Name),
+                ["file"] = enc.FileInfo,
+                ["info"] = info
+            };
+
+            await SendRoomMessageAsync(roomId, content);
+            // The confirmed m.room.encrypted event arrives via /sync, which removes this echo.
         }
 
         /// <summary>

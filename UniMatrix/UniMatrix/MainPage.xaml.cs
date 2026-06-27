@@ -217,6 +217,10 @@ namespace UniMatrix
                 _client.UserId = _settings.UserId;
                 _syncProcessor = new SyncProcessor(_db, _settings.UserId);
 
+                // Bring up end-to-end encryption (loads/creates the Olm account) before syncing so
+                // the first sync's to-device room keys and encrypted events can be processed.
+                await EnsureCryptoAsync();
+
                 // The splash only needs to cover the brief local DB/cache load so the login form
                 // never flashes. It stays visible (background only, no pulsing animation) for the
                 // few milliseconds until the cached rooms are ready.
@@ -358,6 +362,7 @@ namespace UniMatrix
                     existing.IsDirect = incoming.IsDirect;
                     existing.IsInvite = incoming.IsInvite;
                     existing.Inviter = incoming.Inviter;
+                    existing.IsEncrypted = _db.IsRoomEncrypted(incoming.Id);
                     if (existing.AvatarMxc != incoming.AvatarMxc)
                     {
                         // Avatar changed: drop the resolved URL so it gets re-fetched.
@@ -370,6 +375,7 @@ namespace UniMatrix
                 }
                 else
                 {
+                    incoming.IsEncrypted = _db.IsRoomEncrypted(incoming.Id);
                     if (i <= Rooms.Count) Rooms.Insert(i, incoming);
                     else Rooms.Add(incoming);
                 }
@@ -602,6 +608,7 @@ namespace UniMatrix
             _currentRoomId = room.Id;
             ChatRoomName.Text = room.DisplayName;
             ChatRoomMembers.Text = room.MemberText;
+            ChatEncryptedIcon.Visibility = room.IsEncrypted ? Visibility.Visible : Visibility.Collapsed;
 
             // Clear unread locally and tell the server we've read the room (a read receipt resets
             // the server-side notification_count, so the badge doesn't reappear on the next sync).
@@ -1348,7 +1355,12 @@ namespace UniMatrix
 
             try
             {
-                await _client.SendTextMessageAsync(roomId, text);
+                var content = new Windows.Data.Json.JsonObject
+                {
+                    ["msgtype"] = Windows.Data.Json.JsonValue.CreateStringValue("m.text"),
+                    ["body"] = Windows.Data.Json.JsonValue.CreateStringValue(text)
+                };
+                await SendRoomMessageAsync(roomId, content);
                 // The confirmed event arrives via /sync, which removes this echo.
             }
             catch (Exception ex)
@@ -1388,6 +1400,12 @@ namespace UniMatrix
                 InfoAvatarImage.Visibility = Visibility.Collapsed;
                 InfoAvatarInitial.Visibility = Visibility.Visible;
             }
+
+            // Encryption: show a status row when on, or an "enable" button when off and supported.
+            bool encrypted = room.IsEncrypted;
+            bool cryptoOk = _crypto != null && _crypto.Available;
+            InfoEncryptedRow.Visibility = encrypted ? Visibility.Visible : Visibility.Collapsed;
+            EnableEncryptionButton.Visibility = (!encrypted && cryptoOk) ? Visibility.Visible : Visibility.Collapsed;
 
             ShowView(View.RoomInfo);
         }
@@ -1499,6 +1517,12 @@ namespace UniMatrix
 
                     SetSyncLed(Color.FromArgb(255, 0x4C, 0xD9, 0x64)); // green
                     ClearSyncError();
+
+                    // Process encryption: device-list refreshes, to-device room keys, decrypting
+                    // new encrypted events and retrying ones whose key just arrived, OTK top-up.
+                    // Runs on the UI thread (the await resumed here); it may add decrypted rooms to
+                    // result.ChangedRooms so the refresh below repaints them.
+                    await ProcessCryptoSyncAsync(result);
 
                     // Deliver any WebRTC call signalling events to the CallService. We're already
                     // on the UI thread here (the await resumed on it), which is required because the

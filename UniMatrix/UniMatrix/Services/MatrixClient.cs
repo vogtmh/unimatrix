@@ -202,6 +202,23 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Sends a state event (PUT .../state/{type}/{stateKey}). Used to enable room encryption
+        /// (m.room.encryption). Returns the event_id, or null on failure.
+        /// </summary>
+        public async Task<string> SendStateEventAsync(string roomId, string eventType, JsonObject content, string stateKey = "")
+        {
+            if (string.IsNullOrEmpty(roomId) || string.IsNullOrEmpty(eventType) || content == null)
+                return null;
+
+            string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
+                          "/state/" + Uri.EscapeDataString(eventType) +
+                          "/" + Uri.EscapeDataString(stateKey ?? "");
+
+            var resp = await PutAsync(path, content);
+            return GetString(resp, "event_id");
+        }
+
+        /// <summary>
         /// Uploads raw media bytes to the homeserver's content repository and returns the
         /// resulting mxc:// URI (null on failure). Tries the current v3 endpoint first, then
         /// falls back to the legacy r0 one for older servers. Authentication uses ONLY the
@@ -520,6 +537,131 @@ namespace UniMatrix.Services
             if (!string.IsNullOrEmpty(from))
                 path += "&from=" + Uri.EscapeDataString(from);
             return await GetAsync(path, ct);
+        }
+
+        // ---- End-to-end encryption (keys, to-device, key backup, account data) ----
+
+        /// <summary>A unique transaction id for idempotent PUTs (timestamp + short GUID).</summary>
+        public static string GenerateTxnId()
+        {
+            return "m" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + "_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+        }
+
+        /// <summary>
+        /// Uploads this device's identity keys and/or one-time keys (/keys/upload). Either
+        /// argument may be null when only the other set is being published. Returns the server's
+        /// response, whose one_time_key_counts tells us how many OTKs the server still holds.
+        /// </summary>
+        public async Task<JsonObject> KeysUploadAsync(JsonObject deviceKeys, JsonObject oneTimeKeys)
+        {
+            var body = new JsonObject();
+            if (deviceKeys != null) body["device_keys"] = deviceKeys;
+            if (oneTimeKeys != null) body["one_time_keys"] = oneTimeKeys;
+            return await PostAsync("/_matrix/client/r0/keys/upload", body, requireAuth: true);
+        }
+
+        /// <summary>Downloads device keys for a set of users (/keys/query).</summary>
+        public async Task<JsonObject> KeysQueryAsync(IEnumerable<string> userIds)
+        {
+            var map = new JsonObject();
+            foreach (var uid in userIds)
+            {
+                if (!string.IsNullOrEmpty(uid)) map[uid] = new JsonArray();
+            }
+            var body = new JsonObject { ["device_keys"] = map };
+            return await PostAsync("/_matrix/client/r0/keys/query", body, requireAuth: true);
+        }
+
+        /// <summary>
+        /// Claims one one-time key per requested device (/keys/claim) so we can establish Olm
+        /// sessions with them. <paramref name="oneTimeKeys"/> maps userId -> (deviceId -> algorithm,
+        /// usually "signed_curve25519"). Returns the server response with the claimed keys.
+        /// </summary>
+        public async Task<JsonObject> KeysClaimAsync(JsonObject oneTimeKeys)
+        {
+            var body = new JsonObject { ["one_time_keys"] = oneTimeKeys };
+            return await PostAsync("/_matrix/client/r0/keys/claim", body, requireAuth: true);
+        }
+
+        /// <summary>
+        /// Sends to-device events (/sendToDevice/{type}/{txn}). <paramref name="messages"/> maps
+        /// userId -> (deviceId -> content), with "*" as a deviceId meaning all of a user's devices.
+        /// Used to distribute Megolm room keys wrapped in Olm (m.room.encrypted) and SSSS secrets.
+        /// </summary>
+        public async Task SendToDeviceAsync(string eventType, JsonObject messages)
+        {
+            string txnId = GenerateTxnId();
+            string path = "/_matrix/client/r0/sendToDevice/" + Uri.EscapeDataString(eventType) +
+                          "/" + Uri.EscapeDataString(txnId);
+            var body = new JsonObject { ["messages"] = messages };
+            await PutAsync(path, body);
+        }
+
+        /// <summary>Reads a global account-data value (null if never set / 404).</summary>
+        public async Task<JsonObject> AccountDataGetAsync(string type)
+        {
+            if (string.IsNullOrEmpty(UserId)) return null;
+            try
+            {
+                string path = "/_matrix/client/r0/user/" + Uri.EscapeDataString(UserId) +
+                              "/account_data/" + Uri.EscapeDataString(type) +
+                              "?access_token=" + Uri.EscapeDataString(_accessToken);
+                return await GetAsync(path, CancellationToken.None);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Writes a global account-data value.</summary>
+        public async Task AccountDataPutAsync(string type, JsonObject content)
+        {
+            if (string.IsNullOrEmpty(UserId)) return;
+            string path = "/_matrix/client/r0/user/" + Uri.EscapeDataString(UserId) +
+                          "/account_data/" + Uri.EscapeDataString(type);
+            await PutAsync(path, content);
+        }
+
+        /// <summary>
+        /// Returns the current server-side key backup version metadata (algorithm, auth_data,
+        /// version, count, etag), or null if no backup exists.
+        /// </summary>
+        public async Task<JsonObject> GetBackupVersionAsync()
+        {
+            try
+            {
+                string path = "/_matrix/client/r0/room_keys/version?access_token=" +
+                              Uri.EscapeDataString(_accessToken);
+                return await GetAsync(path, CancellationToken.None);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Creates a new key backup version and returns its version id.</summary>
+        public async Task<string> CreateBackupVersionAsync(string algorithm, JsonObject authData)
+        {
+            var body = new JsonObject
+            {
+                ["algorithm"] = JsonValue.CreateStringValue(algorithm),
+                ["auth_data"] = authData
+            };
+            var resp = await PostAsync("/_matrix/client/r0/room_keys/version", body, requireAuth: true);
+            return GetString(resp, "version");
+        }
+
+        /// <summary>Uploads one room's Megolm session into the backup at the given version.</summary>
+        public async Task BackupKeyPutAsync(string version, string roomId, string sessionId, JsonObject keyData)
+        {
+            string path = "/_matrix/client/r0/room_keys/keys/" + Uri.EscapeDataString(roomId) +
+                          "/" + Uri.EscapeDataString(sessionId) +
+                          "?version=" + Uri.EscapeDataString(version);
+            await PutAsync(path, keyData);
+        }
+
+        /// <summary>Downloads every backed-up Megolm session at the given version.</summary>
+        public async Task<JsonObject> BackupKeysGetAsync(string version)
+        {
+            string path = "/_matrix/client/r0/room_keys/keys?version=" + Uri.EscapeDataString(version) +
+                          "&access_token=" + Uri.EscapeDataString(_accessToken);
+            return await GetAsync(path, CancellationToken.None);
         }
 
         // ---- Media ----

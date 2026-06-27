@@ -51,7 +51,7 @@ param(
     [switch]$RenewCert,
     # Copy the built Org.WebRtc.winmd/.dll + WebRtcScheme.dll into a per-arch app folder.
     [switch]$Harvest,
-    [string]$HarvestDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "UniMatrix\UniMatrix\libs\webrtc"),
+    [string]$HarvestDir = (Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) "UniMatrix\UniMatrix\libs\webrtc"),
     # Fetch + install the .NET Core SDK (needed by the managed PeerCC projects / netstandard2.0).
     # 2.1.526 is the last 2.1.x SDK that still supports VS 15.9 / MSBuild 15 (VS2017). Later
     # patches (e.g. 2.1.818) require MSBuild 16 / VS2019 and will NOT drive our VS2017 build.

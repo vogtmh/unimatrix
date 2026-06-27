@@ -9,8 +9,10 @@ namespace UniMatrix.Data
     /// <summary>
     /// SQLite cache for Matrix chat data: rooms, message timelines, members,
     /// downloaded media paths, and sync state (the next_batch token).
+    /// The end-to-end-encryption key store (Olm/Megolm sessions, device keys, etc.) lives in
+    /// the partial in MatrixDatabase.Crypto.cs.
     /// </summary>
-    internal class MatrixDatabase : IDisposable
+    internal partial class MatrixDatabase : IDisposable
     {
         private SqliteConnection _connection;
         private readonly string _dbPath;
@@ -115,6 +117,8 @@ namespace UniMatrix.Data
                     key   TEXT PRIMARY KEY,
                     value TEXT
                 )");
+
+            CreateCryptoSchema();
         }
 
         // ---- Meta (sync token, identity) ----
@@ -704,7 +708,13 @@ namespace UniMatrix.Data
             }
         }
 
-        /// <summary>Drops all cached data on logout.</summary>
+        /// <summary>
+        /// Drops all cached chat data (messages/rooms/members/media/meta). Used by both logout and
+        /// the "wipe cache &amp; resync" action, so it deliberately does NOT touch the E2EE tables:
+        /// the Olm identity and room keys must survive a cache wipe (otherwise the user could no
+        /// longer read their encrypted history). Logout wipes the crypto tables separately via
+        /// <see cref="ClearCryptoTables"/>.
+        /// </summary>
         public void ClearAll()
         {
             lock (_gate)

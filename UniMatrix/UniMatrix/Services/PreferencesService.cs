@@ -178,6 +178,44 @@ namespace UniMatrix.Services
             catch { }
         }
 
+        private const string PickleVaultResource = "UniMatrix-Pickle";
+
+        /// <summary>
+        /// Returns the libolm pickle key (base64 of 32 random bytes), creating and storing it in
+        /// the credential vault on first use. This key encrypts the Olm account and session
+        /// pickles at rest in the SQLite store. Bound to the logged-in user id.
+        /// </summary>
+        public string GetOrCreatePickleKey()
+        {
+            if (string.IsNullOrEmpty(UserId)) return null;
+            var vault = new PasswordVault();
+            try
+            {
+                var cred = vault.Retrieve(PickleVaultResource, UserId);
+                cred.RetrievePassword();
+                if (!string.IsNullOrEmpty(cred.Password)) return cred.Password;
+            }
+            catch { /* not yet created */ }
+
+            var buf = Windows.Security.Cryptography.CryptographicBuffer.GenerateRandom(32);
+            string key = Windows.Security.Cryptography.CryptographicBuffer.EncodeToBase64String(buf);
+            vault.Add(new PasswordCredential(PickleVaultResource, UserId, key));
+            return key;
+        }
+
+        public void ClearPickleKey()
+        {
+            try
+            {
+                var vault = new PasswordVault();
+                foreach (var cred in vault.FindAllByResource(PickleVaultResource))
+                {
+                    vault.Remove(cred);
+                }
+            }
+            catch { }
+        }
+
         public bool IsLoggedIn
         {
             get { return !string.IsNullOrEmpty(GetAccessToken()); }

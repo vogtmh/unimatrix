@@ -71,6 +71,20 @@ namespace UniMatrix.Models
             set { _lastPreview = value; Raise("LastPreview"); }
         }
 
+        private bool _isEncrypted;
+        /// <summary>True once the room has m.room.encryption enabled. Drives the lock indicator.</summary>
+        public bool IsEncrypted
+        {
+            get { return _isEncrypted; }
+            set { _isEncrypted = value; Raise("IsEncrypted"); Raise("EncryptedVisibility"); }
+        }
+
+        /// <summary>Visibility of the lock glyph in the room list / header.</summary>
+        public Visibility EncryptedVisibility
+        {
+            get { return _isEncrypted ? Visibility.Visible : Visibility.Collapsed; }
+        }
+
         public string DisplayName
         {
             get { return string.IsNullOrEmpty(Name) ? Id : Name; }

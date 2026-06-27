@@ -52,10 +52,11 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|ARM'">
     <DebugSymbols>true</DebugSymbols>
     <OutputPath>bin\ARM\Debug\</OutputPath>
-    <!-- WEBRTC: enables the Org.WebRtc-backed CallService. Only ARM references the harvested
-         native library (libs\webrtc\ARM), so the define is ARM-only; other archs compile the
-         CallService with calling stubbed out. -->
-    <DefineConstants>DEBUG;TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC</DefineConstants>
+    <!-- WEBRTC: enables the Org.WebRtc-backed CallService. CRYPTO: enables the libolm-backed
+         end-to-end encryption (OlmNative/OlmWrappers/CryptoService). Both only ARM references the
+         harvested native libraries (libs\webrtc\ARM, libs\olm\ARM), so the defines are ARM-only;
+         other archs compile those services with the native calls stubbed out. -->
+    <DefineConstants>DEBUG;TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC;CRYPTO</DefineConstants>
     <NoWarn>;2008</NoWarn>
     <DebugType>full</DebugType>
     <PlatformTarget>ARM</PlatformTarget>
@@ -65,7 +66,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|ARM'">
     <OutputPath>bin\ARM\Release\</OutputPath>
-    <DefineConstants>TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC</DefineConstants>
+    <DefineConstants>TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC;CRYPTO</DefineConstants>
     <Optimize>true</Optimize>
     <NoWarn>;2008</NoWarn>
     <DebugType>pdbonly</DebugType>
@@ -103,6 +104,7 @@
       <DependentUpon>App.xaml</DependentUpon>
     </Compile>
     <Compile Include="Data\MatrixDatabase.cs" />
+    <Compile Include="Data\MatrixDatabase.Crypto.cs" />
     <Compile Include="MainPage.xaml.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
@@ -121,10 +123,24 @@
     <Compile Include="MainPage.Call.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="MainPage.Crypto.cs">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="MainPage.Security.cs">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="Crypto\CryptoMath.cs" />
+    <Compile Include="Crypto\CanonicalJson.cs" />
     <Compile Include="Models\MatrixModels.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Properties\BuildInfo.cs" />
     <Compile Include="Services\CallService.cs" />
+    <Compile Include="Services\CryptoService.cs" />
+    <Compile Include="Services\KeyBackupService.cs" />
+    <Compile Include="Services\SsssService.cs" />
+    <Compile Include="Services\AttachmentCrypto.cs" />
+    <Compile Include="Services\OlmNative.cs" />
+    <Compile Include="Services\OlmWrappers.cs" />
     <Compile Include="Services\MatrixClient.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
@@ -243,6 +259,19 @@
       <IsWinMDFile>true</IsWinMDFile>
       <Implementation>Org.WebRtc.dll</Implementation>
     </Reference>
+  </ItemGroup>
+  <!--
+    libolm native library (olm.dll). Unlike Org.WebRtc this is a PLAIN native C DLL (not a WinRT
+    component / WinMD), so it is consumed via P/Invoke (Services\OlmNative.cs) and only needs to
+    be copied app-local as <Content>. There is no winmd and no <Implementation> element. Build it
+    with external_dependencies\olm-build\build-olm-uwp.ps1 on the Windows box and harvest to
+    libs\olm\ARM. ARM is the
+    only arch harvested so far (the Lumia 930 target); add x86/x64 groups as those are built.
+  -->
+  <ItemGroup Condition="'$(Platform)' == 'ARM'">
+    <Content Include="libs\olm\ARM\olm.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <PropertyGroup Condition=" '$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '14.0' ">
     <VisualStudioVersion>14.0</VisualStudioVersion>

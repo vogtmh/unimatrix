@@ -1,5 +1,7 @@
 using System;
 using System.Threading.Tasks;
+using Windows.Data.Json;
+using Windows.Security.Cryptography;
 using Windows.Storage;
 using UniMatrix.Data;
 
@@ -56,7 +58,7 @@ namespace UniMatrix.Services
             {
                 // FetchMediaAsync tries authenticated (v1) then legacy (r0) endpoints,
                 // and thumbnail then full download, so both old and new media resolve.
-                var buffer = await _client.FetchMediaAsync(mxc, size);
+                var buffer = await FetchPossiblyEncryptedAsync(mxc, size);
                 if (buffer == null) return null;
 
                 var folder = await GetFolderAsync();
@@ -153,6 +155,8 @@ namespace UniMatrix.Services
             {
                 var buffer = await _client.FetchOriginalAsync(mxc);
                 if (buffer == null) return null;
+                buffer = await MaybeDecryptAsync(mxc, buffer);
+                if (buffer == null) return null;
 
                 var folder = await GetFolderAsync();
                 // Unique name (see GetThumbnailUriAsync) to avoid "file in use" on re-download.
@@ -200,6 +204,41 @@ namespace UniMatrix.Services
         private static int NextSeq()
         {
             return System.Threading.Interlocked.Increment(ref _seq);
+        }
+
+        /// <summary>
+        /// Fetches media that may be an encrypted attachment. The homeserver can't thumbnail an
+        /// encrypted blob, so when a decryption key is on file we fetch the full ciphertext and
+        /// decrypt it; otherwise we use the normal (server-thumbnailed) path.
+        /// </summary>
+        private async Task<Windows.Storage.Streams.IBuffer> FetchPossiblyEncryptedAsync(string mxc, int size)
+        {
+            string fileJson = _db.GetAttachmentKey(mxc);
+            if (string.IsNullOrEmpty(fileJson))
+                return await _client.FetchMediaAsync(mxc, size);
+
+            var cipher = await _client.FetchOriginalAsync(mxc);
+            return await MaybeDecryptAsync(mxc, cipher);
+        }
+
+        /// <summary>Decrypts a downloaded buffer when an attachment key exists for its mxc; returns
+        /// the buffer unchanged (plaintext) when there is no key.</summary>
+        private async Task<Windows.Storage.Streams.IBuffer> MaybeDecryptAsync(string mxc, Windows.Storage.Streams.IBuffer buffer)
+        {
+            if (buffer == null) return null;
+            string fileJson = _db.GetAttachmentKey(mxc);
+            if (string.IsNullOrEmpty(fileJson)) return buffer;
+
+            JsonObject file;
+            if (!JsonObject.TryParse(fileJson, out file)) return null;
+
+            byte[] cipherBytes;
+            CryptographicBuffer.CopyToByteArray(buffer, out cipherBytes);
+            byte[] plain = AttachmentCrypto.Decrypt(cipherBytes, file);
+            if (plain == null) return null;
+
+            await Task.FromResult(0);
+            return CryptographicBuffer.CreateFromByteArray(plain);
         }
 
         private static string SafeFileName(string mxc)

@@ -197,9 +197,15 @@
 
                             <!-- Name + preview -->
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding DisplayName}" Foreground="White"
-                                           FontSize="16" FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis" MaxLines="1" />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding DisplayName}" Foreground="White"
+                                               FontSize="16" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" MaxLines="1" />
+                                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72E;" FontSize="12"
+                                              Foreground="{StaticResource AppAccentBrush}"
+                                              VerticalAlignment="Center" Margin="6,1,0,0"
+                                              Visibility="{Binding EncryptedVisibility}" />
+                                </StackPanel>
                                 <TextBlock Text="{Binding LastPreview}" Foreground="{StaticResource AppSubtleTextBrush}"
                                            FontSize="13" TextTrimming="CharacterEllipsis" MaxLines="1"
                                            Margin="0,2,0,0" Visibility="{Binding PreviewVisibility}" />
@@ -275,8 +281,13 @@
                     <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72B;" FontSize="18" Foreground="White" />
                 </Button>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock x:Name="ChatRoomName" Text="" Foreground="White" FontSize="17"
-                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxLines="1" />
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock x:Name="ChatRoomName" Text="" Foreground="White" FontSize="17"
+                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxLines="1" />
+                        <FontIcon x:Name="ChatEncryptedIcon" FontFamily="Segoe MDL2 Assets" Glyph="&#xE72E;"
+                                  FontSize="13" Foreground="{StaticResource AppAccentBrush}"
+                                  VerticalAlignment="Center" Margin="6,1,0,0" Visibility="Collapsed" />
+                    </StackPanel>
                     <TextBlock x:Name="ChatRoomMembers" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
                                FontSize="12" TextTrimming="CharacterEllipsis" MaxLines="1" />
                 </StackPanel>
@@ -436,6 +447,29 @@
                     <TextBlock x:Name="InfoRoomId" Text="" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="12" TextWrapping="Wrap" Margin="0,16,0,0" HorizontalAlignment="Center"
                                TextAlignment="Center" />
+
+                    <!-- Encryption status / enable -->
+                    <Border x:Name="InfoEncryptedRow" Background="{StaticResource AppCardBrush}"
+                            CornerRadius="8" Padding="12" Margin="0,24,0,0" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72E;" FontSize="16"
+                                      Foreground="{StaticResource AppAccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="Messages are end-to-end encrypted" Margin="8,0,0,0"
+                                       VerticalAlignment="Center" Foreground="White" FontSize="14"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <Button x:Name="EnableEncryptionButton" Click="EnableEncryptionButton_Click"
+                            HorizontalAlignment="Stretch" Margin="0,24,0,0" Padding="0,12"
+                            Background="{StaticResource AppCardBrush}" Foreground="White" BorderThickness="0"
+                            Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72E;" FontSize="16"
+                                      Foreground="{StaticResource AppAccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="Enable encryption" Margin="8,0,0,0" VerticalAlignment="Center"
+                                       FontSize="15" />
+                        </StackPanel>
+                    </Button>
 
                     <Button x:Name="LeaveRoomButton" Click="LeaveRoomButton_Click"
                             HorizontalAlignment="Stretch" Margin="0,32,0,0" Padding="0,12"
@@ -746,6 +780,23 @@
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,4,0,0" TextWrapping="Wrap" />
 
+                    <TextBlock Text="ENCRYPTION &amp; BACKUP" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                    <TextBlock x:Name="BackupStatusText" Text="Checking key backup…"
+                               Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                               Margin="0,0,0,12" TextWrapping="Wrap" />
+                    <Button x:Name="SetupRecoveryButton" Content="Set up key backup &amp; recovery"
+                            Click="SetupRecoveryButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12" Margin="0,0,0,8"
+                            Background="{StaticResource AppCardBrush}" Foreground="White" FontWeight="SemiBold" />
+                    <Button x:Name="EnterRecoveryButton" Content="Restore from recovery key"
+                            Click="EnterRecoveryButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12"
+                            Background="{StaticResource AppCardBrush}" Foreground="White" FontWeight="SemiBold" />
+                    <TextBlock Text="A recovery key (or passphrase) lets you restore your encrypted message history after signing in on a new device."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,6,0,0" TextWrapping="Wrap" />
+
                     <TextBlock Text="MAINTENANCE" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
                     <TextBlock x:Name="StorageUsage" Text="Calculating storage…"
@@ -822,6 +873,102 @@
             <ProgressBar x:Name="SyncProgressBar" IsIndeterminate="True"
                          Foreground="{StaticResource AppAccentBrush}" />
         </StackPanel>
+
+        <!-- ===================== SECURITY: KEY-BACKUP SETUP ===================== -->
+        <Grid x:Name="SecuritySetupPanel" Background="#CC000000" Visibility="Collapsed">
+            <Border Background="{StaticResource AppPanelBrush}" CornerRadius="12"
+                    MaxWidth="400" Margin="24" Padding="20" VerticalAlignment="Center"
+                    HorizontalAlignment="Stretch">
+                <StackPanel>
+                    <TextBlock Text="Set up key backup" Foreground="White" FontSize="20" FontWeight="SemiBold" />
+
+                    <!-- Input phase -->
+                    <StackPanel x:Name="SecuritySetupInput">
+                        <TextBlock Text="A secure backup of your message keys is stored on the server, protected by a recovery key. You can also add a passphrase you'll remember."
+                                   Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                                   TextWrapping="Wrap" Margin="0,12,0,0" />
+                        <PasswordBox x:Name="SetupPassphraseBox" PlaceholderText="Passphrase (optional)"
+                                     Margin="0,16,0,0" Background="{StaticResource AppCardBrush}" BorderThickness="0" />
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="Cancel" Click="SecuritySetupCancel_Click"
+                                    HorizontalAlignment="Stretch" Margin="0,0,6,0"
+                                    Background="{StaticResource AppCardBrush}" Foreground="White" />
+                            <Button Grid.Column="1" Content="Create" Click="SecuritySetupCreate_Click"
+                                    HorizontalAlignment="Stretch" Margin="6,0,0,0"
+                                    Background="{StaticResource AppAccentBrush}" Foreground="White" />
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Result phase -->
+                    <StackPanel x:Name="SecuritySetupResult" Visibility="Collapsed">
+                        <TextBlock Text="Write down this recovery key and keep it safe. You'll need it to restore your history on another device. It won't be shown again."
+                                   Foreground="{StaticResource AppAccentBrush}" FontSize="13"
+                                   TextWrapping="Wrap" Margin="0,12,0,0" />
+                        <TextBox x:Name="RecoveryKeyDisplay" IsReadOnly="True" TextWrapping="Wrap"
+                                 Margin="0,12,0,0" Background="{StaticResource AppCardBrush}" Foreground="White"
+                                 BorderThickness="0" FontFamily="Consolas" IsTextSelectionEnabled="True" />
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="Copy" Click="RecoveryKeyCopy_Click"
+                                    HorizontalAlignment="Stretch" Margin="0,0,6,0"
+                                    Background="{StaticResource AppCardBrush}" Foreground="White" />
+                            <Button Grid.Column="1" Content="Done" Click="SecuritySetupDone_Click"
+                                    HorizontalAlignment="Stretch" Margin="6,0,0,0"
+                                    Background="{StaticResource AppAccentBrush}" Foreground="White" />
+                        </Grid>
+                    </StackPanel>
+
+                    <StackPanel x:Name="SecuritySetupProgress" Orientation="Horizontal" Visibility="Collapsed"
+                                Margin="0,16,0,0" HorizontalAlignment="Center">
+                        <ProgressRing IsActive="True" Width="20" Height="20" Foreground="{StaticResource AppAccentBrush}" />
+                        <TextBlock x:Name="SecuritySetupProgressText" Text="Working…" Margin="10,0,0,0"
+                                   VerticalAlignment="Center" Foreground="White" FontSize="13" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ===================== SECURITY: RESTORE FROM RECOVERY ===================== -->
+        <Grid x:Name="RecoveryPanel" Background="#CC000000" Visibility="Collapsed">
+            <Border Background="{StaticResource AppPanelBrush}" CornerRadius="12"
+                    MaxWidth="400" Margin="24" Padding="20" VerticalAlignment="Center"
+                    HorizontalAlignment="Stretch">
+                <StackPanel>
+                    <TextBlock Text="Restore encrypted history" Foreground="White" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="Enter your recovery key or passphrase to unlock the key backup and decrypt your message history."
+                               Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                               TextWrapping="Wrap" Margin="0,12,0,0" />
+                    <TextBox x:Name="RecoveryInput" PlaceholderText="Recovery key or passphrase"
+                             Margin="0,16,0,0" Background="{StaticResource AppCardBrush}" Foreground="White"
+                             BorderThickness="0" TextWrapping="Wrap" AcceptsReturn="False" />
+                    <Grid Margin="0,16,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="Cancel" Click="RecoveryCancel_Click"
+                                HorizontalAlignment="Stretch" Margin="0,0,6,0"
+                                Background="{StaticResource AppCardBrush}" Foreground="White" />
+                        <Button Grid.Column="1" Content="Restore" Click="RecoveryConfirm_Click"
+                                HorizontalAlignment="Stretch" Margin="6,0,0,0"
+                                Background="{StaticResource AppAccentBrush}" Foreground="White" />
+                    </Grid>
+                    <StackPanel x:Name="RecoveryProgress" Orientation="Horizontal" Visibility="Collapsed"
+                                Margin="0,16,0,0" HorizontalAlignment="Center">
+                        <ProgressRing IsActive="True" Width="20" Height="20" Foreground="{StaticResource AppAccentBrush}" />
+                        <TextBlock x:Name="RecoveryProgressText" Text="Restoring…" Margin="10,0,0,0"
+                                   VerticalAlignment="Center" Foreground="White" FontSize="13" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <!-- ===================== FULL-SCREEN IMAGE VIEWER ===================== -->
         <!-- Top-most overlay (last child) so it covers everything. Tapping the

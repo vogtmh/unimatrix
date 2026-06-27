@@ -20,7 +20,35 @@ namespace UniMatrix.Services
         /// payload, not just a display label.
         /// </summary>
         public List<CallSignal> CallSignals { get; } = new List<CallSignal>();
+
+        // ---- End-to-end encryption (consumed by the sync loop, which owns the CryptoService) ----
+
+        /// <summary>Server's count of our published signed_curve25519 one-time keys, when reported.</summary>
+        public int? OneTimeKeyCount { get; set; }
+
+        /// <summary>Users whose device list changed (need a /keys/query refresh).</summary>
+        public List<string> DeviceListChanged { get; } = new List<string>();
+
+        /// <summary>Users we no longer share an encrypted room with (drop their devices).</summary>
+        public List<string> DeviceListLeft { get; } = new List<string>();
+
+        /// <summary>Raw to-device events (m.room.encrypted Olm messages carrying room keys, secrets).</summary>
+        public List<JsonObject> ToDeviceEvents { get; } = new List<JsonObject>();
+
+        /// <summary>Encrypted room timeline events awaiting Megolm decryption by the sync loop.</summary>
+        public List<EncryptedTimelineEvent> EncryptedEvents { get; } = new List<EncryptedTimelineEvent>();
     }
+
+    /// <summary>A stored m.room.encrypted timeline event the sync loop will try to decrypt.</summary>
+    internal class EncryptedTimelineEvent
+    {
+        public string RoomId { get; set; }
+        public string EventId { get; set; }
+        public string Sender { get; set; }
+        public long Timestamp { get; set; }
+        public JsonObject Content { get; set; }
+    }
+
 
     /// <summary>A single m.call.* signalling event captured from /sync for the CallService.</summary>
     internal class CallSignal
@@ -57,6 +85,9 @@ namespace UniMatrix.Services
             // Account data carries the m.direct map (which rooms are 1:1 DMs). It only appears in a
             // sync when it changes, so process it whenever present and flag the listed rooms.
             ProcessAccountData(GetObject(sync, "account_data"));
+
+            // ---- End-to-end encryption: device tracking, OTK upkeep, to-device key delivery ----
+            ProcessE2ee(sync, result);
 
             JsonObject rooms = GetObject(sync, "rooms");
             if (rooms == null) return result;
@@ -125,6 +156,43 @@ namespace UniMatrix.Services
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Extracts the encryption-related parts of a /sync response: the published one-time-key
+        /// count (so we can top up), device-list change/left notices (so we re-query or drop device
+        /// keys), and to-device events (Olm messages delivering room keys and secrets). The actual
+        /// cryptography happens in the sync loop, which owns the CryptoService; here we only collect.
+        /// </summary>
+        private void ProcessE2ee(JsonObject sync, SyncResult result)
+        {
+            try
+            {
+                JsonObject otkCounts = GetObject(sync, "device_one_time_keys_count");
+                if (otkCounts != null && otkCounts.ContainsKey("signed_curve25519"))
+                    result.OneTimeKeyCount = (int)GetNumber(otkCounts, "signed_curve25519", 0);
+
+                JsonObject deviceLists = GetObject(sync, "device_lists");
+                if (deviceLists != null)
+                {
+                    JsonArray changed = GetArray(deviceLists, "changed");
+                    if (changed != null)
+                        foreach (var v in changed) if (v.ValueType == JsonValueType.String) result.DeviceListChanged.Add(v.GetString());
+
+                    JsonArray left = GetArray(deviceLists, "left");
+                    if (left != null)
+                        foreach (var v in left) if (v.ValueType == JsonValueType.String) result.DeviceListLeft.Add(v.GetString());
+                }
+
+                JsonObject toDevice = GetObject(sync, "to_device");
+                JsonArray events = GetArray(toDevice, "events");
+                if (events != null)
+                    foreach (var v in events) if (v.ValueType == JsonValueType.Object) result.ToDeviceEvents.Add(v.GetObject());
+            }
+            catch (Exception ex)
+            {
+                App.Log("SYNC e2ee parse error: " + ex.Message);
+            }
         }
 
         /// <summary>
@@ -224,6 +292,18 @@ namespace UniMatrix.Services
                                 }
                             }
                         }
+                        else if (type == "m.room.encrypted")
+                        {
+                            // Store the ciphertext row and surface it for the sync loop to decrypt
+                            // with the CryptoService. We keep the body as the raw content JSON so a
+                            // decrypt can be retried later (e.g. once the room key arrives).
+                            var enc = ApplyEncryptedEvent(roomId, ev, result);
+                            if (enc != null && enc.Timestamp > latestTs)
+                            {
+                                latestTs = enc.Timestamp;
+                                preview = "\uD83D\uDD12 Encrypted message";
+                            }
+                        }
                         else if (type != null && type.StartsWith("m.call."))
                         {
                             // Capture the raw signalling event for the CallService (it needs the full
@@ -249,7 +329,8 @@ namespace UniMatrix.Services
                             }
                         }
                         else if (type == "m.room.name" || type == "m.room.avatar" ||
-                                 type == "m.room.topic" || type == "m.room.member")
+                                 type == "m.room.topic" || type == "m.room.member" ||
+                                 type == "m.room.encryption")
                         {
                             ApplyStateEvent(roomId, ev, room);
                         }
@@ -475,8 +556,63 @@ namespace UniMatrix.Services
                         });
                     }
                     return false;
+
+                case "m.room.encryption":
+                    // The room turned on encryption. Record the algorithm + rotation policy so
+                    // outgoing messages get encrypted and the UI can show a lock.
+                    string algo = MatrixClient.GetString(content, "algorithm");
+                    if (!string.IsNullOrEmpty(algo))
+                    {
+                        long rotMs = (long)GetNumber(content, "rotation_period_ms", 604800000);
+                        long rotMsgs = (long)GetNumber(content, "rotation_period_msgs", 100);
+                        _db.SetRoomEncryption(roomId, algo, rotMs, rotMsgs);
+                    }
+                    return false;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Persists an m.room.encrypted timeline event as an undecrypted row (msgtype
+        /// "m.room.encrypted", body = the ciphertext content JSON) and records it in the sync
+        /// result so the sync loop can decrypt it with the CryptoService and overwrite the row.
+        /// </summary>
+        private EncryptedTimelineEvent ApplyEncryptedEvent(string roomId, JsonObject ev, SyncResult result)
+        {
+            string eventId = MatrixClient.GetString(ev, "event_id");
+            JsonObject content = GetObject(ev, "content");
+            if (string.IsNullOrEmpty(eventId) || content == null) return null;
+
+            string sender = MatrixClient.GetString(ev, "sender");
+            long ts = (long)GetNumber(ev, "origin_server_ts", 0);
+
+            // Don't clobber an already-decrypted row if this event id was decrypted before.
+            var existing = _db.GetMessageById(eventId);
+            if (existing == null || existing.MsgType == "m.room.encrypted")
+            {
+                _db.UpsertMessage(new Message
+                {
+                    EventId = eventId,
+                    RoomId = roomId,
+                    Sender = sender,
+                    MsgType = "m.room.encrypted",
+                    Body = content.Stringify(),
+                    Timestamp = ts,
+                    Mxc = null,
+                    IsLocalEcho = false
+                });
+            }
+
+            var enc = new EncryptedTimelineEvent
+            {
+                RoomId = roomId,
+                EventId = eventId,
+                Sender = sender,
+                Timestamp = ts,
+                Content = content
+            };
+            result.EncryptedEvents.Add(enc);
+            return enc;
         }
 
         /// <summary>Persists a timeline message event. Returns the parsed message, or null if skipped.</summary>

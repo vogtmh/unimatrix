@@ -28,6 +28,9 @@ namespace UniMatrix
 
             // Compute on-disk usage off the UI thread; update the label when ready.
             var _ = UpdateStorageUsageAsync();
+
+            // Refresh key-backup status text + button states.
+            var __ = RefreshBackupStatusAsync();
         }
 
         private async System.Threading.Tasks.Task UpdateStorageUsageAsync()
@@ -117,11 +120,15 @@ namespace UniMatrix
             UpdateHistoryControls(SetupHistorySlider, SetupHistoryValue);
         }
 
-        private void SetupContinueButton_Click(object sender, RoutedEventArgs e)
+        private async void SetupContinueButton_Click(object sender, RoutedEventArgs e)
         {
             _settings.SetupComplete = true;
             ShowView(View.RoomList);
             LoadRoomsFromCache();
+
+            // Initialize encryption for the freshly logged-in account before syncing so the first
+            // sync's to-device room keys and encrypted events are handled.
+            await EnsureCryptoAsync();
             StartSync();
 
             // Start the periodic message-notification background task now that we're signed in.
@@ -201,11 +208,17 @@ namespace UniMatrix
             Services.NotificationTask.Unregister();
 
             _settings.ClearAccessToken();
+            _settings.ClearPickleKey();
             _settings.UserId = null;
             _settings.DeviceId = null;
             _settings.SetupComplete = false;
 
             _db.ClearAll();
+            _db.ClearCryptoTables();
+            _crypto = null;
+            _backup = null;
+            _ssss = null;
+            _recoveryPromptShown = false;
             Rooms.Clear();
             Messages.Clear();
             _currentRoomId = null;
