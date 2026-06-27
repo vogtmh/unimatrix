@@ -67,6 +67,12 @@ namespace UniMatrix.Services
 #if CRYPTO
         private OlmAccount _account;
         private byte[] _pickleKey;
+        // Serializes every native call that touches the shared Olm _account pointer. libolm is not
+        // thread-safe per object, and the account is hit concurrently by the background sync crypto
+        // pass (to-device Olm decrypt, OTK top-up), the message-send path (Olm session creation,
+        // signing) and the fire-and-forget key-backup (signing auth_data). This is a Monitor lock so
+        // it is reentrant on the same thread; all critical sections below are synchronous (no awaits
+        // are held across it). Lock order is always _accountGate -> DB gate, never the reverse.
         private readonly object _accountGate = new object();
 
         // ---- Initialization ----
@@ -174,7 +180,8 @@ namespace UniMatrix.Services
 
         private void LoadIdentityKeys()
         {
-            var keys = JsonObject.Parse(_account.IdentityKeysJson());
+            JsonObject keys;
+            lock (_accountGate) { keys = JsonObject.Parse(_account.IdentityKeysJson()); }
             _curve25519 = MatrixClient.GetString(keys, "curve25519");
             _ed25519 = MatrixClient.GetString(keys, "ed25519");
         }
@@ -193,7 +200,7 @@ namespace UniMatrix.Services
             if (copy.ContainsKey("signatures")) copy.Remove("signatures");
             if (copy.ContainsKey("unsigned")) copy.Remove("unsigned");
             string canon = CanonicalJson.Serialize(copy);
-            return _account.Sign(canon);
+            lock (_accountGate) { return _account.Sign(canon); }
         }
 
         private void AddOurSignature(JsonObject obj)
@@ -244,28 +251,38 @@ namespace UniMatrix.Services
             if (!_available) return;
             try
             {
-                int max = _account.MaxOneTimeKeys();
-                int target = max / 2;
-                int need = target - serverCount;
-                if (need <= 0) return;
-
-                _account.GenerateOneTimeKeys(need);
-                var otks = JsonObject.Parse(_account.OneTimeKeysJson());
-                var curve = (otks.ContainsKey("curve25519") && otks["curve25519"].ValueType == JsonValueType.Object)
-                    ? otks.GetNamedObject("curve25519") : new JsonObject();
-
-                var signed = new JsonObject();
-                foreach (var keyId in curve.Keys)
+                JsonObject signed;
+                int need;
+                // Generate + sign the keys under the account lock; the network upload stays outside
+                // it so we never hold the native lock across an await.
+                lock (_accountGate)
                 {
-                    string keyVal = MatrixClient.GetString(curve, keyId);
-                    var entry = new JsonObject { ["key"] = JsonValue.CreateStringValue(keyVal) };
-                    AddOurSignature(entry);
-                    signed["signed_curve25519:" + keyId] = entry;
+                    int max = _account.MaxOneTimeKeys();
+                    int target = max / 2;
+                    need = target - serverCount;
+                    if (need <= 0) return;
+
+                    _account.GenerateOneTimeKeys(need);
+                    var otks = JsonObject.Parse(_account.OneTimeKeysJson());
+                    var curve = (otks.ContainsKey("curve25519") && otks["curve25519"].ValueType == JsonValueType.Object)
+                        ? otks.GetNamedObject("curve25519") : new JsonObject();
+
+                    signed = new JsonObject();
+                    foreach (var keyId in curve.Keys)
+                    {
+                        string keyVal = MatrixClient.GetString(curve, keyId);
+                        var entry = new JsonObject { ["key"] = JsonValue.CreateStringValue(keyVal) };
+                        AddOurSignature(entry); // reenters _accountGate (Monitor is reentrant)
+                        signed["signed_curve25519:" + keyId] = entry;
+                    }
                 }
 
                 await _client.KeysUploadAsync(null, signed);
-                _account.MarkKeysAsPublished();
-                PersistAccount();
+                lock (_accountGate)
+                {
+                    _account.MarkKeysAsPublished();
+                    _db.UpdateAccountPickle(_account.Pickle(_pickleKey));
+                }
                 App.Log("CRYPTO: uploaded " + need + " one-time keys");
             }
             catch (Exception ex) { App.Log("CRYPTO: OTK upload failed: " + ex.Message); }
@@ -517,18 +534,23 @@ namespace UniMatrix.Services
                 catch { /* try next session */ }
             }
 
-            // No existing session worked. For a prekey (type 0) message, create one.
+            // No existing session worked. For a prekey (type 0) message, create one. Creating the
+            // inbound session and removing the consumed one-time key both mutate the shared account,
+            // so do it under the account lock.
             if (msgType == 0)
             {
                 try
                 {
-                    using (var inbound = OlmSession.CreateInbound(_account, senderKey, body))
+                    lock (_accountGate)
                     {
-                        OlmNative.olm_remove_one_time_keys(_account.Handle, inbound.Handle);
-                        string pt = inbound.Decrypt(msgType, body);
-                        _db.SaveOlmSession(senderKey, inbound.SessionId(), inbound.Pickle(_pickleKey), Now());
-                        accountTouched = true;
-                        return pt;
+                        using (var inbound = OlmSession.CreateInbound(_account, senderKey, body))
+                        {
+                            OlmNative.olm_remove_one_time_keys(_account.Handle, inbound.Handle);
+                            string pt = inbound.Decrypt(msgType, body);
+                            _db.SaveOlmSession(senderKey, inbound.SessionId(), inbound.Pickle(_pickleKey), Now());
+                            accountTouched = true;
+                            return pt;
+                        }
                     }
                 }
                 catch (Exception ex) { App.Log("CRYPTO: create inbound olm failed: " + ex.Message); }
@@ -801,9 +823,13 @@ namespace UniMatrix.Services
                             if (string.IsNullOrEmpty(sig) || !util.Verify(dev.Ed25519, CanonicalJson.Serialize(copy), sig))
                             { App.Log("CRYPTO: bad OTK signature for " + dev.UserId + "/" + dev.DeviceId); break; }
 
-                            using (var session = OlmSession.CreateOutbound(_account, dev.Curve25519, otk))
+                            // Creating the outbound session reads the shared account key.
+                            lock (_accountGate)
                             {
-                                _db.SaveOlmSession(dev.Curve25519, session.SessionId(), session.Pickle(_pickleKey), Now());
+                                using (var session = OlmSession.CreateOutbound(_account, dev.Curve25519, otk))
+                                {
+                                    _db.SaveOlmSession(dev.Curve25519, session.SessionId(), session.Pickle(_pickleKey), Now());
+                                }
                             }
                             break;
                         }
