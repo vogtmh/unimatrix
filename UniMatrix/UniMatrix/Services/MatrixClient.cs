@@ -613,82 +613,43 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Deletes (signs out) several sessions at once via POST /delete_devices. Like the single
-        /// delete it is guarded by user-interactive auth: the first call 401s with a session id,
-        /// then we resubmit with the account password. Throws <see cref="MatrixException"/> on failure.
+        /// Deletes (signs out) several sessions. matrix.org (and other MAS/next-gen-auth servers)
+        /// no longer serve the bulk POST /delete_devices route (it 404s with M_UNRECOGNIZED), so we
+        /// loop the per-device DELETE instead. To avoid hammering the server when the very first
+        /// delete fails for a structural reason (auth not accepted / route gone), we abort early and
+        /// surface that error. Returns the number of sessions actually removed.
         /// </summary>
-        public async Task DeleteDevicesAsync(IEnumerable<string> deviceIds, string password)
+        public async Task<int> DeleteDevicesAsync(IEnumerable<string> deviceIds, string password)
         {
-            var ids = new JsonArray();
+            var ids = new List<string>();
             foreach (var id in deviceIds)
-                if (!string.IsNullOrEmpty(id)) ids.Add(JsonValue.CreateStringValue(id));
-            if (ids.Count == 0) return;
+                if (!string.IsNullOrEmpty(id)) ids.Add(id);
+            if (ids.Count == 0) return 0;
 
-            string path = "/_matrix/client/r0/delete_devices?access_token=" +
-                          Uri.EscapeDataString(_accessToken);
-            var uri = new Uri(_baseUrl + path);
-            App.Log("DEVICES: delete_devices POST count=" + ids.Count);
-
-            // First attempt with just the device list — expected to 401 with a UIA session id.
-            var first = await SendPostRawAsync(uri, new JsonObject { ["devices"] = ids });
-            if (first.Item1) { App.Log("DEVICES: delete_devices succeeded (no UIA)"); return; }
-
-            string session = null;
-            try
+            App.Log("DEVICES: bulk delete via per-device loop count=" + ids.Count);
+            int removed = 0;
+            Exception firstError = null;
+            for (int i = 0; i < ids.Count; i++)
             {
-                JsonObject info;
-                if (JsonObject.TryParse(first.Item2, out info)) session = GetString(info, "session");
-            }
-            catch { }
-            App.Log("DEVICES: delete_devices UIA session=" + (string.IsNullOrEmpty(session) ? "<none>" : "ok"));
-
-            var auth = new JsonObject
-            {
-                ["type"] = JsonValue.CreateStringValue("m.login.password"),
-                ["identifier"] = new JsonObject
+                try
                 {
-                    ["type"] = JsonValue.CreateStringValue("m.id.user"),
-                    ["user"] = JsonValue.CreateStringValue(UserId ?? "")
-                },
-                ["password"] = JsonValue.CreateStringValue(password ?? "")
-            };
-            if (!string.IsNullOrEmpty(session)) auth["session"] = JsonValue.CreateStringValue(session);
-
-            var second = await SendPostRawAsync(uri, new JsonObject { ["devices"] = ids, ["auth"] = auth });
-            if (second.Item1) { App.Log("DEVICES: delete_devices succeeded after UIA"); return; }
-
-            string message = "Couldn't remove the sessions.";
-            try
-            {
-                JsonObject err;
-                if (JsonObject.TryParse(second.Item2, out err))
+                    await DeleteDeviceAsync(ids[i], password);
+                    removed++;
+                }
+                catch (Exception ex)
                 {
-                    string detail = GetString(err, "error");
-                    string code = GetString(err, "errcode");
-                    if (!string.IsNullOrEmpty(detail))
-                        message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
+                    App.Log("DEVICES: bulk delete failed at " + (i + 1) + "/" + ids.Count +
+                            " (" + ids[i] + "): " + ex.Message);
+                    firstError = ex;
+                    // If the FIRST one fails there's a structural problem (auth/route) — don't
+                    // pointlessly retry the rest; report it so the user isn't left waiting.
+                    if (removed == 0) break;
                 }
             }
-            catch { }
-            throw new MatrixException(message, 0, 0);
-        }
 
-        /// <summary>Sends a POST with a JSON body, returning (success, responseBody) without throwing
-        /// on non-success status codes (used for the user-interactive-auth challenge flow).</summary>
-        private async Task<Tuple<bool, string>> SendPostRawAsync(Uri uri, JsonObject body)
-        {
-            var content = new HttpStringContent(body.Stringify(),
-                Windows.Storage.Streams.UnicodeEncoding.Utf8, "application/json");
-            using (var resp = await _http.PostAsync(uri, content))
-            {
-                string text = await resp.Content.ReadAsStringAsync();
-                if (!resp.IsSuccessStatusCode && (int)resp.StatusCode != 401)
-                {
-                    string snippet = text == null ? "" : (text.Length > 200 ? text.Substring(0, 200) : text);
-                    App.Log("DEVICES: POST " + (int)resp.StatusCode + " " + uri.AbsolutePath + " :: " + snippet);
-                }
-                return Tuple.Create(resp.IsSuccessStatusCode, text);
-            }
+            App.Log("DEVICES: bulk delete removed=" + removed + "/" + ids.Count);
+            if (removed == 0 && firstError != null) throw firstError;
+            return removed;
         }
 
         /// <summary>Sends a DELETE with an optional JSON body. Returns (success, responseBody)

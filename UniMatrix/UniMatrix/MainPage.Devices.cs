@@ -311,16 +311,6 @@ namespace UniMatrix
 
         private async Task RemoveDeviceClickedAsync(string deviceId, string label)
         {
-            // On OAuth 2.0 (next-gen-auth) servers like matrix.org the in-app password delete is
-            // disabled; the spec requires sending the user to the account-management web page.
-            string acctUri = null;
-            try { acctUri = await _client.GetAccountManagementUriAsync(); } catch { }
-            if (!string.IsNullOrEmpty(acctUri))
-            {
-                await LaunchAccountManagementAsync(acctUri, "org.matrix.device_delete", deviceId, label);
-                return;
-            }
-
             var confirm = new Windows.UI.Popups.MessageDialog(
                 "Sign out and remove \"" + (label ?? deviceId) + "\"? That session will need to sign in again.",
                 "Remove session");
@@ -356,16 +346,6 @@ namespace UniMatrix
             var ids = new List<string>(_otherDeviceIds);
             if (ids.Count == 0) { await ShowErrorAsync("There are no other sessions to sign out."); return; }
 
-            // On OAuth 2.0 servers there is no bulk C-S delete; send the user to the account page's
-            // session list to remove sessions there.
-            string acctUri = null;
-            try { acctUri = await _client.GetAccountManagementUriAsync(); } catch { }
-            if (!string.IsNullOrEmpty(acctUri))
-            {
-                await LaunchAccountManagementAsync(acctUri, "org.matrix.sessions_list", null, null);
-                return;
-            }
-
             var confirm = new Windows.UI.Popups.MessageDialog(
                 "Sign out " + (ids.Count == 1 ? "the other session" : "all " + ids.Count + " other sessions") +
                 "? They'll each need to sign in again. This session stays signed in.",
@@ -391,8 +371,11 @@ namespace UniMatrix
                     SignOutOthersButton.IsEnabled = false;
                     SignOutOthersButton.Content = "Signing out\u2026";
                 }
-                await _client.DeleteDevicesAsync(ids, password);
+                int removed = await _client.DeleteDevicesAsync(ids, password);
                 await RefreshDevicesAsync();
+                if (removed < ids.Count)
+                    await ShowErrorAsync("Signed out " + removed + " of " + ids.Count +
+                        " sessions. The rest couldn't be removed \u2014 check the debug log for details.");
             }
             catch (Exception ex)
             {
@@ -406,51 +389,6 @@ namespace UniMatrix
         }
 
         // ---- Helpers ----
-
-        /// <summary>
-        /// Opens the homeserver's OAuth 2.0 account-management page (MSC2965) in the browser to
-        /// complete a session action — used on next-gen-auth servers (e.g. matrix.org) where the
-        /// in-app Client-Server delete endpoints are disabled. <paramref name="action"/> is an
-        /// account-management action such as "org.matrix.device_delete" (with a device id) or
-        /// "org.matrix.sessions_list".
-        /// </summary>
-        private async Task LaunchAccountManagementAsync(string accountUri, string action, string deviceId, string label)
-        {
-            string sep = accountUri.Contains("?") ? "&" : "?";
-            string target = accountUri + sep + "action=" + Uri.EscapeDataString(action);
-            if (!string.IsNullOrEmpty(deviceId))
-                target += "&device_id=" + Uri.EscapeDataString(deviceId);
-
-            string what = action == "org.matrix.device_delete"
-                ? "Removing \"" + (label ?? deviceId) + "\" is done on your account page."
-                : "Your sessions are managed on your account page.";
-            var dlg = new Windows.UI.Popups.MessageDialog(
-                what + " This homeserver uses sign-in via the web, so your browser will open to " +
-                "confirm it's you. When you're done, come back and tap refresh.",
-                "Open account page");
-            dlg.Commands.Add(new Windows.UI.Popups.UICommand("Open"));
-            dlg.Commands.Add(new Windows.UI.Popups.UICommand("Cancel"));
-            dlg.DefaultCommandIndex = 0;
-            dlg.CancelCommandIndex = 1;
-            var choice = await dlg.ShowAsync();
-            if (choice == null || choice.Label != "Open") return;
-
-            App.Log("DEVICES: launching account mgmt action=" + action +
-                    " device=" + (deviceId ?? "<none>"));
-            try
-            {
-                bool ok = await Windows.System.Launcher.LaunchUriAsync(new Uri(target));
-                if (!ok)
-                    await ShowErrorAsync("Couldn't open your browser. Visit " + accountUri +
-                                         " to manage your sessions.");
-            }
-            catch (Exception ex)
-            {
-                App.Log("DEVICES: launch failed: " + ex.Message);
-                await ShowErrorAsync("Couldn't open your browser. Visit " + accountUri +
-                                     " to manage your sessions.");
-            }
-        }
 
         /// <summary>Shows a single-field dialog (text or password). Returns the text, or null if cancelled.</summary>
         private async Task<string> PromptInputAsync(string title, string message, string placeholder,
