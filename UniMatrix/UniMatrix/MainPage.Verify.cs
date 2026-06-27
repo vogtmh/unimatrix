@@ -81,7 +81,7 @@ namespace UniMatrix
             if (ok)
             {
                 try { RefreshCrossSigningStatus(); } catch { }
-                if (SettingsTab2 != null && SettingsTab2.Visibility == Visibility.Visible)
+                if (SessionsOverlay != null && SessionsOverlay.Visibility == Visibility.Visible)
                 {
                     var _ = RefreshDevicesAsync();
                 }

@@ -69,12 +69,6 @@ namespace UniMatrix
                 case 3: SettingsTitle.Text = "Maintenance"; break;
                 default: SettingsTitle.Text = "Account"; break;
             }
-
-            // Load the account's sessions the first time the Security tab is opened.
-            if (tab == 2)
-            {
-                var _ = RefreshDevicesAsync();
-            }
         }
 
         private static Windows.UI.Xaml.Media.Brush SettingsAccentBrush

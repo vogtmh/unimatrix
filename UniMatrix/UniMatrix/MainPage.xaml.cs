@@ -304,6 +304,14 @@ namespace UniMatrix
                 return;
             }
 
+            // The full-screen sessions manager overlays the Settings view.
+            if (SessionsOverlay != null && SessionsOverlay.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                SessionsOverlay.Visibility = Visibility.Collapsed;
+                return;
+            }
+
             switch (_activeView)
             {
                 case View.Chat:

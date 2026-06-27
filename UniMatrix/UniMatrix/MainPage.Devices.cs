@@ -19,9 +19,25 @@ namespace UniMatrix
     {
         private bool _devicesLoading;
 
+        // The device ids of every session other than this one (populated by RefreshDevicesAsync).
+        // Used by the bulk "sign out all other sessions" action.
+        private readonly List<string> _otherDeviceIds = new List<string>();
+
         private async void RefreshDevicesButton_Click(object sender, RoutedEventArgs e)
         {
             await RefreshDevicesAsync();
+        }
+
+        /// <summary>Opens the full-screen sessions manager and loads the device list on demand.</summary>
+        private async void ManageSessionsButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SessionsOverlay != null) SessionsOverlay.Visibility = Visibility.Visible;
+            await RefreshDevicesAsync();
+        }
+
+        private void SessionsCloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SessionsOverlay != null) SessionsOverlay.Visibility = Visibility.Collapsed;
         }
 
         /// <summary>Fetches the account's sessions and rebuilds the device-list UI.</summary>
@@ -39,6 +55,8 @@ namespace UniMatrix
             _devicesLoading = true;
             DeviceListStatus.Text = "Loading sessions\u2026";
             DeviceListPanel.Children.Clear();
+            _otherDeviceIds.Clear();
+            if (SignOutOthersButton != null) SignOutOthersButton.Visibility = Visibility.Collapsed;
             try
             {
                 // Refresh the locally-tracked device keys first so the verified/unverified badge is
@@ -80,7 +98,19 @@ namespace UniMatrix
                         var stored = _db.GetDevice(_client.UserId, d.DeviceId);
                         if (stored != null) trust = stored.Trust;
                     }
+                    if (!isCurrent && !string.IsNullOrEmpty(d.DeviceId))
+                        _otherDeviceIds.Add(d.DeviceId);
                     DeviceListPanel.Children.Add(BuildDeviceCard(d, isCurrent, trust));
+                }
+
+                // Offer the bulk action only when there's more than just this session to remove.
+                if (SignOutOthersButton != null)
+                {
+                    SignOutOthersButton.Visibility = _otherDeviceIds.Count > 0
+                        ? Visibility.Visible : Visibility.Collapsed;
+                    SignOutOthersButton.Content = _otherDeviceIds.Count == 1
+                        ? "Sign out 1 other session"
+                        : "Sign out all " + _otherDeviceIds.Count + " other sessions";
                 }
             }
             catch (Exception ex)
@@ -307,6 +337,51 @@ namespace UniMatrix
             {
                 App.Log("DEVICES: remove failed: " + ex.Message);
                 await ShowErrorAsync("Couldn't remove the session: " + ex.Message);
+            }
+        }
+
+        private async void SignOutOthersButton_Click(object sender, RoutedEventArgs e)
+        {
+            // Snapshot the ids so a background refresh can't change the list mid-operation.
+            var ids = new List<string>(_otherDeviceIds);
+            if (ids.Count == 0) { await ShowErrorAsync("There are no other sessions to sign out."); return; }
+
+            var confirm = new Windows.UI.Popups.MessageDialog(
+                "Sign out " + (ids.Count == 1 ? "the other session" : "all " + ids.Count + " other sessions") +
+                "? They'll each need to sign in again. This session stays signed in.",
+                "Sign out other sessions");
+            confirm.Commands.Add(new Windows.UI.Popups.UICommand("Sign out"));
+            confirm.Commands.Add(new Windows.UI.Popups.UICommand("Cancel"));
+            confirm.DefaultCommandIndex = 1;
+            confirm.CancelCommandIndex = 1;
+            var choice = await confirm.ShowAsync();
+            if (choice == null || choice.Label != "Sign out") return;
+
+            string password = await PromptInputAsync(
+                "Confirm it's you",
+                "Enter your account password to sign out your other sessions.",
+                "Password", null, "Sign out", isPassword: true);
+            if (password == null) return; // cancelled
+            if (password.Length == 0) { await ShowErrorAsync("Enter your password to sign out the sessions."); return; }
+
+            try
+            {
+                if (SignOutOthersButton != null)
+                {
+                    SignOutOthersButton.IsEnabled = false;
+                    SignOutOthersButton.Content = "Signing out\u2026";
+                }
+                await _client.DeleteDevicesAsync(ids, password);
+                await RefreshDevicesAsync();
+            }
+            catch (Exception ex)
+            {
+                App.Log("DEVICES: bulk remove failed: " + ex.Message);
+                await ShowErrorAsync("Couldn't sign out the other sessions: " + ex.Message);
+            }
+            finally
+            {
+                if (SignOutOthersButton != null) SignOutOthersButton.IsEnabled = true;
             }
         }
 
