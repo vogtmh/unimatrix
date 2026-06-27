@@ -31,18 +31,21 @@ appcontainer. It is a **plain native C DLL** (not a WinRT component), bound via 
 
 ```powershell
 cd olm-build
-# One-shot: clone the libolm source, build ARM/Release, harvest olm.dll + the app-local runtime.
-.\build-olm-uwp.ps1 -Clone -Build -Harvest -HarvestCrt
+# One-shot: clone the libolm source, build ARM/Release, harvest olm.dll into the app.
+.\build-olm-uwp.ps1 -Clone -Build -Harvest
 ```
 
 Output lands in `UniMatrix\UniMatrix\libs\olm\ARM\olm.dll`. The app's `CRYPTO` build define
-expects it there.
+expects it there, and the csproj packages it at the **package root** (`<Link>olm.dll</Link>`) so
+the appcontainer loader can resolve the `DllImport("olm.dll")` — a DLL left in a subfolder fails
+with `ERROR_MOD_NOT_FOUND` (126).
 
 The UWP toolchain forbids static-CRT DLLs (MSB8024), so `olm.dll` links the appcontainer VC++
-runtime dynamically. Instead of depending on the `Microsoft.VCLibs.140.00` framework package
-(which is hard to deploy on Windows 10 Mobile and fails to load with `ERROR_MOD_NOT_FOUND`),
-`-HarvestCrt` copies `MSVCP140_APP.dll` + `VCRUNTIME140_APP.dll` next to `olm.dll`, and the
-csproj packages them **app-local** so the loader resolves them from the install folder.
+runtime (`MSVCP140_APP.dll` / `VCRUNTIME140_APP.dll`) dynamically. These come from the
+`Microsoft.VCLibs.140.00` framework package, declared as a `<PackageDependency>` in
+`Package.appxmanifest`. On most devices (and via Device Portal install) VCLibs is already present,
+so nothing extra is needed. If you must deploy to a device that lacks it, `-HarvestCrt` (optionally
+`-CrtSource <folder-or-appx>`) copies those two DLLs app-local — but that is rarely necessary.
 
 ## webrtc-test — WebRTC (calls, experimental)
 
