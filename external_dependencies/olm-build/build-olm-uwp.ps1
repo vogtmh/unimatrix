@@ -108,6 +108,12 @@ if ($Build) {
     # CMAKE_POLICY_VERSION_MINIMUM=3.5: libolm's CMakeLists declares cmake_minimum_required at a
     # version below 3.5, and CMake 3.31+ removed that compatibility. This flag lets the old
     # project configure under a modern CMake without editing the vendored source.
+    # /sdl-: the WindowsStore (UWP) toolchain turns on /sdl by default, which PROMOTES warning
+    # C4146 ("unary minus on unsigned type") to a hard error. libolm's vendored ed25519 code
+    # (lib/ed25519/src/fe.c) does this deliberately, so we disable /sdl for the build. /wd4146
+    # additionally silences the (harmless) warning. These go in *_FLAGS so they land in the
+    # vcxproj AdditionalOptions after the toolchain's /sdl and therefore override it.
+    $relaxFlags = "/sdl- /wd4146"
     $cmakeArgs = @(
         "-S", $srcDir,
         "-B", $buildDir,
@@ -116,6 +122,8 @@ if ($Build) {
         "-DCMAKE_SYSTEM_NAME=WindowsStore",
         "-DCMAKE_SYSTEM_VERSION=10.0",
         "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+        "-DCMAKE_C_FLAGS=$relaxFlags",
+        "-DCMAKE_CXX_FLAGS=$relaxFlags",
         "-DBUILD_SHARED_LIBS=ON",
         "-DOLM_TESTS=OFF"
     )
