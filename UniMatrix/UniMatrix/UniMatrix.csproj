@@ -129,6 +129,9 @@
     <Compile Include="MainPage.Security.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="MainPage.Verify.cs">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Crypto\CryptoMath.cs" />
     <Compile Include="Crypto\CanonicalJson.cs" />
     <Compile Include="Models\MatrixModels.cs" />
@@ -138,6 +141,7 @@
     <Compile Include="Services\CryptoService.cs" />
     <Compile Include="Services\KeyBackupService.cs" />
     <Compile Include="Services\SsssService.cs" />
+    <Compile Include="Services\VerificationService.cs" />
     <Compile Include="Services\AttachmentCrypto.cs" />
     <Compile Include="Services\OlmNative.cs" />
     <Compile Include="Services\OlmWrappers.cs" />

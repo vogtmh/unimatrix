@@ -60,6 +60,71 @@ namespace UniMatrix
             catch (Exception ex) { App.Log("CRYPTO: RefreshBackupStatusAsync failed: " + ex.Message); }
         }
 
+        /// <summary>Updates the DEVICE VERIFICATION settings label/button to reflect cross-signing state.</summary>
+        private void RefreshCrossSigningStatus()
+        {
+            try
+            {
+                if (_crypto == null || !_crypto.Available)
+                {
+                    CrossSigningStatusText.Text = "End-to-end encryption isn't available on this device.";
+                    VerifySessionButton.IsEnabled = false;
+                    return;
+                }
+
+                var cs = _db.GetCrossSigningKeys(_client.UserId);
+                if (cs == null || string.IsNullOrEmpty(cs.MasterKey))
+                {
+                    CrossSigningStatusText.Text = "Cross-signing isn't set up for your account yet.";
+                    VerifySessionButton.IsEnabled = false;
+                    return;
+                }
+
+                var me = _db.GetDevice(_client.UserId, _crypto.DeviceId);
+                if (me != null && me.Trust >= 1)
+                {
+                    CrossSigningStatusText.Text = "This session is verified \u2713 Your other devices and contacts trust it.";
+                    VerifySessionButton.Content = "Re-verify this session";
+                }
+                else
+                {
+                    CrossSigningStatusText.Text = "This session is not verified. Verify it to remove security warnings elsewhere.";
+                    VerifySessionButton.Content = "Verify this session";
+                }
+                VerifySessionButton.IsEnabled = true;
+            }
+            catch (Exception ex) { App.Log("CRYPTO: RefreshCrossSigningStatus failed: " + ex.Message); }
+        }
+
+        private async void VerifySessionButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_crypto == null || !_crypto.Available) return;
+
+            // If secret storage is already unlocked, self-sign immediately; otherwise ask for the
+            // recovery key first (the recovery flow self-signs on success).
+            if (_ssss != null && _ssss.IsUnlocked)
+            {
+                VerifySessionButton.IsEnabled = false;
+                try
+                {
+                    await EnsureCrossSigningSelfSignAsync();
+                    RefreshCrossSigningStatus();
+                    await ShowErrorAsync("This session is now verified.");
+                }
+                catch (Exception ex)
+                {
+                    App.Log("CRYPTO: verify session failed: " + ex.Message);
+                    await ShowErrorAsync("Couldn't verify this session: " + ex.Message);
+                }
+                finally { VerifySessionButton.IsEnabled = true; }
+                return;
+            }
+
+            RecoveryInput.Text = "";
+            RecoveryProgress.Visibility = Visibility.Collapsed;
+            RecoveryPanel.Visibility = Visibility.Visible;
+        }
+
         // ---- Enable encryption on a room ----
 
         private async void EnableEncryptionButton_Click(object sender, RoutedEventArgs e)
@@ -222,6 +287,12 @@ namespace UniMatrix
                     await LoadMessagesAsync(_currentRoomId);
 
                 await RefreshBackupStatusAsync();
+
+                // The recovery key also unlocks the cross-signing secrets: load them and self-sign
+                // this device so other clients stop flagging it as "unverified by its owner".
+                await EnsureCrossSigningSelfSignAsync();
+                RefreshCrossSigningStatus();
+
                 await ShowErrorAsync("Restored " + imported + " key" + (imported == 1 ? "" : "s") + " from backup.");
             }
             catch (Exception ex)
@@ -229,6 +300,31 @@ namespace UniMatrix
                 RecoveryProgress.Visibility = Visibility.Collapsed;
                 await ShowErrorAsync("Restore failed: " + ex.Message);
             }
+        }
+
+        /// <summary>Loads our cross-signing private keys from the (now unlocked) secret storage and
+        /// signs this device with the self-signing key, so other clients trust it as ours.</summary>
+        private async Task EnsureCrossSigningSelfSignAsync()
+        {
+            if (_crypto == null || !_crypto.Available || _ssss == null || !_ssss.IsUnlocked) return;
+            try
+            {
+                string master = await _ssss.GetSecretAsync("m.cross_signing.master");
+                string ssk = await _ssss.GetSecretAsync("m.cross_signing.self_signing");
+                string usk = await _ssss.GetSecretAsync("m.cross_signing.user_signing");
+                if (string.IsNullOrEmpty(ssk))
+                {
+                    App.Log("CRYPTO: no self-signing secret in storage; skipping cross-sign");
+                    return;
+                }
+                if (!_crypto.EnableCrossSigning(master, ssk, usk)) return;
+
+                // Refresh our own cross-signing + device trust from the server, then self-sign.
+                if (!string.IsNullOrEmpty(_client?.UserId))
+                    await _crypto.UpdateDeviceKeysAsync(new[] { _client.UserId });
+                await _crypto.SelfSignDeviceAsync();
+            }
+            catch (Exception ex) { App.Log("CRYPTO: cross-sign self-sign failed: " + ex.Message); }
         }
 
         /// <summary>Re-attempts decryption of every still-encrypted message across all encrypted rooms

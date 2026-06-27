@@ -165,6 +165,37 @@ namespace UniMatrix.Services
         [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_key_from_private(IntPtr decryption, byte[] pubkey, UIntPtr pubkey_length, byte[] privkey, UIntPtr privkey_length);
         [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_max_plaintext_length(IntPtr decryption, UIntPtr ciphertext_length);
         [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_decrypt(IntPtr decryption, byte[] ephemeral_key, UIntPtr ephemeral_key_length, byte[] mac, UIntPtr mac_length, byte[] ciphertext, UIntPtr ciphertext_length, byte[] plaintext, UIntPtr max_plaintext_length);
+
+        // ---- PK signing (Ed25519, used by cross-signing) ----------------------------------
+        // An OlmPkSigning wraps an Ed25519 keypair derived from a 32-byte seed. The cross-signing
+        // master/self-signing/user-signing private keys are exactly such seeds (stored in SSSS).
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_signing_size();
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern IntPtr olm_pk_signing(IntPtr memory);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern IntPtr olm_pk_signing_last_error(IntPtr sign);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_clear_pk_signing(IntPtr sign);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_signing_seed_length();
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_signing_public_key_length();
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_signing_key_from_seed(IntPtr sign, byte[] pubkey, UIntPtr pubkey_length, byte[] seed, UIntPtr seed_length);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_signature_length();
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_pk_sign(IntPtr sign, byte[] message, UIntPtr message_length, byte[] signature, UIntPtr signature_length);
+
+        // ---- SAS (Short Authentication String, used by interactive device verification) ----
+        // An OlmSAS holds an ephemeral ECDH keypair. Two parties exchange public keys, then derive
+        // identical short codes (emoji/decimal) and MACs to confirm no MITM.
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_size();
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern IntPtr olm_sas(IntPtr memory);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern IntPtr olm_sas_last_error(IntPtr sas);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_clear_sas(IntPtr sas);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_create_sas_random_length(IntPtr sas);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_create_sas(IntPtr sas, byte[] random, UIntPtr random_length);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_pubkey_length(IntPtr sas);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_get_pubkey(IntPtr sas, byte[] pubkey, UIntPtr pubkey_length);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_set_their_key(IntPtr sas, byte[] their_key, UIntPtr their_key_length);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern int olm_sas_is_their_key_set(IntPtr sas);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_generate_bytes(IntPtr sas, byte[] info, UIntPtr info_length, byte[] output, UIntPtr output_length);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_mac_length(IntPtr sas);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_calculate_mac(IntPtr sas, byte[] input, UIntPtr input_length, byte[] info, UIntPtr info_length, byte[] mac, UIntPtr mac_length);
+        [DllImport(Dll, CallingConvention = Cdecl)] internal static extern UIntPtr olm_sas_calculate_mac_fixed_base64(IntPtr sas, byte[] input, UIntPtr input_length, byte[] info, UIntPtr info_length, byte[] mac, UIntPtr mac_length);
     }
 }
 #endif

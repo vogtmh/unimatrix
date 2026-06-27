@@ -584,6 +584,28 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Uploads cross-signing signatures (/keys/signatures/upload). <paramref name="signatures"/>
+        /// maps userId -> (deviceIdOrKeyId -> signed object incl. its "signatures"). Used to publish
+        /// the signature our self-signing key makes over our own device, and the signature our
+        /// user-signing key makes over another user's master key. Not UIA-protected.
+        /// </summary>
+        public async Task<JsonObject> KeysSignaturesUploadAsync(JsonObject signatures)
+        {
+            return await PostAsync("/_matrix/client/r0/keys/signatures/upload", signatures, requireAuth: true);
+        }
+
+        /// <summary>
+        /// Publishes the cross-signing public keys (master, self-signing, user-signing) via
+        /// /keys/device_signing/upload. This endpoint is User-Interactive-Auth protected (needs a
+        /// password stage), so <paramref name="body"/> must already carry an "auth" block. Only used
+        /// when bootstrapping cross-signing from scratch (deferred); included for completeness.
+        /// </summary>
+        public async Task<JsonObject> KeysDeviceSigningUploadAsync(JsonObject body)
+        {
+            return await PostAsync("/_matrix/client/r0/keys/device_signing/upload", body, requireAuth: true);
+        }
+
+        /// <summary>
         /// Sends to-device events (/sendToDevice/{type}/{txn}). <paramref name="messages"/> maps
         /// userId -> (deviceId -> content), with "*" as a deviceId meaning all of a user's devices.
         /// Used to distribute Megolm room keys wrapped in Olm (m.room.encrypted) and SSSS secrets.

@@ -42,7 +42,18 @@ namespace UniMatrix.Data
         public string Curve25519;
         public string Ed25519;
         public string Json;   // the full device_keys object (for re-verification / display)
-        public int Trust;     // 0 = unverified (TOFU), 1 = verified (reserved for future use)
+        public int Trust;     // 0 = unverified (TOFU), 1 = cross-signed by owner, 2 = locally/SAS verified
+    }
+
+    /// <summary>A user's published cross-signing public keys (Ed25519, base64).</summary>
+    internal class StoredCrossSigningKeys
+    {
+        public string UserId;
+        public string MasterKey;       // m.cross_signing.master public key
+        public string SelfSigningKey;  // m.cross_signing.self_signing public key
+        public string UserSigningKey;  // m.cross_signing.user_signing public key (only for our own user)
+        public int Verified;           // 1 = this user's master key is trusted by us
+        public long UpdatedTs;
     }
 
     /// <summary>
@@ -112,6 +123,17 @@ namespace UniMatrix.Data
                     dirty   INTEGER NOT NULL DEFAULT 1
                 )");
 
+            // A user's published cross-signing public keys, used to evaluate device trust.
+            Execute(@"
+                CREATE TABLE IF NOT EXISTS cross_signing_keys (
+                    user_id      TEXT PRIMARY KEY,
+                    master_key   TEXT,
+                    ssk          TEXT,
+                    usk          TEXT,
+                    verified     INTEGER NOT NULL DEFAULT 0,
+                    updated_ts   INTEGER NOT NULL DEFAULT 0
+                )");
+
             Execute(@"
                 CREATE TABLE IF NOT EXISTS e2ee_rooms (
                     room_id       TEXT PRIMARY KEY,
@@ -141,6 +163,7 @@ namespace UniMatrix.Data
                 Execute("DELETE FROM megolm_out");
                 Execute("DELETE FROM device_keys");
                 Execute("DELETE FROM tracked_users");
+                Execute("DELETE FROM cross_signing_keys");
                 Execute("DELETE FROM e2ee_rooms");
                 Execute("DELETE FROM attachment_keys");
                 Execute("DELETE FROM meta WHERE key IN ('backup_version','backup_pubkey','backup_private_key')");
@@ -486,6 +509,55 @@ namespace UniMatrix.Data
             {
                 cmd.CommandText = "DELETE FROM device_keys WHERE user_id = @u";
                 cmd.Parameters.AddWithValue("@u", userId);
+                cmd.ExecuteNonQuery();
+            }
+        }
+
+        // ---- Cross-signing keys ----
+
+        public StoredCrossSigningKeys GetCrossSigningKeys(string userId)
+        {
+            if (string.IsNullOrEmpty(userId)) return null;
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"SELECT master_key, ssk, usk, verified, updated_ts FROM cross_signing_keys
+                                    WHERE user_id = @u LIMIT 1";
+                cmd.Parameters.AddWithValue("@u", userId);
+                using (var rd = cmd.ExecuteReader())
+                {
+                    if (rd.Read())
+                    {
+                        return new StoredCrossSigningKeys
+                        {
+                            UserId = userId,
+                            MasterKey = rd.IsDBNull(0) ? null : rd.GetString(0),
+                            SelfSigningKey = rd.IsDBNull(1) ? null : rd.GetString(1),
+                            UserSigningKey = rd.IsDBNull(2) ? null : rd.GetString(2),
+                            Verified = rd.IsDBNull(3) ? 0 : (int)rd.GetInt64(3),
+                            UpdatedTs = rd.IsDBNull(4) ? 0 : rd.GetInt64(4)
+                        };
+                    }
+                }
+            }
+            return null;
+        }
+
+        public void SaveCrossSigningKeys(StoredCrossSigningKeys k)
+        {
+            if (k == null || string.IsNullOrEmpty(k.UserId)) return;
+            lock (_gate)
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.CommandText = @"
+                    INSERT OR REPLACE INTO cross_signing_keys(user_id, master_key, ssk, usk, verified, updated_ts)
+                    VALUES(@u, @m, @s, @k, @v, @t)";
+                cmd.Parameters.AddWithValue("@u", k.UserId);
+                cmd.Parameters.AddWithValue("@m", (object)k.MasterKey ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@s", (object)k.SelfSigningKey ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@k", (object)k.UserSigningKey ?? DBNull.Value);
+                cmd.Parameters.AddWithValue("@v", k.Verified);
+                cmd.Parameters.AddWithValue("@t", k.UpdatedTs);
                 cmd.ExecuteNonQuery();
             }
         }

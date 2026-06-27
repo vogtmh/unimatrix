@@ -797,6 +797,19 @@
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,6,0,0" TextWrapping="Wrap" />
 
+                    <TextBlock Text="DEVICE VERIFICATION" Foreground="{StaticResource AppFaintTextBrush}"
+                               FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
+                    <TextBlock x:Name="CrossSigningStatusText" Text="Checking verification status…"
+                               Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                               Margin="0,0,0,12" TextWrapping="Wrap" />
+                    <Button x:Name="VerifySessionButton" Content="Verify this session"
+                            Click="VerifySessionButton_Click"
+                            HorizontalAlignment="Stretch" Padding="0,12"
+                            Background="{StaticResource AppCardBrush}" Foreground="White" FontWeight="SemiBold" />
+                    <TextBlock Text="Verifying this session cross-signs it with your account so your other devices (and contacts) trust it."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,6,0,0" TextWrapping="Wrap" />
+
                     <TextBlock Text="MAINTENANCE" Foreground="{StaticResource AppFaintTextBrush}"
                                FontSize="11" FontWeight="SemiBold" Margin="0,28,0,8" />
                     <TextBlock x:Name="StorageUsage" Text="Calculating storage…"
@@ -1087,6 +1100,87 @@
                     </Grid>
                 </Grid>
             </Grid>
+        </Grid>
+
+        <!-- Device verification (SAS / emoji). Shown when a verification request arrives or when the
+             user starts one from Security settings. Three stages: request accept/decline, emoji
+             comparison, then a final status line. -->
+        <Grid x:Name="VerifyOverlay" Background="#F0101418" Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollMode="Disabled">
+                <StackPanel MaxWidth="400" Margin="24,40" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72E;" FontSize="40"
+                              Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,12" />
+                    <TextBlock x:Name="VerifyTitle" Text="Verify device" Foreground="White" FontSize="22"
+                               FontWeight="SemiBold" HorizontalAlignment="Center" TextAlignment="Center" />
+                    <TextBlock x:Name="VerifySubtitle" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                               FontSize="14" HorizontalAlignment="Center" TextAlignment="Center"
+                               TextWrapping="Wrap" Margin="0,6,0,18" />
+
+                    <!-- Stage 1: incoming request accept/decline -->
+                    <Grid x:Name="VerifyRequestPanel" Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Click="VerifyDeclineButton_Click"
+                                HorizontalAlignment="Stretch" Margin="0,0,6,0" Padding="16,14"
+                                Background="#3A1414" Foreground="#FF6B6B" BorderThickness="0">
+                            <TextBlock Text="Decline" HorizontalAlignment="Center" FontSize="15" />
+                        </Button>
+                        <Button Grid.Column="1" Click="VerifyAcceptButton_Click"
+                                HorizontalAlignment="Stretch" Margin="6,0,0,0" Padding="16,14"
+                                Background="#14401C" Foreground="#4CD964" BorderThickness="0">
+                            <TextBlock Text="Accept" HorizontalAlignment="Center" FontSize="15" />
+                        </Button>
+                    </Grid>
+
+                    <!-- Stage 2: emoji comparison -->
+                    <StackPanel x:Name="VerifyEmojiPanel" Visibility="Collapsed">
+                        <TextBlock Text="Confirm the emoji below appear in the same order on both devices."
+                                   Foreground="{StaticResource AppSubtleTextBrush}" FontSize="14"
+                                   TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,16" />
+                        <ItemsControl x:Name="VerifyEmojiList" HorizontalAlignment="Center">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="4" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                        <TextBlock x:Name="VerifyDecimalText" Text="" Foreground="{StaticResource AppSubtleTextBrush}"
+                                   FontSize="13" HorizontalAlignment="Center" Margin="0,12,0,18" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Click="VerifyMismatchButton_Click"
+                                    HorizontalAlignment="Stretch" Margin="0,0,6,0" Padding="16,14"
+                                    Background="#3A1414" Foreground="#FF6B6B" BorderThickness="0">
+                                <TextBlock Text="They don't match" HorizontalAlignment="Center" FontSize="14" />
+                            </Button>
+                            <Button Grid.Column="1" Click="VerifyMatchButton_Click"
+                                    HorizontalAlignment="Stretch" Margin="6,0,0,0" Padding="16,14"
+                                    Background="#14401C" Foreground="#4CD964" BorderThickness="0">
+                                <TextBlock Text="They match" HorizontalAlignment="Center" FontSize="14" />
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Stage 3: progress / final status -->
+                    <StackPanel x:Name="VerifyStatusPanel" Visibility="Collapsed">
+                        <ProgressRing x:Name="VerifyProgress" IsActive="False" Width="32" Height="32"
+                                      Foreground="White" Margin="0,0,0,12" />
+                        <TextBlock x:Name="VerifyStatusText" Text="" Foreground="White" FontSize="15"
+                                   HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" />
+                        <Button x:Name="VerifyCloseButton" Click="VerifyCloseButton_Click" Margin="0,18,0,0"
+                                HorizontalAlignment="Stretch" Padding="16,14"
+                                Background="{StaticResource AppCardBrush}" Foreground="White" BorderThickness="0"
+                                Visibility="Collapsed">
+                            <TextBlock Text="Close" HorizontalAlignment="Center" FontSize="15" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
 
     </Grid>

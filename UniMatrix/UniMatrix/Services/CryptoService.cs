@@ -75,6 +75,17 @@ namespace UniMatrix.Services
         // are held across it). Lock order is always _accountGate -> DB gate, never the reverse.
         private readonly object _accountGate = new object();
 
+        // Cross-signing private keys (derived from 32-byte seeds held in SSSS). Loaded on demand via
+        // EnableCrossSigning once the recovery key has unlocked secret storage; null when locked.
+        // _csSelfSign signs our own device keys (removes the "unverified by its owner" warning);
+        // _csUserSign signs other users' master keys; _csMaster is the root (rarely used at runtime).
+        private OlmPkSigning _csMaster;
+        private OlmPkSigning _csSelfSign;
+        private OlmPkSigning _csUserSign;
+        private string _csMasterPub;
+        private string _csSelfSignPub;
+        private string _csUserSignPub;
+
         // ---- Initialization ----
 
         public async Task InitializeAsync()
@@ -316,10 +327,14 @@ namespace UniMatrix.Services
                 if (resp == null) return;
                 var deviceKeys = (resp.ContainsKey("device_keys") && resp["device_keys"].ValueType == JsonValueType.Object)
                     ? resp.GetNamedObject("device_keys") : null;
-                if (deviceKeys == null) return;
 
                 using (var util = new OlmUtility())
                 {
+                    // Cross-signing keys first, so device trust can be evaluated against them below.
+                    try { ProcessCrossSigningKeys(util, resp); }
+                    catch (Exception ex) { App.Log("CRYPTO: cross-signing parse failed: " + ex.Message); }
+
+                    if (deviceKeys == null) return;
                     foreach (var uid in deviceKeys.Keys)
                     {
                         var devices = deviceKeys.GetNamedObject(uid);
@@ -360,6 +375,22 @@ namespace UniMatrix.Services
             if (existing != null && !string.IsNullOrEmpty(existing.Ed25519) && existing.Ed25519 != ed)
                 throw new Exception("ed25519 changed (possible MITM)");
 
+            // Trust level. Never downgrade a device we locally/SAS-verified (2). Otherwise mark it
+            // cross-signed (1) iff the owner's self-signing key (whose master we trust) has signed it.
+            int trust = existing != null ? existing.Trust : 0;
+            if (trust < 2)
+            {
+                trust = 0;
+                var cs = _db.GetCrossSigningKeys(userId);
+                if (cs != null && cs.Verified == 1 && !string.IsNullOrEmpty(cs.SelfSigningKey))
+                {
+                    string sskSig = MatrixClient.GetString(sigs, "ed25519:" + cs.SelfSigningKey);
+                    if (!string.IsNullOrEmpty(sskSig) &&
+                        util.Verify(cs.SelfSigningKey, CanonicalJson.Serialize(copy), sskSig))
+                        trust = 1;
+                }
+            }
+
             _db.SaveDevice(new StoredDevice
             {
                 UserId = userId,
@@ -367,8 +398,271 @@ namespace UniMatrix.Services
                 Curve25519 = curve,
                 Ed25519 = ed,
                 Json = dk.Stringify(),
-                Trust = 0
+                Trust = trust
             });
+        }
+
+        // ---- Cross-signing ----
+
+        /// <summary>True once our cross-signing self-signing key is loaded (secret storage unlocked).</summary>
+        public bool CrossSigningReady { get { return _csSelfSign != null; } }
+
+        /// <summary>Our self-signing public key (base64), or null when locked.</summary>
+        public string SelfSigningPublicKey { get { return _csSelfSignPub; } }
+
+        /// <summary>Our cross-signing master public key (base64), or null when locked.</summary>
+        public string MasterPublicKey { get { return _csMasterPub; } }
+
+        /// <summary>
+        /// Loads our cross-signing private keys from their 32-byte SSSS seeds (master / self-signing /
+        /// user-signing, each an unpadded-base64 string). Any may be null/empty. Returns true if the
+        /// self-signing key — the one needed to verify this device — became available.
+        /// </summary>
+        public bool EnableCrossSigning(string masterSeedB64, string selfSignSeedB64, string userSignSeedB64)
+        {
+            if (!_available) return false;
+            try
+            {
+                DisposeCrossSigning();
+                if (!string.IsNullOrEmpty(masterSeedB64))
+                {
+                    _csMaster = OlmPkSigning.FromSeed(DecodeSeed(masterSeedB64));
+                    _csMasterPub = _csMaster.PublicKey;
+                }
+                if (!string.IsNullOrEmpty(selfSignSeedB64))
+                {
+                    _csSelfSign = OlmPkSigning.FromSeed(DecodeSeed(selfSignSeedB64));
+                    _csSelfSignPub = _csSelfSign.PublicKey;
+                }
+                if (!string.IsNullOrEmpty(userSignSeedB64))
+                {
+                    _csUserSign = OlmPkSigning.FromSeed(DecodeSeed(userSignSeedB64));
+                    _csUserSignPub = _csUserSign.PublicKey;
+                }
+                App.Log("CRYPTO: cross-signing loaded master=" + (_csMasterPub != null) +
+                        " ssk=" + (_csSelfSignPub != null) + " usk=" + (_csUserSignPub != null));
+                return _csSelfSign != null;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CRYPTO: cross-signing load failed: " + ex.Message);
+                DisposeCrossSigning();
+                return false;
+            }
+        }
+
+        /// <summary>Releases the in-memory cross-signing keys (call on logout / lock).</summary>
+        public void DisableCrossSigning() { DisposeCrossSigning(); }
+
+        private void DisposeCrossSigning()
+        {
+            if (_csMaster != null) { _csMaster.Dispose(); _csMaster = null; }
+            if (_csSelfSign != null) { _csSelfSign.Dispose(); _csSelfSign = null; }
+            if (_csUserSign != null) { _csUserSign.Dispose(); _csUserSign = null; }
+            _csMasterPub = _csSelfSignPub = _csUserSignPub = null;
+        }
+
+        /// <summary>
+        /// Cross-signs THIS device with our self-signing key and uploads the extra signature. This is
+        /// what flips the session to "verified by its owner" in other clients (removing the warning).
+        /// Requires <see cref="EnableCrossSigning"/> to have loaded the self-signing key. Idempotent.
+        /// </summary>
+        public async Task<bool> SelfSignDeviceAsync()
+        {
+            if (!_available || _csSelfSign == null)
+            {
+                App.Log("CRYPTO: self-sign skipped (cross-signing not unlocked)");
+                return false;
+            }
+            try
+            {
+                var dk = BuildDeviceKeys();                 // includes our device's own Ed25519 signature
+                var copy = Clone(dk);
+                if (copy.ContainsKey("signatures")) copy.Remove("signatures");
+                if (copy.ContainsKey("unsigned")) copy.Remove("unsigned");
+                string sskSig = _csSelfSign.Sign(CanonicalJson.Serialize(copy));
+
+                var mine = dk.GetNamedObject("signatures").GetNamedObject(_userId);
+                mine["ed25519:" + _csSelfSignPub] = JsonValue.CreateStringValue(sskSig);
+
+                var body = new JsonObject
+                {
+                    [_userId] = new JsonObject { [_deviceId] = dk }
+                };
+                await _client.KeysSignaturesUploadAsync(body);
+                App.Log("CRYPTO: this device self-signed with SSK " + _csSelfSignPub);
+
+                var existing = _db.GetDevice(_userId, _deviceId);
+                if (existing != null) { existing.Trust = 2; _db.SaveDevice(existing); }
+                return true;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CRYPTO: self-sign failed: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Cross-signs one of OUR OTHER devices (by device id) with our self-signing key and uploads
+        /// the signature, after we have verified it via SAS. No-op if cross-signing isn't unlocked or
+        /// the device isn't known. Best-effort.
+        /// </summary>
+        public async Task<bool> CrossSignOwnDeviceAsync(string deviceId)
+        {
+            if (!_available || _csSelfSign == null || string.IsNullOrEmpty(deviceId)) return false;
+            try
+            {
+                var stored = _db.GetDevice(_userId, deviceId);
+                if (stored == null || string.IsNullOrEmpty(stored.Json)) return false;
+                JsonObject dk;
+                if (!JsonObject.TryParse(stored.Json, out dk)) return false;
+
+                var copy = Clone(dk);
+                if (copy.ContainsKey("signatures")) copy.Remove("signatures");
+                if (copy.ContainsKey("unsigned")) copy.Remove("unsigned");
+                string sskSig = _csSelfSign.Sign(CanonicalJson.Serialize(copy));
+
+                if (!dk.ContainsKey("signatures")) dk["signatures"] = new JsonObject();
+                var sigs = dk.GetNamedObject("signatures");
+                if (!sigs.ContainsKey(_userId)) sigs[_userId] = new JsonObject();
+                sigs.GetNamedObject(_userId)["ed25519:" + _csSelfSignPub] = JsonValue.CreateStringValue(sskSig);
+
+                var body = new JsonObject { [_userId] = new JsonObject { [deviceId] = dk } };
+                await _client.KeysSignaturesUploadAsync(body);
+                App.Log("CRYPTO: cross-signed own device " + deviceId);
+                return true;
+            }
+            catch (Exception ex) { App.Log("CRYPTO: cross-sign own device failed: " + ex.Message); return false; }
+        }
+
+        /// <summary>
+        /// Cross-signs ANOTHER user's master key with our user-signing key (marking that user as
+        /// verified), after we have verified one of their devices via SAS. No-op if the user-signing
+        /// key isn't unlocked. Best-effort.
+        /// </summary>
+        public async Task<bool> CrossSignUserMasterAsync(string userId, string masterKeyB64)
+        {
+            if (!_available || _csUserSign == null || string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(masterKeyB64))
+                return false;
+            try
+            {
+                var masterObj = new JsonObject
+                {
+                    ["user_id"] = JsonValue.CreateStringValue(userId),
+                    ["usage"] = new JsonArray { JsonValue.CreateStringValue("master") },
+                    ["keys"] = new JsonObject { ["ed25519:" + masterKeyB64] = JsonValue.CreateStringValue(masterKeyB64) }
+                };
+                string sig = _csUserSign.Sign(CanonicalJson.Serialize(masterObj));
+                masterObj["signatures"] = new JsonObject
+                {
+                    [_userId] = new JsonObject { ["ed25519:" + _csUserSignPub] = JsonValue.CreateStringValue(sig) }
+                };
+                var body = new JsonObject { [userId] = new JsonObject { [masterKeyB64] = masterObj } };
+                await _client.KeysSignaturesUploadAsync(body);
+                App.Log("CRYPTO: user-signed master of " + userId);
+                return true;
+            }
+            catch (Exception ex) { App.Log("CRYPTO: user-sign master failed: " + ex.Message); return false; }
+        }
+
+        /// validates the SSK←master link, evaluates whether each user's master is trusted (ours by
+        /// matching our loaded master seed; others by our user-signing signature) and persists them.
+        /// </summary>
+        private void ProcessCrossSigningKeys(OlmUtility util, JsonObject resp)
+        {
+            var masterKeys = GetObj(resp, "master_keys");
+            if (masterKeys == null) return;
+            var selfSignKeys = GetObj(resp, "self_signing_keys");
+            var userSignKeys = GetObj(resp, "user_signing_keys");
+
+            foreach (var uid in masterKeys.Keys)
+            {
+                try
+                {
+                    var masterObj = masterKeys.GetNamedObject(uid);
+                    string masterPub = SingleKey(masterObj);
+                    if (string.IsNullOrEmpty(masterPub)) continue;
+
+                    // Is this master trusted?
+                    int verified = 0;
+                    if (uid == _userId)
+                    {
+                        // Our own master: trusted iff it matches the seed we hold (or TOFU when unknown).
+                        if (_csMasterPub != null) verified = (masterPub == _csMasterPub) ? 1 : 0;
+                        else { var prev = _db.GetCrossSigningKeys(uid); verified = (prev != null) ? prev.Verified : 0; }
+                    }
+                    else if (_csUserSign != null)
+                    {
+                        // Another user's master: trusted iff our user-signing key has signed it.
+                        var msigs = GetObj(masterObj, "signatures");
+                        var bySelf = msigs != null ? GetObj(msigs, _userId) : null;
+                        string uskSig = bySelf != null ? MatrixClient.GetString(bySelf, "ed25519:" + _csUserSignPub) : null;
+                        if (!string.IsNullOrEmpty(uskSig))
+                        {
+                            var copy = Clone(masterObj);
+                            if (copy.ContainsKey("signatures")) copy.Remove("signatures");
+                            if (copy.ContainsKey("unsigned")) copy.Remove("unsigned");
+                            if (util.Verify(_csUserSignPub, CanonicalJson.Serialize(copy), uskSig)) verified = 1;
+                        }
+                    }
+
+                    // Self-signing key, validated as signed by this user's master.
+                    string sskPub = null;
+                    if (selfSignKeys != null && selfSignKeys.ContainsKey(uid))
+                    {
+                        var sskObj = selfSignKeys.GetNamedObject(uid);
+                        string pub = SingleKey(sskObj);
+                        var ssigs = GetObj(sskObj, "signatures");
+                        var byMaster = ssigs != null ? GetObj(ssigs, uid) : null;
+                        string masterSig = byMaster != null ? MatrixClient.GetString(byMaster, "ed25519:" + masterPub) : null;
+                        if (!string.IsNullOrEmpty(pub) && !string.IsNullOrEmpty(masterSig))
+                        {
+                            var copy = Clone(sskObj);
+                            if (copy.ContainsKey("signatures")) copy.Remove("signatures");
+                            if (copy.ContainsKey("unsigned")) copy.Remove("unsigned");
+                            if (util.Verify(masterPub, CanonicalJson.Serialize(copy), masterSig)) sskPub = pub;
+                            else App.Log("CRYPTO: SSK for " + uid + " not signed by master");
+                        }
+                    }
+
+                    // User-signing key (only present for ourselves).
+                    string uskPub = null;
+                    if (userSignKeys != null && userSignKeys.ContainsKey(uid))
+                        uskPub = SingleKey(userSignKeys.GetNamedObject(uid));
+
+                    _db.SaveCrossSigningKeys(new StoredCrossSigningKeys
+                    {
+                        UserId = uid,
+                        MasterKey = masterPub,
+                        SelfSigningKey = sskPub,
+                        UserSigningKey = uskPub,
+                        Verified = verified,
+                        UpdatedTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                    });
+                }
+                catch (Exception ex) { App.Log("CRYPTO: cross-signing for " + uid + " failed: " + ex.Message); }
+            }
+        }
+
+        /// <summary>Returns the single base64 key value from a cross-signing key object's "keys" map.</summary>
+        private static string SingleKey(JsonObject keyObj)
+        {
+            var keys = GetObj(keyObj, "keys");
+            if (keys == null) return null;
+            foreach (var k in keys.Keys) return MatrixClient.GetString(keys, k);
+            return null;
+        }
+
+        /// <summary>Decodes a (possibly unpadded) base64 32-byte cross-signing seed.</summary>
+        private static byte[] DecodeSeed(string b64)
+        {
+            string s = (b64 ?? string.Empty).Trim();
+            int rem = s.Length % 4;
+            if (rem == 2) s += "==";
+            else if (rem == 3) s += "=";
+            else if (rem == 1) throw new FormatException("bad base64 seed length");
+            return Convert.FromBase64String(s);
         }
 
         // ---- Inbound: to-device handling ----
@@ -1013,6 +1307,14 @@ namespace UniMatrix.Services
         public void SignObject(JsonObject obj) { }
         public string ExportInboundSession(StoredInboundGroupSession s, out uint firstIndex) { firstIndex = 0; return null; }
         public bool ImportInboundSession(string roomId, string sessionKey, string senderKey, string ed25519, bool forwarded) { return false; }
+        public bool CrossSigningReady { get { return false; } }
+        public string SelfSigningPublicKey { get { return null; } }
+        public string MasterPublicKey { get { return null; } }
+        public bool EnableCrossSigning(string masterSeedB64, string selfSignSeedB64, string userSignSeedB64) { return false; }
+        public void DisableCrossSigning() { }
+        public Task<bool> SelfSignDeviceAsync() { return Task.FromResult(false); }
+        public Task<bool> CrossSignOwnDeviceAsync(string deviceId) { return Task.FromResult(false); }
+        public Task<bool> CrossSignUserMasterAsync(string userId, string masterKeyB64) { return Task.FromResult(false); }
 #endif
 
         // ---- shared JSON helpers (all platforms) ----

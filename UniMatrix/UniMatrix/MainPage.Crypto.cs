@@ -21,6 +21,9 @@ namespace UniMatrix
         // Secret storage (SSSS): stores/recovers the backup private key via recovery key or passphrase.
         private SsssService _ssss;
 
+        // Interactive SAS (emoji) device verification over to-device events. Created with _crypto.
+        private VerificationService _verify;
+
         // Guards the one-time "a backup exists, want to restore it?" prompt so it appears at most once.
         private bool _recoveryPromptShown;
 
@@ -53,6 +56,9 @@ namespace UniMatrix
                     App.Log("CRYPTO: backup enabled=" + _backup.Enabled + " locked=" + _backup.ExistsButLocked);
 
                     _ssss = new SsssService(_client, _backup);
+
+                    _verify = new VerificationService(_client, _crypto, _db);
+                    WireVerificationCallbacks();
                 }
             }
             catch (Exception ex)
@@ -97,6 +103,23 @@ namespace UniMatrix
                     // 2. To-device messages (Olm) carry room keys + secrets. Returns rooms that gained
                     //    a Megolm session, so we can retry their stored ciphertexts.
                     HashSet<string> newKeyRooms = await _crypto.HandleToDeviceEventsAsync(result.ToDeviceEvents);
+
+                    // 2b. Plaintext SAS verification events (m.key.verification.*) drive the verifier.
+                    if (_verify != null && result.ToDeviceEvents != null)
+                    {
+                        foreach (var ev in result.ToDeviceEvents)
+                        {
+                            try
+                            {
+                                string t = MatrixClient.GetString(ev, "type");
+                                if (string.IsNullOrEmpty(t) || !t.StartsWith("m.key.verification.")) continue;
+                                string sender = MatrixClient.GetString(ev, "sender");
+                                var c = CryptoService.GetObj(ev, "content");
+                                if (c != null) await _verify.HandleEventAsync(t, sender, c);
+                            }
+                            catch (Exception vex) { App.Log("VERIFY: route failed: " + vex.Message); }
+                        }
+                    }
 
                     // 3. Decrypt the encrypted timeline events from this sync.
                     foreach (var enc in result.EncryptedEvents)

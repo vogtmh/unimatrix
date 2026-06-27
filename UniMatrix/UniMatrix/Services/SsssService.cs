@@ -28,11 +28,20 @@ namespace UniMatrix.Services
         private readonly MatrixClient _client;
         private readonly KeyBackupService _backup;
 
+        // After a successful Recover/SetUp, the unlocked SSSS key + its id are cached for this
+        // session so other secrets (cross-signing master/self-signing/user-signing private keys)
+        // can be fetched without re-prompting the user for the recovery key.
+        private byte[] _unlockedKey;
+        private string _unlockedKeyId;
+
         public SsssService(MatrixClient client, KeyBackupService backup)
         {
             _client = client;
             _backup = backup;
         }
+
+        /// <summary>True once the SSSS key has been unlocked this session (Recover/SetUp succeeded).</summary>
+        public bool IsUnlocked { get { return _unlockedKey != null; } }
 
         /// <summary>True when the account already has a default SSSS key configured.</summary>
         public async Task<bool> HasDefaultKeyAsync()
@@ -93,6 +102,10 @@ namespace UniMatrix.Services
                     ["key"] = JsonValue.CreateStringValue(keyId)
                 });
 
+                // Remember the unlocked key so cross-signing secrets can be stored/fetched.
+                _unlockedKey = ssssKey;
+                _unlockedKeyId = keyId;
+
                 // Stash the backup private key (if we have one) as a secret.
                 byte[] backupPriv = _backup != null ? _backup.GetPrivateKey() : null;
                 if (backupPriv != null)
@@ -129,6 +142,10 @@ namespace UniMatrix.Services
                 if (ssssKey == null) { App.Log("CRYPTO: could not derive SSSS key"); return -1; }
                 if (!VerifyKey(ssssKey, keyDesc)) { App.Log("CRYPTO: SSSS key check failed"); return -1; }
 
+                // Cache the verified key + id so cross-signing secrets unlock without re-prompting.
+                _unlockedKey = ssssKey;
+                _unlockedKeyId = keyId;
+
                 var secretData = await _client.AccountDataGetAsync(BackupSecretName);
                 var encrypted = secretData != null ? CryptoService.GetObj(secretData, "encrypted") : null;
                 var entry = encrypted != null ? CryptoService.GetObj(encrypted, keyId) : null;
@@ -145,6 +162,38 @@ namespace UniMatrix.Services
                 return await _backup.RestoreAsync(backupPriv);
             }
             catch (Exception ex) { App.Log("CRYPTO: RecoverAsync failed: " + ex.Message); return -1; }
+        }
+
+        /// <summary>
+        /// Fetches and decrypts an arbitrary SSSS secret (e.g. m.cross_signing.master) using the
+        /// key unlocked this session. Returns the secret's plaintext string (typically unpadded
+        /// base64 of a 32-byte seed), or null if locked / not stored / decrypt fails.
+        /// </summary>
+        public async Task<string> GetSecretAsync(string secretName)
+        {
+            try
+            {
+                if (_unlockedKey == null || string.IsNullOrEmpty(_unlockedKeyId)) return null;
+                if (string.IsNullOrEmpty(secretName)) return null;
+
+                var secretData = await _client.AccountDataGetAsync(secretName);
+                var encrypted = secretData != null ? CryptoService.GetObj(secretData, "encrypted") : null;
+                var entry = encrypted != null ? CryptoService.GetObj(encrypted, _unlockedKeyId) : null;
+                if (entry == null) { App.Log("CRYPTO: secret " + secretName + " not in SSSS"); return null; }
+
+                byte[] plain = DecryptData(_unlockedKey, secretName, entry);
+                if (plain == null) { App.Log("CRYPTO: secret " + secretName + " decrypt/mac failed"); return null; }
+                return Encoding.UTF8.GetString(plain);
+            }
+            catch (Exception ex) { App.Log("CRYPTO: GetSecretAsync(" + secretName + ") failed: " + ex.Message); return null; }
+        }
+
+        /// <summary>Forgets the unlocked SSSS key (call on logout).</summary>
+        public void Lock()
+        {
+            if (_unlockedKey != null) Array.Clear(_unlockedKey, 0, _unlockedKey.Length);
+            _unlockedKey = null;
+            _unlockedKeyId = null;
         }
 
         // ---- key derivation ----

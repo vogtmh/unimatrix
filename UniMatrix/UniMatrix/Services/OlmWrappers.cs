@@ -411,6 +411,16 @@ namespace UniMatrix.Services
             var r = OlmNative.olm_ed25519_verify(Ptr, key, OlmHelp.Sz(key.Length), msg, OlmHelp.Sz(msg.Length), sig, OlmHelp.Sz(sig.Length));
             return !OlmHelp.IsError(r);
         }
+
+        /// <summary>Returns the unpadded-base64 SHA-256 of the input (used for the SAS commitment).</summary>
+        internal string Sha256(string input)
+        {
+            var inp = OlmHelp.Utf8(input);
+            long len = OlmHelp.Len(OlmNative.olm_sha256_length(Ptr));
+            var buf = new byte[len];
+            Check(OlmNative.olm_sha256(Ptr, inp, OlmHelp.Sz(inp.Length), buf, OlmHelp.Sz(len)));
+            return OlmHelp.FromUtf8(buf, len);
+        }
     }
 
     /// <summary>Curve25519 public-key encryption — encrypts Megolm sessions to the key backup.</summary>
@@ -479,6 +489,122 @@ namespace UniMatrix.Services
         }
 
         private UIntPtr CheckLen(UIntPtr r) { Check(r); return r; }
+    }
+
+    /// <summary>
+    /// Ed25519 signing key derived from a 32-byte seed. The cross-signing master / self-signing /
+    /// user-signing private keys are such seeds (held in SSSS); this turns one into a signer used to
+    /// cross-sign device keys and other cross-signing keys.
+    /// </summary>
+    internal sealed class OlmPkSigning : OlmObject
+    {
+        private OlmPkSigning() : base(OlmHelp.Len(OlmNative.olm_pk_signing_size())) { }
+        protected override IntPtr Create(IntPtr m) { return OlmNative.olm_pk_signing(m); }
+        protected override void Clear() { OlmNative.olm_clear_pk_signing(Ptr); }
+        protected override string LastError() { return PtrToStr(OlmNative.olm_pk_signing_last_error(Ptr)); }
+
+        /// <summary>The Ed25519 public key (base64) matching the seed.</summary>
+        internal string PublicKey { get; private set; }
+
+        /// <summary>Length in bytes of the seed expected by <see cref="FromSeed"/> (32).</summary>
+        internal static int SeedLength { get { return (int)OlmHelp.Len(OlmNative.olm_pk_signing_seed_length()); } }
+
+        /// <summary>Builds a signer from a 32-byte private seed and derives its public key.</summary>
+        internal static OlmPkSigning FromSeed(byte[] seed)
+        {
+            var s = new OlmPkSigning();
+            long pubLen = OlmHelp.Len(OlmNative.olm_pk_signing_public_key_length());
+            var pub = new byte[pubLen];
+            s.Check(OlmNative.olm_pk_signing_key_from_seed(s.Ptr, pub, OlmHelp.Sz(pubLen), seed, OlmHelp.Sz(seed.Length)));
+            s.PublicKey = OlmHelp.FromUtf8(pub, pubLen);
+            return s;
+        }
+
+        /// <summary>Signs a message and returns the base64 Ed25519 signature.</summary>
+        internal string Sign(string message)
+        {
+            var msg = OlmHelp.Utf8(message);
+            long len = OlmHelp.Len(OlmNative.olm_pk_signature_length());
+            var buf = new byte[len];
+            long w = OlmHelp.Len(CheckLen(OlmNative.olm_pk_sign(Ptr, msg, OlmHelp.Sz(msg.Length), buf, OlmHelp.Sz(len))));
+            return OlmHelp.FromUtf8(buf, w);
+        }
+
+        private UIntPtr CheckLen(UIntPtr r) { Check(r); return r; }
+    }
+
+    /// <summary>
+    /// One side of a Short Authentication String exchange. Holds an ephemeral ECDH keypair; after
+    /// both parties set each other's public key, both derive identical short codes (emoji/decimal)
+    /// and MACs, confirming there is no man-in-the-middle.
+    /// </summary>
+    internal sealed class OlmSas : OlmObject
+    {
+        private OlmSas() : base(OlmHelp.Len(OlmNative.olm_sas_size())) { }
+        protected override IntPtr Create(IntPtr m) { return OlmNative.olm_sas(m); }
+        protected override void Clear() { OlmNative.olm_clear_sas(Ptr); }
+        protected override string LastError() { return PtrToStr(OlmNative.olm_sas_last_error(Ptr)); }
+
+        /// <summary>Creates a SAS with a fresh ephemeral keypair.</summary>
+        internal static OlmSas Create()
+        {
+            var s = new OlmSas();
+            var rnd = OlmHelp.Random(OlmHelp.Len(OlmNative.olm_create_sas_random_length(s.Ptr)));
+            s.Check(OlmNative.olm_create_sas(s.Ptr, rnd, OlmHelp.Sz(rnd.Length)));
+            return s;
+        }
+
+        /// <summary>Our ephemeral public key (base64), to send to the other party.</summary>
+        internal string PublicKey()
+        {
+            long len = OlmHelp.Len(OlmNative.olm_sas_pubkey_length(Ptr));
+            var buf = new byte[len];
+            Check(OlmNative.olm_sas_get_pubkey(Ptr, buf, OlmHelp.Sz(len)));
+            return OlmHelp.FromUtf8(buf, len);
+        }
+
+        /// <summary>Sets the other party's ephemeral public key (base64), enabling the shared secret.</summary>
+        internal void SetTheirKey(string theirKey)
+        {
+            var key = OlmHelp.Utf8(theirKey);
+            Check(OlmNative.olm_sas_set_their_key(Ptr, key, OlmHelp.Sz(key.Length)));
+        }
+
+        internal bool IsTheirKeySet { get { return OlmNative.olm_sas_is_their_key_set(Ptr) != 0; } }
+
+        /// <summary>Derives <paramref name="length"/> raw bytes from the shared secret + info string;
+        /// these are sliced into the emoji/decimal short code.</summary>
+        internal byte[] GenerateBytes(string info, int length)
+        {
+            var inf = OlmHelp.Utf8(info);
+            var outBuf = new byte[length];
+            Check(OlmNative.olm_sas_generate_bytes(Ptr, inf, OlmHelp.Sz(inf.Length), outBuf, OlmHelp.Sz(length)));
+            return outBuf;
+        }
+
+        /// <summary>Calculates a base64 MAC over <paramref name="input"/> keyed by the shared secret
+        /// and <paramref name="info"/>. Used to authenticate exchanged keys.</summary>
+        internal string CalculateMac(string input, string info)
+        {
+            var inp = OlmHelp.Utf8(input);
+            var inf = OlmHelp.Utf8(info);
+            long len = OlmHelp.Len(OlmNative.olm_sas_mac_length(Ptr));
+            var buf = new byte[len];
+            Check(OlmNative.olm_sas_calculate_mac(Ptr, inp, OlmHelp.Sz(inp.Length), inf, OlmHelp.Sz(inf.Length), buf, OlmHelp.Sz(len)));
+            return OlmHelp.FromUtf8(buf, len);
+        }
+
+        /// <summary>Calculates a base64 MAC using the fixed (unpadded) base64 encoding required by
+        /// the "hkdf-hmac-sha256.v2" MAC method in SAS verification.</summary>
+        internal string CalculateMacFixed(string input, string info)
+        {
+            var inp = OlmHelp.Utf8(input);
+            var inf = OlmHelp.Utf8(info);
+            long len = OlmHelp.Len(OlmNative.olm_sas_mac_length(Ptr));
+            var buf = new byte[len];
+            Check(OlmNative.olm_sas_calculate_mac_fixed_base64(Ptr, inp, OlmHelp.Sz(inp.Length), inf, OlmHelp.Sz(inf.Length), buf, OlmHelp.Sz(len)));
+            return OlmHelp.FromUtf8(buf, len);
+        }
     }
 }
 #endif

@@ -31,6 +31,9 @@ namespace UniMatrix
 
             // Refresh key-backup status text + button states.
             var __ = RefreshBackupStatusAsync();
+
+            // Refresh the device-verification (cross-signing) status.
+            RefreshCrossSigningStatus();
         }
 
         private async System.Threading.Tasks.Task UpdateStorageUsageAsync()
@@ -215,9 +218,12 @@ namespace UniMatrix
 
             _db.ClearAll();
             _db.ClearCryptoTables();
+            try { _crypto?.DisableCrossSigning(); } catch { }
+            try { _ssss?.Lock(); } catch { }
             _crypto = null;
             _backup = null;
             _ssss = null;
+            _verify = null;
             _recoveryPromptShown = false;
             Rooms.Clear();
             Messages.Clear();
