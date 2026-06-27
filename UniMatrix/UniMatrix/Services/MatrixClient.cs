@@ -16,6 +16,15 @@ namespace UniMatrix.Services
         public string DeviceId { get; set; }
     }
 
+    /// <summary>One of the account's sessions (devices), as returned by GET /devices.</summary>
+    internal class DeviceListEntry
+    {
+        public string DeviceId { get; set; }
+        public string DisplayName { get; set; }
+        public string LastSeenIp { get; set; }
+        public long LastSeenTs { get; set; }
+    }
+
     /// <summary>
     /// Thin wrapper over the Matrix Client-Server API (r0). Handles login,
     /// the long-polling /sync loop, sending messages, room creation, history
@@ -438,6 +447,109 @@ namespace UniMatrix.Services
             {
                 App.Log("Profile avatar lookup failed for " + userId + ": " + ex.Message);
                 return null;
+            }
+        }
+
+        // ---- Device (session) management ----
+
+        /// <summary>Lists all of the account's sessions (devices) with their display names and last-seen info.</summary>
+        public async Task<List<DeviceListEntry>> GetDevicesAsync()
+        {
+            var list = new List<DeviceListEntry>();
+            string path = "/_matrix/client/r0/devices?access_token=" + Uri.EscapeDataString(_accessToken);
+            var resp = await GetAsync(path, CancellationToken.None);
+            if (resp != null && resp.ContainsKey("devices") && resp["devices"].ValueType == JsonValueType.Array)
+            {
+                foreach (var v in resp.GetNamedArray("devices"))
+                {
+                    if (v.ValueType != JsonValueType.Object) continue;
+                    var o = v.GetObject();
+                    list.Add(new DeviceListEntry
+                    {
+                        DeviceId = GetString(o, "device_id"),
+                        DisplayName = GetString(o, "display_name"),
+                        LastSeenIp = GetString(o, "last_seen_ip"),
+                        LastSeenTs = (long)GetNumber(o, "last_seen_ts")
+                    });
+                }
+            }
+            return list;
+        }
+
+        /// <summary>Renames a session (sets its public display name).</summary>
+        public async Task RenameDeviceAsync(string deviceId, string displayName)
+        {
+            string path = "/_matrix/client/r0/devices/" + Uri.EscapeDataString(deviceId);
+            var body = new JsonObject { ["display_name"] = JsonValue.CreateStringValue(displayName ?? "") };
+            await PutAsync(path, body);
+        }
+
+        /// <summary>
+        /// Deletes (signs out) a session. The endpoint is guarded by user-interactive auth: the
+        /// first call returns a 401 carrying a session id, then we resubmit with the account
+        /// password. Throws <see cref="MatrixException"/> if the deletion ultimately fails.
+        /// </summary>
+        public async Task DeleteDeviceAsync(string deviceId, string password)
+        {
+            string path = "/_matrix/client/r0/devices/" + Uri.EscapeDataString(deviceId) +
+                          "?access_token=" + Uri.EscapeDataString(_accessToken);
+            var uri = new Uri(_baseUrl + path);
+
+            // First attempt with no auth dict — expected to 401 with a UIA session id.
+            var first = await SendDeleteAsync(uri, new JsonObject());
+            if (first.Item1) return;
+
+            string session = null;
+            try
+            {
+                JsonObject info;
+                if (JsonObject.TryParse(first.Item2, out info)) session = GetString(info, "session");
+            }
+            catch { }
+
+            var auth = new JsonObject
+            {
+                ["type"] = JsonValue.CreateStringValue("m.login.password"),
+                ["identifier"] = new JsonObject
+                {
+                    ["type"] = JsonValue.CreateStringValue("m.id.user"),
+                    ["user"] = JsonValue.CreateStringValue(UserId ?? "")
+                },
+                ["password"] = JsonValue.CreateStringValue(password ?? "")
+            };
+            if (!string.IsNullOrEmpty(session)) auth["session"] = JsonValue.CreateStringValue(session);
+
+            var second = await SendDeleteAsync(uri, new JsonObject { ["auth"] = auth });
+            if (second.Item1) return;
+
+            // Surface a useful error message from the server's JSON body.
+            string message = "Couldn't remove the session.";
+            try
+            {
+                JsonObject err;
+                if (JsonObject.TryParse(second.Item2, out err))
+                {
+                    string detail = GetString(err, "error");
+                    string code = GetString(err, "errcode");
+                    if (!string.IsNullOrEmpty(detail))
+                        message = detail + (string.IsNullOrEmpty(code) ? "" : " (" + code + ")");
+                }
+            }
+            catch { }
+            throw new MatrixException(message, 0, 0);
+        }
+
+        /// <summary>Sends a DELETE with an optional JSON body. Returns (success, responseBody).</summary>
+        private async Task<Tuple<bool, string>> SendDeleteAsync(Uri uri, JsonObject body)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Delete, uri);
+            if (body != null)
+                request.Content = new HttpStringContent(body.Stringify(),
+                    Windows.Storage.Streams.UnicodeEncoding.Utf8, "application/json");
+            using (var resp = await _http.SendRequestAsync(request))
+            {
+                string text = await resp.Content.ReadAsStringAsync();
+                return Tuple.Create(resp.IsSuccessStatusCode, text);
             }
         }
 

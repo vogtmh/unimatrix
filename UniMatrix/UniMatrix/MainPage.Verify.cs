@@ -76,6 +76,16 @@ namespace UniMatrix
             VerifyCloseButton.Visibility = Visibility.Visible;
             VerifyStatusPanel.Visibility = Visibility.Visible;
             VerifyOverlay.Visibility = Visibility.Visible;
+
+            // Reflect the new trust state in the Security settings (status text + session badges).
+            if (ok)
+            {
+                try { RefreshCrossSigningStatus(); } catch { }
+                if (SettingsTab2 != null && SettingsTab2.Visibility == Visibility.Visible)
+                {
+                    var _ = RefreshDevicesAsync();
+                }
+            }
         }
 
         private void ShowVerifyWorking(string text)

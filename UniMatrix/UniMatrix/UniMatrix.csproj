@@ -132,6 +132,9 @@
     <Compile Include="MainPage.Verify.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="MainPage.Devices.cs">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Crypto\CryptoMath.cs" />
     <Compile Include="Crypto\CanonicalJson.cs" />
     <Compile Include="Models\MatrixModels.cs" />

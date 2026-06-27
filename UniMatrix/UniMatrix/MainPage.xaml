@@ -828,6 +828,27 @@
                     <TextBlock Text="Verifying this session cross-signs it with your account so your other devices (and contacts) trust it."
                                Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
                                Margin="0,6,0,0" TextWrapping="Wrap" />
+
+                    <Grid Margin="0,28,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="YOUR SESSIONS" Foreground="{StaticResource AppFaintTextBrush}"
+                                   FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Button x:Name="RefreshDevicesButton" Grid.Column="1" Click="RefreshDevicesButton_Click"
+                                Background="Transparent" BorderThickness="0" Padding="6,2" VerticalAlignment="Center">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE72C;" FontSize="14"
+                                      Foreground="{StaticResource AppSubtleTextBrush}" />
+                        </Button>
+                    </Grid>
+                    <TextBlock x:Name="DeviceListStatus" Text="Loading sessions…"
+                               Foreground="{StaticResource AppSubtleTextBrush}" FontSize="13"
+                               Margin="0,0,0,8" TextWrapping="Wrap" />
+                    <StackPanel x:Name="DeviceListPanel" />
+                    <TextBlock Text="Each session is a place you're signed in. Verify a session to confirm it's really yours, or remove ones you don't recognise."
+                               Foreground="{StaticResource AppFaintTextBrush}" FontSize="12"
+                               Margin="0,6,0,0" TextWrapping="Wrap" />
                 </StackPanel>
             </ScrollViewer>
 
