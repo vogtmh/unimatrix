@@ -135,12 +135,6 @@ namespace UniMatrix
                 App.Log("CRYPTO: ProcessCryptoSyncAsync error: " + ex.Message);
             }
         }
-            }
-            catch (Exception ex)
-            {
-                App.Log("CRYPTO: ProcessCryptoSyncAsync error: " + ex.Message);
-            }
-        }
 
         /// <summary>Decrypts one encrypted event and overwrites its stored row. Returns true on success.</summary>
         private bool DecryptAndStore(string roomId, string eventId, string sender, long ts, JsonObject content)
