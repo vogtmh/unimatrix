@@ -48,6 +48,12 @@ namespace UniMatrix
         // STUN/TURN servers (the foundation under any managed WebRTC path). Logs "STUN:" lines.
         private StunProbe _stunProbe;
 
+        // Stage-2 dependency-free managed ICE agent: answers the subscriber offer and runs real STUN
+        // connectivity checks against the SFU in pure managed code (on by default on ARM via the
+        // MANAGED_ICE constant). When active it REPLACES _liveKitMedia as the single answerer. Logs
+        // "ICE:" lines.
+        private ManagedIceAgent _managedIce;
+
         // True while an accept/join attempt is in progress, so a double-tap doesn't fire twice.
         private bool _matrixRtcJoining;
 
@@ -342,7 +348,12 @@ namespace UniMatrix
             var signal = new LiveKitSignalClient();
             _liveKitSignal = signal;
 
-#if SPIKE_MANAGED_RTC
+#if MANAGED_ICE
+            // Stage-2 spike: drive the dependency-free managed ICE agent instead of the Org.WebRtc
+            // media path. It alone answers the SFU offer (two answers would break the join) and runs
+            // its own STUN gathering + connectivity checks.
+            _managedIce = new ManagedIceAgent(signal);
+#elif SPIKE_MANAGED_RTC
             // Spike build: drive the managed SIPSorcery media path instead of the Org.WebRtc one, so
             // only one of them answers the SFU offer.
             _managedRtcProbe = new ManagedRtcProbe(signal);
@@ -371,14 +382,18 @@ namespace UniMatrix
                         CallStatusText.Text = "In call \u00B7 " + (join.OtherParticipantCount + 1) + " on SFU";
                 });
 
+#if !MANAGED_ICE
                 // Stage-1 spike: fire a dependency-free STUN probe at the SFU's ICE servers to confirm
                 // the appcontainer can do UDP to them (the foundation for any managed WebRTC path).
+                // Skipped when MANAGED_ICE is active because the agent does its own STUN gathering on
+                // the same socket it runs connectivity checks from.
                 if (_liveKitSignal == signal && join != null)
                 {
                     var stun = new StunProbe();
                     _stunProbe = stun;
                     _ = stun.ProbeAsync(join.IceServers);
                 }
+#endif
             };
 
             signal.Closed += reason =>
@@ -416,6 +431,13 @@ namespace UniMatrix
             if (stun != null)
             {
                 try { stun.Close(); } catch { }
+            }
+
+            var ice = _managedIce;
+            _managedIce = null;
+            if (ice != null)
+            {
+                try { ice.Close(); } catch { }
             }
 
             var signal = _liveKitSignal;

@@ -56,7 +56,7 @@
          end-to-end encryption (OlmNative/OlmWrappers/CryptoService). Both only ARM references the
          harvested native libraries (libs\webrtc\ARM, libs\olm\ARM), so the defines are ARM-only;
          other archs compile those services with the native calls stubbed out. -->
-    <DefineConstants>DEBUG;TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC;CRYPTO</DefineConstants>
+    <DefineConstants>DEBUG;TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC;CRYPTO;MANAGED_ICE</DefineConstants>
     <NoWarn>;2008</NoWarn>
     <DebugType>full</DebugType>
     <PlatformTarget>ARM</PlatformTarget>
@@ -66,7 +66,7 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|ARM'">
     <OutputPath>bin\ARM\Release\</OutputPath>
-    <DefineConstants>TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC;CRYPTO</DefineConstants>
+    <DefineConstants>TRACE;NETFX_CORE;WINDOWS_UWP;WEBRTC;CRYPTO;MANAGED_ICE</DefineConstants>
     <Optimize>true</Optimize>
     <NoWarn>;2008</NoWarn>
     <DebugType>pdbonly</DebugType>
@@ -158,6 +158,7 @@
     <Compile Include="Services\LiveKitSignalClient.cs" />
     <Compile Include="Services\LiveKitMediaSession.cs" />
     <Compile Include="Services\ManagedRtcProbe.cs" />
+    <Compile Include="Services\ManagedIceAgent.cs" />
     <Compile Include="Services\StunProbe.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
@@ -251,23 +252,16 @@
     </PackageReference>
   </ItemGroup>
   <!--
-    MANAGED-RTC SPIKE (OFF by default — it CANNOT restore on this project).
+    MANAGED-RTC SPIKE — SIPSorcery NuGet path REMOVED (it can never work on this target).
     SIPSorcery only ships netstandard2.0+, and consuming netstandard2.0 requires
     TargetPlatformMinVersion >= 10.0.16299; this project is min 10.0.14393 (and the target device,
-    a Lumia 930 on Windows 10 Mobile, never reaches 16299), so NuGet restore fails with NU1202 and
-    the resulting package would be undeployable anyway. Left here (gated off) for reference. To even
-    attempt it you must (a) raise TargetPlatformMinVersion to 10.0.16299 AND (b) have a device on
-    >= 16299. Enable with /p:ManagedRtcSpike=true only if you understand it won't install on W10M.
-    The spike code lives behind the SPIKE_MANAGED_RTC compile constant (set below).
+    a Lumia 930 on Windows 10 Mobile, never reaches 16299), so NuGet restore always failed with
+    NU1202 and the resulting package would be undeployable anyway. The managed-WebRTC investigation
+    continues via the dependency-free vendoring path instead (Services\StunProbe.cs, pure
+    Windows.Networking.Sockets — no NuGet). Services\ManagedRtcProbe.cs remains as an inert stub
+    (its SIPSorcery code is behind the SPIKE_MANAGED_RTC constant, which is intentionally never
+    defined). Do NOT re-add a SIPSorcery PackageReference here — it will only reintroduce NU1202.
   -->
-  <ItemGroup Condition="'$(ManagedRtcSpike)' == 'true'">
-    <PackageReference Include="SIPSorcery">
-      <Version>6.2.4</Version>
-    </PackageReference>
-  </ItemGroup>
-  <PropertyGroup Condition="'$(ManagedRtcSpike)' == 'true'">
-    <DefineConstants>$(DefineConstants);SPIKE_MANAGED_RTC</DefineConstants>
-  </PropertyGroup>
   <!--
     Windows Mobile Extensions for the UWP: provides the mobile-only contracts used at compile time,
     e.g. Windows.Phone.Devices.Notification.VibrationDevice (incoming-call ring vibration). All such
