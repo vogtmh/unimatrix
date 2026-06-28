@@ -1089,6 +1089,11 @@
              AcceptDeclinePanel shows while an incoming call is ringing, then it collapses and
              only the Hang up button remains for the connected call. -->
         <Grid x:Name="CallOverlay" Background="#F0101418" Visibility="Collapsed">
+            <!-- Remote camera fills the screen during a connected video call. It sits behind the
+                 (transparent) controls grid and the self-view PiP. RealTimePlayback minimizes
+                 buffering so the remote view stays live. Shown only once a remote video track arrives. -->
+            <MediaElement x:Name="PeerVideo" Stretch="UniformToFill" Visibility="Collapsed"
+                          RealTimePlayback="True" />
             <Grid MaxWidth="360" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                   Margin="24,0">
                 <Grid.RowDefinitions>
@@ -1108,8 +1113,8 @@
                                FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
 
-                <!-- Avatar + name + status, centered (~50% height). -->
-                <StackPanel Grid.Row="1" Grid.RowSpan="2" HorizontalAlignment="Center"
+                <!-- Avatar + name + status, centered (~50% height). Hidden once remote video shows. -->
+                <StackPanel x:Name="CallInfoPanel" Grid.Row="1" Grid.RowSpan="2" HorizontalAlignment="Center"
                             VerticalAlignment="Center">
                     <Grid Width="96" Height="96" HorizontalAlignment="Center">
                         <Ellipse x:Name="CallAvatarFallback" Fill="{StaticResource AppCardBrush}" />

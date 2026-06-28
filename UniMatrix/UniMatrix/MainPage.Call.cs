@@ -45,9 +45,10 @@ namespace UniMatrix
         }
 
         /// <summary>
-        /// Phase 1 video smoke test: opens the call overlay and shows a local camera self-preview
-        /// (no signalling yet). Verifies that camera capture + WebRTC rendering work on the device.
-        /// Hang up stops the preview. Full video calling is wired in a later phase.
+        /// Places an outgoing 1:1 video call: shows the call overlay with the local self-view PiP,
+        /// hands the self/remote MediaElements to the service as render targets, then starts the
+        /// call with video enabled. The remote camera appears once its track arrives
+        /// (CallService_RemoteVideoReady).
         /// </summary>
         private async void VideoCallButton_Click(object sender, RoutedEventArgs e)
         {
@@ -63,22 +64,24 @@ namespace UniMatrix
             }
             if (_callService.InCall) return;
 
+            _callService.SetVideoRenderTargets(SelfVideo, PeerVideo);
             ShowCallOverlay(incoming: false, roomId: _currentRoomId,
-                            peerName: GetRoomDisplayName(_currentRoomId), status: "Camera preview\u2026");
-            if (SelfVideoBorder != null) SelfVideoBorder.Visibility = Visibility.Visible;
-
-            bool ok = await _callService.StartLocalPreviewAsync(SelfVideo);
-            if (!ok)
-            {
-                if (SelfVideoBorder != null) SelfVideoBorder.Visibility = Visibility.Collapsed;
-                HideCallOverlay();
-            }
+                            peerName: GetRoomDisplayName(_currentRoomId), status: "Calling\u2026");
+            ShowSelfVideo(true);
+            await _callService.PlaceCallAsync(_currentRoomId, video: true);
         }
 
         private async void CallAcceptButton_Click(object sender, RoutedEventArgs e)
         {
             if (_callService == null) return;
             StopRingVibration();
+            // If the caller offered video, answer with our camera too: hand over the render targets
+            // and show the self-view PiP before accepting.
+            if (_callService.IncomingCallIsVideo)
+            {
+                _callService.SetVideoRenderTargets(SelfVideo, PeerVideo);
+                ShowSelfVideo(true);
+            }
             if (CallAcceptDeclinePanel != null) CallAcceptDeclinePanel.Visibility = Visibility.Collapsed;
             if (CallActivePanel != null) CallActivePanel.Visibility = Visibility.Visible;
             if (CallStatusText != null) CallStatusText.Text = "Connecting\u2026";
@@ -116,9 +119,21 @@ namespace UniMatrix
 
         private void CallService_IncomingCall(string roomId)
         {
+            bool video = _callService != null && _callService.IncomingCallIsVideo;
             ShowCallOverlay(incoming: true, roomId: roomId,
-                            peerName: GetRoomDisplayName(roomId), status: "Incoming call\u2026");
+                            peerName: GetRoomDisplayName(roomId),
+                            status: video ? "Incoming video call\u2026" : "Incoming call\u2026");
             StartRingVibration();
+        }
+
+        /// <summary>
+        /// The remote camera track arrived: reveal the full-screen peer video and hide the avatar/
+        /// status panel so the call screen becomes a video view. Raised on the UI thread.
+        /// </summary>
+        private void CallService_RemoteVideoReady()
+        {
+            if (PeerVideo != null) PeerVideo.Visibility = Visibility.Visible;
+            if (CallInfoPanel != null) CallInfoPanel.Visibility = Visibility.Collapsed;
         }
 
         private void CallService_CallConnected()
@@ -265,12 +280,22 @@ namespace UniMatrix
             CallOverlay.Visibility = Visibility.Visible;
         }
 
+        /// <summary>Shows or hides the local self-view picture-in-picture.</summary>
+        private void ShowSelfVideo(bool show)
+        {
+            if (SelfVideoBorder != null)
+                SelfVideoBorder.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         private void HideCallOverlay()
         {
             // Stop a standalone camera preview (Phase 1 smoke test) and hide the self-view. During a
             // real call InCall is true, so the preview teardown is skipped (the call owns the tracks).
             if (_callService != null && !_callService.InCall) _callService.StopLocalPreview();
-            if (SelfVideoBorder != null) SelfVideoBorder.Visibility = Visibility.Collapsed;
+            // Reset the video chrome so the next (audio) call starts from the avatar view.
+            ShowSelfVideo(false);
+            if (PeerVideo != null) PeerVideo.Visibility = Visibility.Collapsed;
+            if (CallInfoPanel != null) CallInfoPanel.Visibility = Visibility.Visible;
             if (CallOverlay != null) CallOverlay.Visibility = Visibility.Collapsed;
         }
 

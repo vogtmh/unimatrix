@@ -49,6 +49,10 @@ namespace UniMatrix.Services
         // True while a standalone local camera preview (no peer connection) is running. Used by the
         // Phase 1 video smoke test to show the self-view before full video calling is wired up.
         private bool _previewActive;
+        // True when the current call/preview involves video (camera capture + video media).
+        private bool _isVideoCall;
+        // True when the inbound invite's offer SDP carries an m=video section (so we answer with video).
+        private bool _incomingHasVideo;
 
         /// <summary>True when this build actually has the native WebRTC library available.</summary>
         public bool IsWebRtcAvailable
@@ -69,8 +73,28 @@ namespace UniMatrix.Services
         /// <summary>True when the local microphone is muted.</summary>
         public bool IsMuted { get { return _muted; } }
 
+        /// <summary>True when the active (or pending) call carries video.</summary>
+        public bool IsVideoCall { get { return _isVideoCall; } }
+
+        /// <summary>True when the currently ringing incoming call offered video.</summary>
+        public bool IncomingCallIsVideo { get { return _incomingHasVideo; } }
+
         /// <summary>The room of the active (or pending) call, or null.</summary>
         public string CurrentRoomId { get { return _roomId; } }
+
+        /// <summary>
+        /// Supplies the MediaElements the self and remote video tracks render into. The UI must call
+        /// this before placing/accepting a video call; binding happens on the UI thread once each
+        /// track exists. Pass nulls to clear.
+        /// </summary>
+        public void SetVideoRenderTargets(Windows.UI.Xaml.Controls.MediaElement self,
+                                          Windows.UI.Xaml.Controls.MediaElement peer)
+        {
+#if WEBRTC
+            _selfVideoElement = self;
+            _peerVideoElement = peer;
+#endif
+        }
 
         // ---- Events for the UI (all raised on the UI thread) ----
 
@@ -79,6 +103,9 @@ namespace UniMatrix.Services
 
         /// <summary>Media is flowing (ICE connected).</summary>
         public event Action CallConnected;
+
+        /// <summary>A remote video track arrived and was bound to the peer MediaElement.</summary>
+        public event Action RemoteVideoReady;
 
         /// <summary>The call ended (hung up, declined, failed or remote gone).</summary>
         public event Action CallEnded;
@@ -133,11 +160,17 @@ namespace UniMatrix.Services
         private RTCPeerConnection _pc;
         private IMediaStreamTrack _selfAudioTrack;
         private IMediaStreamTrack _peerAudioTrack;
-        // Video tracks (Phase 1+: capture/self-preview now; remote render in a later phase).
+        // Video tracks (self capture + remote render).
         private IMediaStreamTrack _selfVideoTrack;
         private IMediaStreamTrack _peerVideoTrack;
-        // True when the current call/preview involves video (camera capture + video offer).
-        private bool _isVideoCall;
+        // Camera chosen for this call (resolved on the UI thread before the native track is built
+        // on the background thread, since device enumeration is async/UI-affine).
+        private string _selectedCamName;
+        private string _selectedCamId;
+        // The MediaElements the self and remote video tracks render into, supplied by the UI before
+        // the call starts. Binding a track touches XAML so it must happen on the UI thread.
+        private Windows.UI.Xaml.Controls.MediaElement _selfVideoElement;
+        private Windows.UI.Xaml.Controls.MediaElement _peerVideoElement;
 
         private bool _isCaller;
         private bool _remoteDescriptionSet;
@@ -254,16 +287,89 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Initializes the native library and requests the microphone. Must run on the UI thread
-        /// (the WebRTC event queue is bound to the UI dispatcher and the OS mic prompt needs the
-        /// UI thread). Call this before <see cref="CreatePeerConnection"/>.
+        /// Requests camera access and resolves the camera to use for this call into
+        /// <see cref="_selectedCamName"/>/<see cref="_selectedCamId"/>, preferring the front-facing
+        /// one (falling back to the first). Must run on the UI thread (the OS camera prompt and
+        /// device enumeration are UI-affine). Returns false if no camera is available/permitted.
         /// </summary>
-        private async Task<bool> PrepareCallAsync()
+        private async Task<bool> ResolveCameraAsync()
+        {
+            if (!await RequestCameraAsync())
+            {
+                Status("Camera permission denied.");
+                return false;
+            }
+            string frontId = await GetFrontCameraIdAsync();
+            var cameras = await VideoCapturer.GetDevices();
+            string camName = null, camId = null;
+            if (cameras != null)
+            {
+                foreach (var c in cameras)
+                {
+                    if (c?.Info == null) continue;
+                    if (camId == null) { camName = c.Info.Name; camId = c.Info.Id; } // fallback: first
+                    if (!string.IsNullOrEmpty(frontId) && c.Info.Id == frontId)
+                    {
+                        camName = c.Info.Name; camId = c.Info.Id; break;
+                    }
+                }
+            }
+            if (camId == null) { Status("No camera found."); return false; }
+            _selectedCamName = camName;
+            _selectedCamId = camId;
+            Status("Using camera: " + (camName ?? camId));
+            return true;
+        }
+
+        /// <summary>
+        /// Builds the local video capturer/source/track from the resolved camera at QVGA@15 (light
+        /// on the Lumia 930's encoder). Native constructors block until the WebRTC dispatcher pumps,
+        /// so this MUST run on a background thread (it does inside <see cref="CreatePeerConnection"/>
+        /// and the preview's Task.Run). Requires <see cref="_factory"/> and the selected camera.
+        /// </summary>
+        private IMediaStreamTrack BuildVideoTrack()
+        {
+            var capturer = VideoCapturer.Create(_selectedCamName, _selectedCamId, false);
+
+            IReadOnlyList<IConstraint> mandatory = new List<IConstraint>
+            {
+                new Constraint("maxWidth", "320"),
+                new Constraint("minWidth", "320"),
+                new Constraint("maxHeight", "240"),
+                new Constraint("minHeight", "240"),
+                new Constraint("maxFrameRate", "15"),
+                new Constraint("minFrameRate", "15")
+            };
+            IReadOnlyList<IConstraint> optional = new List<IConstraint>();
+            var constraints = new MediaConstraints(mandatory, optional);
+
+            var videoOptions = new VideoOptions
+            {
+                Factory = _factory,
+                Capturer = capturer,
+                Constraints = constraints
+            };
+            var source = VideoTrackSource.Create(videoOptions);
+            return MediaStreamTrack.CreateVideoTrack("SELF_VIDEO", source);
+        }
+
+        /// <summary>
+        /// Initializes the native library and requests the microphone (and the camera for a video
+        /// call). Must run on the UI thread (the WebRTC event queue is bound to the UI dispatcher
+        /// and the OS permission prompts + device enumeration need the UI thread). Call this before
+        /// <see cref="CreatePeerConnection"/>.
+        /// </summary>
+        private async Task<bool> PrepareCallAsync(bool video)
         {
             EnsureLibrary();
             if (!await RequestMicAsync())
             {
                 Status("Microphone permission denied.");
+                return false;
+            }
+            if (video && !await ResolveCameraAsync())
+            {
+                Status("Camera unavailable; cannot start video.");
                 return false;
             }
             // Pull short-lived TURN credentials from the homeserver so the call can traverse NATs
@@ -330,11 +436,31 @@ namespace UniMatrix.Services
             _pc.OnIceConnectionStateChange += Pc_OnIceConnectionStateChange;
             _pc.OnIceGatheringStateChange += Pc_OnIceGatheringStateChange;
 
-            // Audio-only: create a single local audio track. No video capturer/track.
+            // Always create the local audio track.
             var audioOptions = new AudioOptions { Factory = _factory };
             var audioSource = AudioTrackSource.Create(audioOptions);
             _selfAudioTrack = MediaStreamTrack.CreateAudioTrack("SELF_AUDIO", audioSource);
             _pc.AddTrack(_selfAudioTrack);
+
+            // For a video call also create and add the local camera track, then render the self-view
+            // into the supplied MediaElement. Binding touches XAML so it's marshalled to the UI
+            // thread; the track itself is built here on the background thread (native calls block).
+            if (_isVideoCall)
+            {
+                _selfVideoTrack = BuildVideoTrack();
+                _pc.AddTrack(_selfVideoTrack);
+                var selfEl = _selfVideoElement;
+                var selfTrack = _selfVideoTrack;
+                if (selfEl != null)
+                {
+                    RunOnUi(() =>
+                    {
+                        try { selfTrack.Element = MediaElementMaker.Bind(selfEl); }
+                        catch (Exception ex) { App.Log("CALL: self-video bind failed: " + ex.Message); }
+                    });
+                }
+                Status("Local video track added.");
+            }
 
             Status("Peer connection created.");
             return true;
@@ -368,6 +494,25 @@ namespace UniMatrix.Services
             {
                 _peerAudioTrack = evt.Track;
                 Status("Remote audio track received.");
+            }
+            else if (evt?.Track != null && evt.Track.Kind == "video")
+            {
+                // Keep a reference and render the remote camera into the peer MediaElement. Binding
+                // touches XAML, so marshal it (and the UI notification) to the UI thread.
+                _peerVideoTrack = evt.Track;
+                var peerEl = _peerVideoElement;
+                var peerTrack = _peerVideoTrack;
+                if (peerEl != null)
+                {
+                    RunOnUi(() =>
+                    {
+                        try { peerTrack.Element = MediaElementMaker.Bind(peerEl); }
+                        catch (Exception ex) { App.Log("CALL: peer-video bind failed: " + ex.Message); }
+                        var handler = RemoteVideoReady;
+                        if (handler != null) handler();
+                    });
+                }
+                Status("Remote video track received.");
             }
         }
 
@@ -475,62 +620,18 @@ namespace UniMatrix.Services
             try
             {
                 EnsureLibrary();
-                if (!await RequestCameraAsync())
-                {
-                    Status("Camera permission denied.");
-                    return false;
-                }
 
-                // Enumerate cameras (UI thread) and prefer the front-facing one.
-                string frontId = await GetFrontCameraIdAsync();
-                var cameras = await VideoCapturer.GetDevices();
-                string camName = null, camId = null;
-                if (cameras != null)
-                {
-                    foreach (var c in cameras)
-                    {
-                        if (c?.Info == null) continue;
-                        if (camId == null) { camName = c.Info.Name; camId = c.Info.Id; } // fallback: first
-                        if (!string.IsNullOrEmpty(frontId) && c.Info.Id == frontId)
-                        {
-                            camName = c.Info.Name; camId = c.Info.Id; break;
-                        }
-                    }
-                }
-                if (camId == null) { Status("No camera found."); return false; }
-                Status("Using camera: " + (camName ?? camId));
+                // Resolve the camera (permission + front-facing pick) on the UI thread.
+                if (!await ResolveCameraAsync()) return false;
 
                 // The native constructors block until the WebRTC dispatcher pumps, so build the
-                // capturer/source/track off the UI thread (same rule as CreatePeerConnection).
+                // factory/capturer/source/track off the UI thread (same rule as CreatePeerConnection).
                 bool built = await Task.Run(() =>
                 {
                     try
                     {
                         _factory = new WebRtcFactory(new WebRtcFactoryConfiguration());
-
-                        var capturer = VideoCapturer.Create(camName, camId, false);
-
-                        // QVGA @ 15fps keeps the encoder light on the Lumia 930.
-                        IReadOnlyList<IConstraint> mandatory = new List<IConstraint>
-                        {
-                            new Constraint("maxWidth", "320"),
-                            new Constraint("minWidth", "320"),
-                            new Constraint("maxHeight", "240"),
-                            new Constraint("minHeight", "240"),
-                            new Constraint("maxFrameRate", "15"),
-                            new Constraint("minFrameRate", "15")
-                        };
-                        IReadOnlyList<IConstraint> optional = new List<IConstraint>();
-                        var constraints = new MediaConstraints(mandatory, optional);
-
-                        var videoOptions = new VideoOptions
-                        {
-                            Factory = _factory,
-                            Capturer = capturer,
-                            Constraints = constraints
-                        };
-                        var source = VideoTrackSource.Create(videoOptions);
-                        _selfVideoTrack = MediaStreamTrack.CreateVideoTrack("SELF_VIDEO", source);
+                        _selfVideoTrack = BuildVideoTrack();
                         return true;
                     }
                     catch (Exception ex)
@@ -588,8 +689,8 @@ namespace UniMatrix.Services
 #endif
         }
 
-        /// <summary>Places an outgoing audio call to the given room.</summary>
-        public async Task PlaceCallAsync(string roomId)
+        /// <summary>Places an outgoing call to the given room (audio, or audio+video when video=true).</summary>
+        public async Task PlaceCallAsync(string roomId, bool video = false)
         {
             if (string.IsNullOrEmpty(roomId)) return;
             if (_inCall) { Status("Already in a call."); return; }
@@ -603,10 +704,11 @@ namespace UniMatrix.Services
                 _remotePartyId = null;
                 _mediaStreamId = NewStreamId();
                 _isCaller = true;
+                _isVideoCall = video;
                 _inCall = true;
                 _remoteDescriptionSet = false;
 
-                if (!await PrepareCallAsync()) { EndCallLocal(notifyRemote: false); return; }
+                if (!await PrepareCallAsync(_isVideoCall)) { EndCallLocal(notifyRemote: false); return; }
 
                 // The native WebRTC calls block the calling thread until the library pumps work
                 // through the dispatcher they're bound to. Running them on the UI thread therefore
@@ -619,7 +721,7 @@ namespace UniMatrix.Services
                     var offerOptions = new RTCOfferOptions
                     {
                         OfferToReceiveAudio = true,
-                        OfferToReceiveVideo = false
+                        OfferToReceiveVideo = _isVideoCall
                     };
                     var offer = await _pc.CreateOffer(offerOptions);
                     await _pc.SetLocalDescription(offer);
@@ -676,7 +778,10 @@ namespace UniMatrix.Services
             {
                 _localPartyId = NewPartyId();
                 _mediaStreamId = NewStreamId();
-                if (!await PrepareCallAsync()) { EndCallLocal(notifyRemote: true); return; }
+                // Mirror the caller's media: if they offered video, answer with our camera too so the
+                // call is two-way video (CreatePeerConnection adds the video track when _isVideoCall).
+                _isVideoCall = _incomingHasVideo;
+                if (!await PrepareCallAsync(_isVideoCall)) { EndCallLocal(notifyRemote: true); return; }
 
                 // Build the connection and craft the answer off the UI thread (see PlaceCallAsync).
                 bool ok = await Task.Run(async () =>
@@ -865,8 +970,12 @@ namespace UniMatrix.Services
             _inCall = true;
             _remoteDescriptionSet = false;
             _pendingOfferSdp = sdp;
+            // Detect whether the caller offered video so the UI can show a video-call prompt and so
+            // AcceptIncomingAsync answers with our camera.
+            _incomingHasVideo = sdp.IndexOf("m=video", StringComparison.Ordinal) >= 0;
 
-            Status("Incoming call from " + (signal.Sender ?? "unknown"));
+            Status("Incoming " + (_incomingHasVideo ? "video" : "audio") + " call from " +
+                   (signal.Sender ?? "unknown"));
             RunOnUi(() => IncomingCall?.Invoke(_roomId));
             await Task.CompletedTask;
         }
@@ -1059,7 +1168,12 @@ namespace UniMatrix.Services
             _selfVideoTrack = null;
             _peerVideoTrack = null;
             _isVideoCall = false;
+            _incomingHasVideo = false;
             _previewActive = false;
+            _selectedCamName = null;
+            _selectedCamId = null;
+            _selfVideoElement = null;
+            _peerVideoElement = null;
             _remoteDescriptionSet = false;
             _pendingRemoteCandidates.Clear();
             _pendingOfferSdp = null;
@@ -1109,20 +1223,21 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
-        /// Associates our outgoing audio track with a media stream in the SDP we put on the wire.
+        /// Associates each of our outgoing media tracks (audio and, for a video call, video) with a
+        /// single media stream in the SDP we put on the wire.
         ///
-        /// Org.WebRtc emits the local track unattached to any stream — the m-section carries
-        /// "a=msid:- SELF_AUDIO" and the a=ssrc line has no msid. matrix-js-sdk (Element) builds its
-        /// remote audio feed from the ontrack event's streams[]; a stream-less track yields an empty
-        /// streams[], so Element receives our track but never renders it and stays "Connecting"
-        /// (one-way audio: we hear them, they don't hear us). libwebrtc-to-libwebrtc (phone↔phone)
-        /// works regardless because it renders stream-less tracks anyway.
+        /// Org.WebRtc emits local tracks unattached to any stream — each m-section carries
+        /// "a=msid:- TRACK" and the a=ssrc line has no msid. matrix-js-sdk (Element) builds its
+        /// remote CallFeed from the ontrack event's streams[]; a stream-less track yields an empty
+        /// streams[], so Element receives our track but never renders it and stays "Connecting".
+        /// Labelling both the audio and video m-sections with the SAME stream id makes Element group
+        /// them into one feed (so it shows our camera AND plays our mic for the same remote user).
         ///
         /// We only relabel the copy we SEND; the peer connection keeps its own valid local
-        /// description (we pass the original SDP to SetLocalDescription). The real SSRC is preserved,
-        /// so the stream we advertise maps to the RTP the phone actually transmits. We set both the
-        /// Unified-Plan form (a=msid on the m-section) and the Plan-B form (a=ssrc … msid) so either
-        /// kind of receiver picks it up.
+        /// description (we pass the original SDP to SetLocalDescription). Each section's real SSRC is
+        /// preserved. We process every audio/video m-section independently so the audio track stays
+        /// "SELF_AUDIO" and the video track stays "SELF_VIDEO", and we set both the Unified-Plan form
+        /// (a=msid on the section) and the Plan-B form (a=ssrc … msid) so either receiver picks it up.
         /// </summary>
         private static string AddStreamIdToSdp(string sdp, string streamId)
         {
@@ -1130,55 +1245,68 @@ namespace UniMatrix.Services
             string nl = sdp.IndexOf("\r\n", StringComparison.Ordinal) >= 0 ? "\r\n" : "\n";
             var lines = new List<string>(sdp.Replace("\r\n", "\n").Split('\n'));
 
-            string track = "SELF_AUDIO";
-            string ssrc = null;
-            bool replacedMsid = false;
+            // Index where each m-section begins.
+            var sectionStarts = new List<int>();
             for (int i = 0; i < lines.Count; i++)
-            {
-                string line = lines[i];
-                if (ssrc == null && line.StartsWith("a=ssrc:", StringComparison.Ordinal))
-                {
-                    int colon = "a=ssrc:".Length;
-                    int sp = line.IndexOf(' ', colon);
-                    ssrc = sp > colon ? line.Substring(colon, sp - colon) : line.Substring(colon);
-                }
-                if (line.StartsWith("a=msid:", StringComparison.Ordinal))
-                {
-                    // Replace a stream-less ("a=msid:- TRACK") or any existing msid with our stream.
-                    string rest = line.Substring("a=msid:".Length);
-                    int sp = rest.IndexOf(' ');
-                    if (sp >= 0 && !string.IsNullOrEmpty(rest.Substring(sp + 1))) track = rest.Substring(sp + 1).Trim();
-                    lines[i] = "a=msid:" + streamId + " " + track;
-                    replacedMsid = true;
-                }
-            }
+                if (lines[i].StartsWith("m=", StringComparison.Ordinal)) sectionStarts.Add(i);
 
-            // If the m-section had no a=msid at all, add one right after the a=mid line (Unified Plan).
-            if (!replacedMsid)
+            // Process sections last-to-first so the inserts in one section don't shift the start
+            // indices of the sections we haven't handled yet.
+            for (int s = sectionStarts.Count - 1; s >= 0; s--)
             {
-                for (int i = 0; i < lines.Count; i++)
+                int start = sectionStarts[s];
+                int secEnd = (s + 1 < sectionStarts.Count) ? sectionStarts[s + 1] : lines.Count;
+                string mLine = lines[start];
+                string track = mLine.StartsWith("m=video", StringComparison.Ordinal) ? "SELF_VIDEO"
+                             : mLine.StartsWith("m=audio", StringComparison.Ordinal) ? "SELF_AUDIO"
+                             : null;
+                if (track == null) continue; // skip application/data sections
+
+                string ssrc = null;
+                int midIdx = -1;
+                bool replacedMsid = false;
+                for (int i = start; i < secEnd; i++)
                 {
-                    if (lines[i].StartsWith("a=mid:", StringComparison.Ordinal))
+                    string line = lines[i];
+                    if (line.StartsWith("a=mid:", StringComparison.Ordinal)) midIdx = i;
+                    if (ssrc == null && line.StartsWith("a=ssrc:", StringComparison.Ordinal))
                     {
-                        lines.Insert(i + 1, "a=msid:" + streamId + " " + track);
-                        break;
+                        int colon = "a=ssrc:".Length;
+                        int sp = line.IndexOf(' ', colon);
+                        ssrc = sp > colon ? line.Substring(colon, sp - colon) : line.Substring(colon);
+                    }
+                    if (line.StartsWith("a=msid:", StringComparison.Ordinal))
+                    {
+                        // Replace a stream-less ("a=msid:- TRACK") or any existing msid with our stream.
+                        string rest = line.Substring("a=msid:".Length);
+                        int sp = rest.IndexOf(' ');
+                        if (sp >= 0 && !string.IsNullOrEmpty(rest.Substring(sp + 1))) track = rest.Substring(sp + 1).Trim();
+                        lines[i] = "a=msid:" + streamId + " " + track;
+                        replacedMsid = true;
                     }
                 }
-            }
 
-            // Ensure an a=ssrc … msid association exists (Plan B / older receivers rely on it).
-            if (ssrc != null)
-            {
-                string ssrcMsidPrefix = "a=ssrc:" + ssrc + " msid:";
-                bool hasSsrcMsid = false;
-                int lastSsrcIdx = -1;
-                for (int i = 0; i < lines.Count; i++)
+                // If the section had no a=msid at all, add one right after a=mid (Unified Plan).
+                if (!replacedMsid && midIdx >= 0)
                 {
-                    if (lines[i].StartsWith(ssrcMsidPrefix, StringComparison.Ordinal)) hasSsrcMsid = true;
-                    if (lines[i].StartsWith("a=ssrc:" + ssrc, StringComparison.Ordinal)) lastSsrcIdx = i;
+                    lines.Insert(midIdx + 1, "a=msid:" + streamId + " " + track);
+                    secEnd++;
                 }
-                if (!hasSsrcMsid && lastSsrcIdx >= 0)
-                    lines.Insert(lastSsrcIdx + 1, "a=ssrc:" + ssrc + " msid:" + streamId + " " + track);
+
+                // Ensure an a=ssrc … msid association exists (Plan B / older receivers rely on it).
+                if (ssrc != null)
+                {
+                    string ssrcMsidPrefix = "a=ssrc:" + ssrc + " msid:";
+                    bool hasSsrcMsid = false;
+                    int lastSsrcIdx = -1;
+                    for (int i = start; i < secEnd; i++)
+                    {
+                        if (lines[i].StartsWith(ssrcMsidPrefix, StringComparison.Ordinal)) hasSsrcMsid = true;
+                        if (lines[i].StartsWith("a=ssrc:" + ssrc + " ", StringComparison.Ordinal)) lastSsrcIdx = i;
+                    }
+                    if (!hasSsrcMsid && lastSsrcIdx >= 0)
+                        lines.Insert(lastSsrcIdx + 1, "a=ssrc:" + ssrc + " msid:" + streamId + " " + track);
+                }
             }
 
             return string.Join(nl, lines);
