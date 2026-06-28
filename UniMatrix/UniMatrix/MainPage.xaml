@@ -1183,11 +1183,12 @@
 
             <!-- Local self-preview (picture-in-picture). Hidden until a video call/preview starts;
                  a MediaElement is the render target for the WebRTC self video track via
-                 MediaElementMaker.Bind. -->
+                 MediaElementMaker.Bind. RealTimePlayback minimizes the element's buffering so the
+                 self-view tracks the camera live instead of lagging ~2s behind. -->
             <Border x:Name="SelfVideoBorder" Width="108" Height="144" Visibility="Collapsed"
                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,24,16,0"
                     CornerRadius="8" Background="#22000000" BorderBrush="#33FFFFFF" BorderThickness="1">
-                <MediaElement x:Name="SelfVideo" Stretch="UniformToFill" />
+                <MediaElement x:Name="SelfVideo" Stretch="UniformToFill" RealTimePlayback="True" />
             </Border>
         </Grid>
 
