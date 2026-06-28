@@ -93,6 +93,8 @@ namespace UniMatrix.Services
         public string RoomId { get; set; }
         public string StateKey { get; set; }   // the membership's state key (user/device scoped)
         public string UserId { get; set; }     // best-effort user id parsed from the state key
+        public string Sender { get; set; }     // the event sender (clean user id, for self-checks)
+        public long Timestamp { get; set; }    // origin_server_ts (to drop stale joins on backfill)
         public bool Active { get; set; }       // true = in the call, false = left
     }
 
@@ -603,6 +605,8 @@ namespace UniMatrix.Services
                         RoomId = roomId,
                         StateKey = sk,
                         UserId = UserFromRtcStateKey(sk),
+                        Sender = MatrixClient.GetString(ev, "sender"),
+                        Timestamp = (long)GetNumber(ev, "origin_server_ts", 0),
                         Active = IsActiveRtcMembership(content)
                     });
                 }

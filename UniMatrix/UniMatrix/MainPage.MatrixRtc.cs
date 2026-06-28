@@ -37,6 +37,11 @@ namespace UniMatrix
         private readonly Dictionary<string, HashSet<string>> _rtcActiveMembers =
             new Dictionary<string, HashSet<string>>();
 
+        // Rooms we've already rung for in the current active call session, so a periodic membership
+        // refresh (Element re-publishes m.rtc.member while the call is up) doesn't ring repeatedly.
+        // Cleared for a room when its call ends (active members drop to zero).
+        private readonly HashSet<string> _rtcRangForRoom = new HashSet<string>();
+
         // Default ring lifetime when a notification doesn't specify one (MSC4075 suggests ~30s).
         private const long DefaultRtcRingLifetimeMs = 30000;
 
@@ -69,8 +74,11 @@ namespace UniMatrix
         }
 
         /// <summary>
-        /// Tracks who is currently in a room's MatrixRTC call. When the room we're ringing for drops
-        /// to zero active members, the caller has left, so the ring is dismissed.
+        /// Tracks who is currently in a room's MatrixRTC call. A remote user joining is the actual
+        /// incoming-call signal in practice — Element publishes an m.rtc.member join (and re-publishes
+        /// it periodically) but does NOT always send a separate m.rtc.notification ring — so this is
+        /// what drives the ring. When the room we're ringing for drops to zero active members, the
+        /// caller has left, so the ring is dismissed.
         /// </summary>
         private void UpdateRtcMembership(MatrixRtcMembership m)
         {
@@ -86,12 +94,64 @@ namespace UniMatrix
             if (m.Active) set.Add(m.StateKey);
             else set.Remove(m.StateKey);
 
-            App.Log("RTC: member " + (m.UserId ?? m.StateKey) + " " + (m.Active ? "joined" : "left") +
+            App.Log("RTC: member " + (m.Sender ?? m.UserId ?? m.StateKey) + " " + (m.Active ? "joined" : "left") +
                     " call in " + m.RoomId + " (active=" + set.Count + ")");
 
-            // The call we're ringing for has ended.
-            if (_incomingIsMatrixRtc && m.RoomId == _matrixRtcRingingRoomId && set.Count == 0)
-                DismissMatrixRtcRing("call ended");
+            // The call has ended (everyone left): reset the "already rang" guard and, if we were
+            // ringing for this room, dismiss the ring.
+            if (set.Count == 0)
+            {
+                _rtcRangForRoom.Remove(m.RoomId);
+                if (_incomingIsMatrixRtc && m.RoomId == _matrixRtcRingingRoomId)
+                    DismissMatrixRtcRing("call ended");
+                return;
+            }
+
+            // A remote user is now in the call -> ring (unless this is our own membership, we're
+            // already in a legacy call, already ringing, or we've already rung for this call).
+            if (!m.Active) return;
+            bool isSelf = !string.IsNullOrEmpty(_settings?.UserId) &&
+                          (m.Sender == _settings.UserId || (m.UserId != null && m.UserId.StartsWith(_settings.UserId)));
+            if (isSelf) return;
+            if (_rtcRangForRoom.Contains(m.RoomId)) return;
+            if (_callService != null && _callService.InCall) return;
+            if (_incomingIsMatrixRtc) return;
+
+            // Ignore stale joins replayed from history/backfill (only ring for a recent join).
+            if (m.Timestamp > 0)
+            {
+                long age = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - m.Timestamp;
+                if (age > DefaultRtcRingLifetimeMs)
+                {
+                    App.Log("RTC: stale member join (" + age + "ms) -> not ringing");
+                    return;
+                }
+            }
+
+            _rtcRangForRoom.Add(m.RoomId);
+            App.Log("RTC: ringing for MatrixRTC call (member join) in " + m.RoomId + " from " + (m.Sender ?? "?"));
+
+            // Drop a timeline tile for the incoming call (best-effort).
+            try
+            {
+                var tile = SyncProcessor.BuildRtcMissedTile(m.RoomId, m.RoomId, m.Sender, m.Timestamp, _settings?.UserId);
+                if (tile != null) _db?.UpsertMessage(tile);
+            }
+            catch (Exception ex) { App.Log("RTC: tile upsert failed: " + ex.Message); }
+
+            _matrixRtcRingingRoomId = m.RoomId;
+            _incomingIsMatrixRtc = true;
+            ShowMatrixRtcIncomingOverlay(m.RoomId);
+            StartRingVibration();
+
+            // Auto-dismiss after the default lifetime if no leave is ever seen.
+            if (_matrixRtcRingTimer == null)
+            {
+                _matrixRtcRingTimer = new DispatcherTimer();
+                _matrixRtcRingTimer.Tick += (s, e) => DismissMatrixRtcRing("ring timed out");
+            }
+            _matrixRtcRingTimer.Interval = TimeSpan.FromMilliseconds(DefaultRtcRingLifetimeMs);
+            _matrixRtcRingTimer.Start();
         }
 
         /// <summary>
