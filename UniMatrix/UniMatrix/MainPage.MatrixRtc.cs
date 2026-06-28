@@ -130,8 +130,9 @@ namespace UniMatrix
             if (m.Active) set.Add(m.StateKey);
             else set.Remove(m.StateKey);
 
+            long ageMs = m.Timestamp > 0 ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - m.Timestamp : -1;
             App.Log("RTC: member " + (m.Sender ?? m.UserId ?? m.StateKey) + " " + (m.Active ? "joined" : "left") +
-                    " call in " + m.RoomId + " (active=" + set.Count + ")");
+                    " call in " + m.RoomId + " (active=" + set.Count + ", ts=" + m.Timestamp + ", age=" + ageMs + "ms)");
 
             // The call has ended (everyone left): reset the "already rang" guard and, if we were
             // ringing for this room, dismiss the ring.
@@ -148,10 +149,10 @@ namespace UniMatrix
             if (!m.Active) return;
             bool isSelf = !string.IsNullOrEmpty(_settings?.UserId) &&
                           (m.Sender == _settings.UserId || (m.UserId != null && m.UserId.StartsWith(_settings.UserId)));
-            if (isSelf) return;
-            if (_rtcRangForRoom.Contains(m.RoomId)) return;
-            if (_callService != null && _callService.InCall) return;
-            if (_incomingIsMatrixRtc) return;
+            if (isSelf) { App.Log("RTC: own membership join (" + m.StateKey + ") -> not ringing"); return; }
+            if (_rtcRangForRoom.Contains(m.RoomId)) { App.Log("RTC: already rang for " + m.RoomId + " this call -> not ringing again"); return; }
+            if (_callService != null && _callService.InCall) { App.Log("RTC: in a legacy call -> not ringing for member join"); return; }
+            if (_incomingIsMatrixRtc) { App.Log("RTC: already showing an rtc ring -> not ringing for member join"); return; }
 
             // Ignore stale joins replayed from history/backfill (only ring for a recent join).
             if (m.Timestamp > 0)
@@ -206,13 +207,13 @@ namespace UniMatrix
             // De-dupe: each notification event rings at most once.
             if (!string.IsNullOrEmpty(n.EventId))
             {
-                if (_handledRtcNotifications.Contains(n.EventId)) return;
+                if (_handledRtcNotifications.Contains(n.EventId)) { App.Log("RTC: notification " + n.EventId + " already handled -> skip"); return; }
                 if (_handledRtcNotifications.Count > 256) _handledRtcNotifications.Clear();
                 _handledRtcNotifications.Add(n.EventId);
             }
 
             // Our own ring (another of our devices started the call): nothing to answer here.
-            if (!string.IsNullOrEmpty(_settings?.UserId) && n.Sender == _settings.UserId) return;
+            if (!string.IsNullOrEmpty(_settings?.UserId) && n.Sender == _settings.UserId) { App.Log("RTC: own notification -> skip"); return; }
 
             // Only "ring" notifications ring; "notification" is a silent presence hint.
             if (!string.IsNullOrEmpty(n.NotificationType) && n.NotificationType != "ring")
@@ -231,8 +232,8 @@ namespace UniMatrix
             }
 
             // Don't hijack the screen if a legacy 1:1 call is already up, or we're already ringing.
-            if (_callService != null && _callService.InCall) return;
-            if (_incomingIsMatrixRtc) return;
+            if (_callService != null && _callService.InCall) { App.Log("RTC: notification while in a legacy call -> skip"); return; }
+            if (_incomingIsMatrixRtc) { App.Log("RTC: notification but already ringing -> skip"); return; }
 
             App.Log("RTC: ringing for MatrixRTC call in " + n.RoomId + " from " + (n.Sender ?? "?"));
 

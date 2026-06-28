@@ -219,13 +219,13 @@ namespace UniMatrix.Services
             try
             {
                 if (string.IsNullOrEmpty(Version)) await LoadAsync();
-                if (string.IsNullOrEmpty(Version)) return -1;
+                if (string.IsNullOrEmpty(Version)) { App.Log("CRYPTO: no server key backup version (or unsupported algorithm) -> cannot restore"); return -1; }
 
                 using (var dec = OlmPkDecryption.FromPrivateKey(privateKey))
                 {
                     if (!string.IsNullOrEmpty(PublicKey) && dec.PublicKey != PublicKey)
                     {
-                        App.Log("CRYPTO: recovery key does not match backup public key");
+                        App.Log("CRYPTO: recovery key does not match backup public key (derivedPub=" + dec.PublicKey + " backupPub=" + PublicKey + ")");
                         return -1;
                     }
 

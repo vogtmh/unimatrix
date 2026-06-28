@@ -299,7 +299,7 @@ namespace UniMatrix.Services
                     foreach (var ev in events)
                     {
                         LogRawEvent("RX-state", roomId, ev.GetObject());
-                        ApplyStateEvent(roomId, ev.GetObject(), room, result);
+                        ApplyStateEvent(roomId, ev.GetObject(), room, result, "state");
                     }
                 }
             }
@@ -402,7 +402,7 @@ namespace UniMatrix.Services
                         else if (IsRtcMemberType(type))
                         {
                             // MatrixRTC call-membership change carried inline in the timeline.
-                            ApplyStateEvent(roomId, ev, room, result);
+                            ApplyStateEvent(roomId, ev, room, result, "timeline");
                         }
                         else if (type == "m.room.name" || type == "m.room.avatar" ||
                                  type == "m.room.topic" || type == "m.room.member" ||
@@ -595,7 +595,7 @@ namespace UniMatrix.Services
 
 
         /// <summary>Applies a single state event; returns true if room metadata changed.</summary>
-        private bool ApplyStateEvent(string roomId, JsonObject ev, Room room, SyncResult result = null)
+        private bool ApplyStateEvent(string roomId, JsonObject ev, Room room, SyncResult result = null, string source = null)
         {
             string type = MatrixClient.GetString(ev, "type");
             JsonObject content = GetObject(ev, "content");
@@ -603,9 +603,9 @@ namespace UniMatrix.Services
 
             if (IsRtcMemberType(type))
             {
+                string sk = MatrixClient.GetString(ev, "state_key");
                 if (result != null)
                 {
-                    string sk = MatrixClient.GetString(ev, "state_key");
                     var mem = new MatrixRtcMembership
                     {
                         RoomId = roomId,
@@ -618,6 +618,18 @@ namespace UniMatrix.Services
                     };
                     ExtractLiveKitFocus(content, mem);
                     result.MatrixRtcMemberships.Add(mem);
+                    // Diagnostic: confirms the membership reached the dispatcher and from which
+                    // sync block (a gappy/post-restart sync delivers these in the 'state' block,
+                    // a steady long-poll in the 'timeline' block) plus its active flag + age.
+                    App.Log("RTC: collected member sk=" + sk + " active=" + mem.Active +
+                            " ts=" + mem.Timestamp + " src=" + (source ?? "timeline"));
+                }
+                else
+                {
+                    // No result sink (non-RTC-aware call path) -> the membership is silently
+                    // dropped and can never ring. Log it so we can spot this in the debug log.
+                    App.Log("RTC: member event sk=" + sk + " src=" + (source ?? "?") +
+                            " DROPPED (no result sink)");
                 }
                 return false;
             }

@@ -138,9 +138,18 @@ namespace UniMatrix.Services
                 var keyDesc = await _client.AccountDataGetAsync(KeyTypePrefix + keyId);
                 if (keyDesc == null) { App.Log("CRYPTO: SSSS key description missing"); return -1; }
 
+                // Diagnostics: which SSSS algorithm/key-check shape are we dealing with? (Helps tell
+                // an Element-created store apart from a FluffyChat one.)
+                bool hasPassphrase = CryptoService.GetObj(keyDesc, "passphrase") != null;
+                bool hasMac = !string.IsNullOrEmpty(MatrixClient.GetString(keyDesc, "mac"));
+                App.Log("CRYPTO: SSSS keyId=" + keyId +
+                        " alg=" + (MatrixClient.GetString(keyDesc, "algorithm") ?? "?") +
+                        " passphrase=" + hasPassphrase + " keyCheck=" + hasMac +
+                        " inputLen=" + (recoveryKeyOrPassphrase ?? "").Length);
+
                 byte[] ssssKey = DeriveKey(recoveryKeyOrPassphrase, keyDesc);
-                if (ssssKey == null) { App.Log("CRYPTO: could not derive SSSS key"); return -1; }
-                if (!VerifyKey(ssssKey, keyDesc)) { App.Log("CRYPTO: SSSS key check failed"); return -1; }
+                if (ssssKey == null) { App.Log("CRYPTO: could not derive SSSS key (not a valid recovery key and no passphrase info)"); return -1; }
+                if (!VerifyKey(ssssKey, keyDesc)) { App.Log("CRYPTO: SSSS key check failed (derived key does not match this account's key)"); return -1; }
 
                 // Cache the verified key + id so cross-signing secrets unlock without re-prompting.
                 _unlockedKey = ssssKey;
@@ -154,11 +163,19 @@ namespace UniMatrix.Services
                 byte[] plain = DecryptData(ssssKey, BackupSecretName, entry);
                 if (plain == null) { App.Log("CRYPTO: backup secret decrypt/mac failed"); return -1; }
 
-                byte[] backupPriv;
-                try { backupPriv = CryptoMath.FromBase64(Encoding.UTF8.GetString(plain)); }
-                catch { App.Log("CRYPTO: backup secret not valid base64"); return -1; }
+                // The secret's plaintext is the backup private key as base64. Different clients encode
+                // it differently — Element (matrix-js-sdk) stores it UNPADDED (43 chars for 32 bytes),
+                // FluffyChat stores it padded (44 chars). Some also use the base64url alphabet. Parse
+                // all of these leniently instead of with the strict Convert.FromBase64String.
+                byte[] backupPriv = ParseSecretKeyBytes(plain);
+                if (backupPriv == null)
+                {
+                    App.Log("CRYPTO: backup secret not valid base64 (plainLen=" + (plain != null ? plain.Length : 0) + ")");
+                    return -1;
+                }
 
                 if (_backup == null) return -1;
+                App.Log("CRYPTO: SSSS unlocked OK -> restoring backup (privKeyLen=" + backupPriv.Length + ")");
                 return await _backup.RestoreAsync(backupPriv);
             }
             catch (Exception ex) { App.Log("CRYPTO: RecoverAsync failed: " + ex.Message); return -1; }
@@ -202,10 +219,15 @@ namespace UniMatrix.Services
         {
             // A recovery key wins if it parses; otherwise treat the input as a passphrase.
             byte[] key;
-            if (KeyBackupService.TryDecodeRecoveryKey(input, out key)) return key;
+            if (KeyBackupService.TryDecodeRecoveryKey(input, out key))
+            {
+                App.Log("CRYPTO: SSSS input parsed as a base58 recovery key");
+                return key;
+            }
+            App.Log("CRYPTO: SSSS input is not a base58 recovery key -> trying passphrase path");
 
             var passphrase = CryptoService.GetObj(keyDesc, "passphrase");
-            if (passphrase == null) return null;
+            if (passphrase == null) { App.Log("CRYPTO: no passphrase info in key description -> cannot derive"); return null; }
 
             string salt64 = MatrixClient.GetString(passphrase, "salt");
             int iterations = (int)MatrixClient.GetNumber(passphrase, "iterations");
@@ -219,10 +241,15 @@ namespace UniMatrix.Services
         {
             string iv64 = MatrixClient.GetString(keyDesc, "iv");
             string mac64 = MatrixClient.GetString(keyDesc, "mac");
-            if (string.IsNullOrEmpty(mac64)) return false;
+            // No key check stored: we cannot verify, so accept the derived key and let the actual
+            // secret decryption (MAC-checked) be the real test. Some setups omit the key check.
+            if (string.IsNullOrEmpty(mac64)) { App.Log("CRYPTO: SSSS key description has no key-check mac -> skipping verify"); return true; }
             byte[] iv = string.IsNullOrEmpty(iv64) ? new byte[16] : Decode64(iv64);
             string mac = ComputeMac(ssssKey, "", iv, new byte[32]);
-            return CryptoMath.ConstantTimeEquals(Decode64(mac), Decode64(mac64));
+            bool ok = CryptoMath.ConstantTimeEquals(Decode64(mac), Decode64(mac64));
+            if (!ok)
+                App.Log("CRYPTO: SSSS key-check mismatch computed=" + mac + " stored=" + mac64);
+            return ok;
         }
 
         // ---- AES-HMAC-SHA2 secret encryption ----
@@ -297,6 +324,34 @@ namespace UniMatrix.Services
             if (string.IsNullOrEmpty(s)) return new byte[0];
             // Accept padded or unpadded base64.
             return CryptoMath.FromUnpaddedBase64(s.TrimEnd('='));
+        }
+
+        /// <summary>
+        /// Decodes an SSSS secret's plaintext (a base64 string) into raw key bytes, tolerating the
+        /// different encodings clients use: padded vs unpadded base64 (Element stores the megolm
+        /// backup key unpadded, FluffyChat padded), the base64url alphabet, and surrounding
+        /// whitespace / control bytes. Returns null only if none of these parse.
+        /// </summary>
+        private static byte[] ParseSecretKeyBytes(byte[] plain)
+        {
+            if (plain == null || plain.Length == 0) return null;
+
+            // Trim any trailing NULs / surrounding whitespace from the decoded text.
+            string text = Encoding.UTF8.GetString(plain).Trim().Trim('\0').Trim();
+            if (text.Length == 0) return null;
+
+            // 1) Standard base64, padded or unpadded (FromUnpaddedBase64 adds padding as needed).
+            try { return CryptoMath.FromUnpaddedBase64(text.TrimEnd('=')); }
+            catch { }
+
+            // 2) base64url alphabet ('-'/'_'), padded or unpadded.
+            if (text.IndexOf('-') >= 0 || text.IndexOf('_') >= 0)
+            {
+                try { return CryptoMath.FromBase64Url(text); }
+                catch { }
+            }
+
+            return null;
         }
 
         private static string NewKeyId()
