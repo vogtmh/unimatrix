@@ -384,18 +384,14 @@
                                         <ItemsControl ItemsSource="{Binding MapPreviewTiles}">
                                             <ItemsControl.ItemsPanel>
                                                 <ItemsPanelTemplate>
-                                                    <Canvas />
+                                                    <Grid />
                                                 </ItemsPanelTemplate>
                                             </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemContainerStyle>
-                                                <Style TargetType="ContentPresenter">
-                                                    <Setter Property="Canvas.Left" Value="{Binding X}" />
-                                                    <Setter Property="Canvas.Top" Value="{Binding Y}" />
-                                                </Style>
-                                            </ItemsControl.ItemContainerStyle>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Image Source="{Binding Url}" Width="256" Height="256" Stretch="Fill" />
+                                                    <Image Source="{Binding Url}" Width="256" Height="256" Stretch="Fill"
+                                                           HorizontalAlignment="Left" VerticalAlignment="Top"
+                                                           Margin="{Binding Margin}" />
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>

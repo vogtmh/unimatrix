@@ -335,14 +335,13 @@ namespace UniMatrix.Models
         private const double TilePixels = 256.0;  // OSM/Geofabrik tile edge length, in pixels
 
         /// <summary>
-        /// A single map tile to composite into the inline preview, with its position
-        /// (Canvas.Left/Top) inside the 240x240 view.
+        /// A single map tile to composite into the inline preview. Margin positions the 256x256 tile
+        /// (top-left aligned) within the 240x240 view; negative offsets are clipped by the parent.
         /// </summary>
         public sealed class MapTile
         {
             public string Url { get; set; }
-            public double X { get; set; }
-            public double Y { get; set; }
+            public Thickness Margin { get; set; }
         }
 
         /// <summary>
@@ -374,8 +373,8 @@ namespace UniMatrix.Models
                         tiles.Add(new MapTile
                         {
                             Url = string.Format("https://a.tile.geofabrik.de/2b232a218fc74caab0859632066bb003/{0}/{1}/{2}.png", MapPreviewZoom, wrappedX, ty),
-                            X = tx * TilePixels - viewLeft,      // unwrapped tx keeps placement continuous
-                            Y = ty * TilePixels - viewTop
+                            // unwrapped tx/ty keep placement continuous; top-left aligned in the view.
+                            Margin = new Thickness(tx * TilePixels - viewLeft, ty * TilePixels - viewTop, 0, 0)
                         });
                     }
                 }
