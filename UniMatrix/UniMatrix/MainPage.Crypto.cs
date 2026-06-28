@@ -96,6 +96,7 @@ namespace UniMatrix
                     // 1. Device-list deltas.
                     if (result.DeviceListChanged.Count > 0)
                     {
+                        SetSyncPhase("crypto:device-keys n=" + result.DeviceListChanged.Count);
                         _crypto.MarkUsersDirty(result.DeviceListChanged);
                         await _crypto.UpdateDeviceKeysAsync(result.DeviceListChanged);
                     }
@@ -106,6 +107,7 @@ namespace UniMatrix
 
                     // 2. To-device messages (Olm) carry room keys + secrets. Returns rooms that gained
                     //    a Megolm session, so we can retry their stored ciphertexts.
+                    SetSyncPhase("crypto:to-device n=" + (result.ToDeviceEvents != null ? result.ToDeviceEvents.Count : 0));
                     HashSet<string> newKeyRooms = await _crypto.HandleToDeviceEventsAsync(result.ToDeviceEvents);
 
                     // 2b. Plaintext SAS verification events (m.key.verification.*) drive the verifier.
@@ -126,6 +128,8 @@ namespace UniMatrix
                     }
 
                     // 3. Decrypt the encrypted timeline events from this sync.
+                    if (result.EncryptedEvents.Count > 0)
+                        SetSyncPhase("crypto:decrypt n=" + result.EncryptedEvents.Count);
                     foreach (var enc in result.EncryptedEvents)
                     {
                         if (await DecryptAndStore(result, enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
@@ -133,8 +137,9 @@ namespace UniMatrix
                     }
 
                     // 4. Retry any earlier undecryptable rows in rooms that just got a key.
-                    if (newKeyRooms != null)
+                    if (newKeyRooms != null && newKeyRooms.Count > 0)
                     {
+                        SetSyncPhase("crypto:retry-rooms n=" + newKeyRooms.Count);
                         foreach (var roomId in newKeyRooms)
                         {
                             if (await RetryDecryptRoom(roomId))
@@ -144,7 +149,11 @@ namespace UniMatrix
 
                     // 5. Replenish one-time keys when the server reports a low count.
                     if (result.OneTimeKeyCount.HasValue)
+                    {
+                        SetSyncPhase("crypto:otk count=" + result.OneTimeKeyCount.Value);
                         await _crypto.EnsureOneTimeKeysAsync(result.OneTimeKeyCount.Value);
+                    }
+                    SetSyncPhase("crypto:done");
                 });
 
                 // 6. One-time nudge: if the server holds a backup we haven't unlocked, offer recovery.

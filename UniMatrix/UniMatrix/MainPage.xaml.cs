@@ -79,6 +79,56 @@ namespace UniMatrix
         // log line is relative to the moment the user tapped the room (ms since open).
         private readonly System.Diagnostics.Stopwatch _openWatch = new System.Diagnostics.Stopwatch();
 
+        // ---- Sync stall diagnostics ----
+        // The sync loop runs several phases per pass (HTTP long-poll, DB process, crypto, refresh).
+        // Any phase that does network I/O can hang indefinitely on a zombie connection (the Lumia's
+        // radio sleeps and an intermediary silently drops the idle long-poll socket). When that
+        // happens the loop stalls and only a restart clears it. These fields let a background
+        // watchdog log which pass/phase is stuck: if the watchdog keeps printing the same pass and
+        // phase, that phase is where the loop froze.
+        private volatile int _syncPass;
+        private volatile string _syncPhase = "idle";
+        private long _syncPhaseSinceTicks;   // DateTime.UtcNow.Ticks when the current phase began
+        private readonly System.Diagnostics.Stopwatch _syncUptime = new System.Diagnostics.Stopwatch();
+
+        /// <summary>
+        /// Records the current sync-loop phase and timestamps it, so the watchdog can report how
+        /// long the loop has been sitting in this phase. Logs the transition with the elapsed time
+        /// of the phase just finished, giving a per-pass timeline in the device log.
+        /// </summary>
+        private void SetSyncPhase(string phase)
+        {
+            long now = DateTime.UtcNow.Ticks;
+            long prev = System.Threading.Interlocked.Exchange(ref _syncPhaseSinceTicks, now);
+            long elapsedMs = prev > 0 ? (now - prev) / TimeSpan.TicksPerMillisecond : 0;
+            string old = _syncPhase;
+            _syncPhase = phase;
+            App.Log("SYNC pass #" + _syncPass + " phase '" + old + "' -> '" + phase + "' (prev took " + elapsedMs + "ms)");
+        }
+
+        /// <summary>
+        /// Background heartbeat that logs the sync loop's current pass and phase every 30s. If the
+        /// pass number and phase stop advancing while this keeps firing, that phase is hung — the
+        /// single most useful clue for the "sync gets stuck until restart" problem.
+        /// </summary>
+        private async Task SyncWatchdogAsync(CancellationToken ct)
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    await Task.Delay(30000, ct);
+                    long since = System.Threading.Interlocked.Read(ref _syncPhaseSinceTicks);
+                    long inPhaseMs = since > 0 ? (DateTime.UtcNow.Ticks - since) / TimeSpan.TicksPerMillisecond : 0;
+                    string tag = inPhaseMs >= 70000 ? "SYNC WATCHDOG *** STUCK? *** " : "SYNC WATCHDOG ";
+                    App.Log(tag + "pass #" + _syncPass + " phase='" + _syncPhase + "' inPhase=" + inPhaseMs +
+                        "ms uptime=" + _syncUptime.ElapsedMilliseconds + "ms");
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { App.Log("SYNC WATCHDOG error: " + ex.Message); }
+        }
+
         private enum View { Splash, Login, Setup, RoomList, Chat, RoomInfo, Settings, AddRoom, Invite }
 
         public MainPage()
@@ -1624,6 +1674,11 @@ namespace UniMatrix
             StopSync();
             _syncCts = new CancellationTokenSource();
             var ct = _syncCts.Token;
+            _syncUptime.Restart();
+            _syncPass = 0;
+            _syncPhase = "starting";
+            System.Threading.Interlocked.Exchange(ref _syncPhaseSinceTicks, DateTime.UtcNow.Ticks);
+            var _w = SyncWatchdogAsync(ct);   // background stall heartbeat (logs every 30s)
             var _ = SyncLoopAsync(ct);
         }
 
@@ -1665,12 +1720,15 @@ namespace UniMatrix
             {
                 try
                 {
+                    _syncPass++;
+                    SetSyncPhase("http-wait since=" + (string.IsNullOrEmpty(since) ? "<initial>" : "set"));
                     var resp = await _client.SyncAsync(since, 30000, ct);
                     if (ct.IsCancellationRequested) break;
 
                     // Persist on a background thread: an initial sync writes many
                     // rooms/members and would otherwise freeze the UI thread,
                     // leaving the sync LED stuck on orange.
+                    SetSyncPhase("process");
                     var result = await Task.Run(() => _syncProcessor.Process(resp), ct);
                     if (ct.IsCancellationRequested) break;
                     if (!string.IsNullOrEmpty(result.NextBatch))
@@ -1688,11 +1746,13 @@ namespace UniMatrix
                     // ProcessCryptoSyncAsync) to keep the UI responsive; the await resumes here on
                     // the UI thread. It may add decrypted rooms to result.ChangedRooms so the
                     // refresh below repaints them.
+                    SetSyncPhase("crypto");
                     await ProcessCryptoSyncAsync(result);
 
                     // Deliver any WebRTC call signalling events to the CallService. We're already
                     // on the UI thread here (the await resumed on it), which is required because the
                     // WebRTC event queue is bound to this thread.
+                    SetSyncPhase("post-crypto");
                     if (_callService != null && result.CallSignals.Count > 0)
                     {
                         foreach (var sig in result.CallSignals)
@@ -1709,6 +1769,7 @@ namespace UniMatrix
 
                     if (result.HasChanges)
                     {
+                        SetSyncPhase("refresh");
                         // If new events landed in the room the user is currently viewing, they are
                         // effectively read: clear the unread (and send a read receipt) BEFORE
                         // RefreshRooms so it doesn't repaint a stale badge for the open room.
@@ -1730,6 +1791,10 @@ namespace UniMatrix
                     // doesn't have to open each one. Self-guards against double-starting.
                     if (wasFirst || result.HasChanges)
                         StartBackfillAll();
+
+                    App.Log("SYNC pass #" + _syncPass + " COMPLETE changes=" + result.HasChanges +
+                            " rooms=" + result.ChangedRooms.Count);
+                    SetSyncPhase("idle");
                 }
                 catch (OperationCanceledException)
                 {
@@ -1737,15 +1802,18 @@ namespace UniMatrix
                 }
                 catch (Exception ex)
                 {
-                    App.Log("SYNC ERROR (since=" + (since ?? "<initial>") + "): " + ex);
+                    App.Log("SYNC ERROR (pass #" + _syncPass + " phase='" + _syncPhase +
+                            "' since=" + (since ?? "<initial>") + "): " + ex);
                     SetSyncLed(Color.FromArgb(255, 0xFF, 0x6B, 0x6B)); // red
                     ShowSyncError(ex.Message);
                     ShowSyncProgress(false);
                     _firstSyncTcs?.TrySetResult(false);
+                    SetSyncPhase("error-backoff");
                     try { await Task.Delay(5000, ct); }
                     catch (OperationCanceledException) { break; }
                 }
             }
+            App.Log("Sync loop exited (cancelled=" + ct.IsCancellationRequested + ").");
         }
 
         private void ShowSyncProgress(bool show, string message = null)
