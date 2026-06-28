@@ -217,7 +217,14 @@ namespace UniMatrix
                     {
                         result.MatrixRtcNotifications.Add(n);
                         var tile = SyncProcessor.BuildRtcMissedTile(roomId, n.ParentId ?? eventId, sender, ts, _settings?.UserId);
-                        if (tile != null) _db.UpsertMessage(tile);
+                        if (tile != null)
+                        {
+                            _db.UpsertMessage(tile);
+                            // Replace the "🔒 Encrypted message" room-list preview with the missed-call
+                            // label (mirrors the plaintext RTC path and the decrypted-message path), so
+                            // a missed call in an encrypted room no longer shows as ciphertext.
+                            _db.SetRoomPreviewIfLatest(roomId, tile.Timestamp, tile.Body);
+                        }
                     }
                     _db.DeleteMessage(eventId);
                     return true;
@@ -315,7 +322,13 @@ namespace UniMatrix
                             var tile = n != null
                                 ? SyncProcessor.BuildRtcMissedTile(roomId, n.ParentId ?? kv.Key, sender, ts, _settings?.UserId)
                                 : null;
-                            if (tile != null) _db.UpsertMessage(tile);
+                            if (tile != null)
+                            {
+                                _db.UpsertMessage(tile);
+                                // Replace the "🔒 Encrypted message" preview with the missed-call label
+                                // (SetRoomPreviewIfLatest only overwrites if this is the newest event).
+                                _db.SetRoomPreviewIfLatest(roomId, tile.Timestamp, tile.Body);
+                            }
                             App.Log("CALL: retry-decrypted MatrixRTC notification (history) -> tile, removing blob");
                             _db.DeleteMessage(kv.Key);
                             any = true;

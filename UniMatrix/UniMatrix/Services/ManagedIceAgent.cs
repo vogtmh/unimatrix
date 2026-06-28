@@ -41,10 +41,12 @@ namespace UniMatrix.Services
         // STUN attribute types.
         private const int AttrUsername = 0x0006;
         private const int AttrMessageIntegrity = 0x0008;
+        private const int AttrErrorCode = 0x0009;
         private const int AttrXorMappedAddress = 0x0020;
         private const int AttrMappedAddress = 0x0001;
         private const int AttrPriority = 0x0024;
         private const int AttrIceControlled = 0x8029;
+        private const int AttrIceControlling = 0x802A;
         private const int AttrFingerprint = 0x8028;
 
         // STUN message types.
@@ -62,6 +64,9 @@ namespace UniMatrix.Services
         private string _remotePwd;
         private string _mid = "0";
         private byte[] _tieBreaker;
+        // We start as the controlled agent (the SFU offered, so it controls). Flips to true only if
+        // the SFU rejects our checks with 487 Role Conflict.
+        private bool _iceControlling;
 
         private DatagramSocket _socket;
         private string _localPort;
@@ -343,7 +348,16 @@ namespace UniMatrix.Services
                 }
                 else if (msgType == MsgBindingError)
                 {
-                    App.Log("ICE: STUN error response from " + srcIp + ":" + srcPort);
+                    int code = ParseErrorCode(buf);
+                    App.Log("ICE: STUN error response from " + srcIp + ":" + srcPort +
+                            " code=" + (code > 0 ? code.ToString() : "?"));
+                    // 487 Role Conflict: the SFU disagrees about who is controlling. Switch role and
+                    // retry the checks (we flip to ICE-CONTROLLING after the offerer rejected us).
+                    if (code == 487 && !_iceControlling)
+                    {
+                        _iceControlling = true;
+                        App.Log("ICE: role conflict -> switching to ICE-CONTROLLING and retrying");
+                    }
                 }
             }
             catch (Exception ex) { App.Log("ICE: datagram parse failed: " + ex.Message); }
@@ -444,8 +458,9 @@ namespace UniMatrix.Services
             prio[2] = (byte)((p >> 8) & 0xFF); prio[3] = (byte)(p & 0xFF);
             AppendAttr(attrs, AttrPriority, prio);
 
-            // We are the controlled agent (the SFU offered, so it is controlling).
-            AppendAttr(attrs, AttrIceControlled, _tieBreaker);
+            // Role attribute: normally ICE-CONTROLLED (the SFU offered, so it controls). Flips to
+            // ICE-CONTROLLING only after a 487 Role Conflict.
+            AppendAttr(attrs, _iceControlling ? AttrIceControlling : AttrIceControlled, _tieBreaker);
 
             return FinalizeWithIntegrityAndFingerprint(MsgBindingRequest, txId, attrs, keyPwd);
         }
@@ -550,6 +565,29 @@ namespace UniMatrix.Services
                 pos += advance;
             }
             return null;
+        }
+
+        /// <summary>Reads the STUN ERROR-CODE attribute (class*100 + number), or 0 if absent.</summary>
+        private static int ParseErrorCode(byte[] buf)
+        {
+            int pos = 20;
+            while (pos + 4 <= buf.Length)
+            {
+                int attrType = (buf[pos] << 8) | buf[pos + 1];
+                int attrLen = (buf[pos + 2] << 8) | buf[pos + 3];
+                int valPos = pos + 4;
+                if (valPos + attrLen > buf.Length) break;
+                if (attrType == AttrErrorCode && attrLen >= 4)
+                {
+                    int cls = buf[valPos + 2] & 0x07;
+                    int num = buf[valPos + 3];
+                    return cls * 100 + num;
+                }
+                int advance = 4 + attrLen;
+                if ((advance % 4) != 0) advance += 4 - (advance % 4);
+                pos += advance;
+            }
+            return 0;
         }
 
         // ---- crypto / helpers ----
