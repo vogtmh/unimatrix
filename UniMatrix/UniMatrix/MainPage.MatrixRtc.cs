@@ -79,6 +79,11 @@ namespace UniMatrix
         {
             if (result == null) return;
 
+            int memCount = result.MatrixRtcMemberships != null ? result.MatrixRtcMemberships.Count : 0;
+            int notifCount = result.MatrixRtcNotifications != null ? result.MatrixRtcNotifications.Count : 0;
+            if (memCount > 0 || notifCount > 0)
+                App.Log("RTC: dispatch memberships=" + memCount + " notifications=" + notifCount);
+
             if (result.MatrixRtcMemberships != null)
             {
                 foreach (var m in result.MatrixRtcMemberships)
