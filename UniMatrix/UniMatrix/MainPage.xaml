@@ -359,6 +359,11 @@
                                     Padding="10,7" MaxWidth="300"
                                     Visibility="{Binding BubbleVisibility}"
                                     HorizontalAlignment="{Binding Alignment}">
+                                <Border.ContextFlyout>
+                                    <MenuFlyout>
+                                        <MenuFlyoutItem Text="Copy" Click="MessageCopy_Click" />
+                                    </MenuFlyout>
+                                </Border.ContextFlyout>
                                 <StackPanel>
                                     <TextBlock Text="{Binding SenderShort}" Foreground="{StaticResource AppAccentBrush}"
                                                FontSize="12" FontWeight="SemiBold"

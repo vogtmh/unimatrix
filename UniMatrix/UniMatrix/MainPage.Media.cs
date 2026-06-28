@@ -196,6 +196,22 @@ namespace UniMatrix
             await OpenImageViewerAsync(msg);
         }
 
+        /// <summary>
+        /// Press-and-hold "Copy" on a text bubble: puts the message body on the clipboard. Useful
+        /// for grabbing the raw text of a bubble (including the encrypted-event JSON that shows up
+        /// for call signalling we can't yet render) to paste elsewhere.
+        /// </summary>
+        private void MessageCopy_Click(object sender, RoutedEventArgs e)
+        {
+            var item = sender as MenuFlyoutItem;
+            var msg = item?.DataContext as Message;
+            if (msg == null || string.IsNullOrEmpty(msg.Body)) return;
+
+            var data = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            data.SetText(msg.Body);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
+        }
+
         private async Task OpenImageViewerAsync(Message msg)
         {
             // Show immediately with the cached thumbnail (if any) so there's instant feedback,
