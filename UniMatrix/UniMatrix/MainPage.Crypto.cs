@@ -166,13 +166,22 @@ namespace UniMatrix
             try
             {
                 var dr = _crypto.DecryptRoomEvent(roomId, content);
-                if (!dr.Ok || dr.ClearContent == null) return false;
+                if (!dr.Ok || dr.ClearContent == null)
+                {
+                    // Log the reason so undecryptable events (especially call signalling, which
+                    // otherwise silently renders as a ciphertext blob) are diagnosable. "no session"
+                    // means the Megolm key hasn't arrived yet — step 4's retry will pick it up once
+                    // the to-device key lands.
+                    App.Log("CRYPTO: decrypt " + eventId + " not ok: " + (dr.FailureReason ?? "?"));
+                    return false;
+                }
 
                 // Encrypted VoIP signalling: surface it to the CallService (the sync loop dispatches
                 // result.CallSignals on the UI thread, where the WebRTC queue lives) and remove the
                 // ciphertext placeholder row so it doesn't render as an unreadable blob.
                 if (!string.IsNullOrEmpty(dr.ClearType) && dr.ClearType.StartsWith("m.call."))
                 {
+                    App.Log("CALL: live-decrypted " + dr.ClearType + " from " + (sender ?? "?") + " -> routing");
                     result.CallSignals.Add(new CallSignal
                     {
                         RoomId = roomId,
@@ -194,6 +203,30 @@ namespace UniMatrix
             }
         }
 
+        /// <summary>
+        /// Delivers a decrypted call signalling event to the CallService on the UI thread (the
+        /// WebRTC event queue is bound to it). Used by the retry path, which runs on a background
+        /// thread. OnRemoteInvite applies its own 60s staleness guard, so replaying old history here
+        /// is harmless — only a genuinely fresh invite rings.
+        /// </summary>
+        private void RouteDecryptedCallSignal(string roomId, string clearType, string sender, long ts, JsonObject clearContent)
+        {
+            if (_callService == null || clearContent == null) return;
+            var sig = new CallSignal
+            {
+                RoomId = roomId,
+                Type = clearType,
+                Sender = sender,
+                Timestamp = ts,
+                Content = clearContent
+            };
+            var ignore = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, async () =>
+            {
+                try { await _callService.HandleSignalAsync(sig); }
+                catch (Exception ex) { App.Log("CALL: retry signal dispatch failed: " + ex.Message); }
+            });
+        }
+
         /// <summary>Re-attempts decryption of every still-encrypted row in a room (key just arrived).</summary>
         private bool RetryDecryptRoom(string roomId)
         {
@@ -208,11 +241,17 @@ namespace UniMatrix
                     var dr = _crypto.DecryptRoomEvent(roomId, content);
                     if (dr.Ok && dr.ClearContent != null)
                     {
-                        // A call event whose key only arrived now is stale (the call is long over):
-                        // don't re-ring, just drop the ciphertext placeholder so it stops rendering
-                        // as an unreadable blob.
+                        // A call event whose key arrived late: route it to the CallService so a still
+                        // in-progress call rings (OnRemoteInvite drops it if the invite is >60s old),
+                        // then drop the ciphertext placeholder so it stops rendering as a blob.
                         if (!string.IsNullOrEmpty(dr.ClearType) && dr.ClearType.StartsWith("m.call."))
                         {
+                            var row = _db.GetMessageById(kv.Key);
+                            string sender = row != null ? row.Sender : null;
+                            long ts = row != null ? row.Timestamp : 0;
+                            App.Log("CALL: retry-decrypted " + dr.ClearType + " from " + (sender ?? "?") +
+                                    " ts=" + ts + " -> routing");
+                            RouteDecryptedCallSignal(roomId, dr.ClearType, sender, ts, dr.ClearContent);
                             _db.DeleteMessage(kv.Key);
                             any = true;
                             continue;
@@ -234,40 +273,104 @@ namespace UniMatrix
 
         /// <summary>
         /// Persists a decrypted inner event as a normal message row, overwriting the encrypted
-        /// placeholder. Only the message types the app renders (m.text / m.notice / m.image) are
-        /// stored; anything else leaves the encrypted row untouched. Returns true if a row was
-        /// written.
+        /// placeholder. Text and images render natively; other decryptable-but-unrenderable kinds
+        /// (location, file, audio, video, stickers, unknown msgtypes) are stored as a short friendly
+        /// placeholder so they don't show the raw ciphertext JSON. Returns true if a row was written.
         /// </summary>
         private bool StoreClearEvent(string roomId, string eventId, string sender, long ts, string clearType, JsonObject clearContent)
         {
-            if (clearType != "m.room.message" || clearContent == null) return false;
+            if (clearContent == null) return false;
 
-            string msgType = MatrixClient.GetString(clearContent, "msgtype");
-            if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image") return false;
+            // Resolve what to display. msgType is the row's stored type (drives bubble rendering:
+            // only "m.image" shows a picture, everything else is a text bubble); body is the text.
+            string msgType;
+            string body;
+            string mxc = null;
+
+            if (clearType == "m.room.message")
+            {
+                string innerMsgType = MatrixClient.GetString(clearContent, "msgtype");
+                body = MatrixClient.GetString(clearContent, "body");
+                switch (innerMsgType)
+                {
+                    case "m.text":
+                    case "m.notice":
+                        msgType = innerMsgType;
+                        break;
+                    case "m.emote":
+                        msgType = "m.notice";
+                        body = "* " + (body ?? "");
+                        break;
+                    case "m.image":
+                        msgType = "m.image";
+                        mxc = MatrixClient.GetString(clearContent, "url");
+                        if (string.IsNullOrEmpty(mxc))
+                        {
+                            // Encrypted attachment: the mxc lives in a "file" block (with key/iv/hash);
+                            // persist it so the media layer can decrypt the downloaded blob.
+                            var file = CryptoService.GetObj(clearContent, "file");
+                            if (file != null)
+                            {
+                                mxc = MatrixClient.GetString(file, "url");
+                                if (!string.IsNullOrEmpty(mxc)) _db.SaveAttachmentKey(mxc, file.Stringify());
+                            }
+                        }
+                        break;
+                    case "m.location":
+                        msgType = "m.notice";
+                        body = "\uD83D\uDCCD " + FriendlyOrDefault(body, "Location");
+                        break;
+                    case "m.file":
+                        msgType = "m.notice";
+                        body = "\uD83D\uDCCE " + FriendlyOrDefault(body, "File");
+                        break;
+                    case "m.audio":
+                        msgType = "m.notice";
+                        body = "\uD83C\uDFB5 " + FriendlyOrDefault(body, "Audio message");
+                        break;
+                    case "m.video":
+                        msgType = "m.notice";
+                        body = "\uD83C\uDFAC " + FriendlyOrDefault(body, "Video");
+                        break;
+                    default:
+                        // Unknown msgtype: show its body if it has one, else a neutral marker.
+                        msgType = "m.notice";
+                        if (string.IsNullOrEmpty(body)) body = "Unsupported message";
+                        break;
+                }
+            }
+            else if (clearType == "m.sticker")
+            {
+                mxc = MatrixClient.GetString(clearContent, "url");
+                if (!string.IsNullOrEmpty(mxc))
+                {
+                    msgType = "m.image";
+                    body = null;
+                }
+                else
+                {
+                    msgType = "m.notice";
+                    body = "\uD83D\uDDBC " + FriendlyOrDefault(MatrixClient.GetString(clearContent, "body"), "Sticker");
+                }
+            }
+            else if (clearType == "m.location")
+            {
+                // MSC3488 standalone location event.
+                msgType = "m.notice";
+                body = "\uD83D\uDCCD " + FriendlyOrDefault(MatrixClient.GetString(clearContent, "body"), "Location");
+            }
+            else
+            {
+                // Reactions, redactions, relations, state and other non-displayable events: leave the
+                // existing row untouched rather than creating noise. (Call events are routed away by
+                // the callers before reaching here.)
+                return false;
+            }
 
             // Recover sender/timestamp from the existing encrypted row when not supplied (retry path).
             var existing = _db.GetMessageById(eventId);
             if (string.IsNullOrEmpty(sender) && existing != null) sender = existing.Sender;
             if (ts == 0 && existing != null) ts = existing.Timestamp;
-
-            string body = MatrixClient.GetString(clearContent, "body");
-            string mxc = null;
-            if (msgType == "m.image")
-            {
-                // Plaintext url, or the encrypted-attachment file block's url. For the encrypted
-                // case we persist the file block (key/iv/hash) so the media layer can decrypt the
-                // downloaded blob.
-                mxc = MatrixClient.GetString(clearContent, "url");
-                if (string.IsNullOrEmpty(mxc))
-                {
-                    var file = CryptoService.GetObj(clearContent, "file");
-                    if (file != null)
-                    {
-                        mxc = MatrixClient.GetString(file, "url");
-                        if (!string.IsNullOrEmpty(mxc)) _db.SaveAttachmentKey(mxc, file.Stringify());
-                    }
-                }
-            }
 
             _db.UpsertMessage(new Message
             {
@@ -286,6 +389,12 @@ namespace UniMatrix
             string preview = msgType == "m.image" ? "\uD83D\uDCF7 Photo" : body;
             _db.SetRoomPreviewIfLatest(roomId, ts, preview);
             return true;
+        }
+
+        /// <summary>Returns the message body when present, otherwise a generic fallback label.</summary>
+        private static string FriendlyOrDefault(string body, string fallback)
+        {
+            return string.IsNullOrEmpty(body) ? fallback : body;
         }
 
         // ---- Outgoing encryption ----

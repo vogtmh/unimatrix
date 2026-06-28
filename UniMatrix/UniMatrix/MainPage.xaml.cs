@@ -653,6 +653,27 @@ namespace UniMatrix
             App.Log("PERF open: LoadMessagesAsync done @" + _openWatch.ElapsedMilliseconds + "ms");
             ScrollMessagesToBottom();
             App.Log("PERF open: ScrollMessagesToBottom queued @" + _openWatch.ElapsedMilliseconds + "ms");
+
+            // Retroactively decrypt any still-encrypted rows whose key we already hold (e.g. older
+            // location / file / call events that earlier code stored as a raw ciphertext blob).
+            // Runs off the UI thread; re-renders if anything changed and we're still in this room.
+            if (room.IsEncrypted && _crypto != null && _crypto.Available)
+            {
+                string openedRoomId = room.Id;
+                var ignore = Task.Run(() =>
+                {
+                    bool changed = false;
+                    try { changed = RetryDecryptRoom(openedRoomId); }
+                    catch (Exception ex) { App.Log("CRYPTO: open-retry failed: " + ex.Message); }
+                    if (changed)
+                    {
+                        var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Low, () =>
+                        {
+                            if (_currentRoomId == openedRoomId) RenderLatestPage(openedRoomId);
+                        });
+                    }
+                });
+            }
         }
 
         private async Task LoadMessagesAsync(string roomId)
