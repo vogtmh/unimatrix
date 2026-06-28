@@ -507,6 +507,12 @@ namespace UniMatrix
             if (string.IsNullOrEmpty(sender) && existing != null) sender = existing.Sender;
             if (ts == 0 && existing != null) ts = existing.Timestamp;
 
+            // Remove the optimistic local echo for our own just-sent message, if present. Encrypted
+            // sends echo a placeholder bubble immediately; without this the decrypted real event would
+            // appear as a SECOND bubble (the plaintext path does the same via RemoveMatchingLocalEcho).
+            if (!string.IsNullOrEmpty(sender) && sender == _settings?.UserId)
+                RemoveMatchingLocalEcho(roomId, msgType, body);
+
             _db.UpsertMessage(new Message
             {
                 EventId = eventId,
@@ -530,6 +536,27 @@ namespace UniMatrix
         private static string FriendlyOrDefault(string body, string fallback)
         {
             return string.IsNullOrEmpty(body) ? fallback : body;
+        }
+
+        /// <summary>
+        /// Deletes the optimistic local-echo row that matches a just-confirmed own message, so the
+        /// decrypted real event doesn't render as a duplicate bubble. Mirrors
+        /// SyncProcessor.RemoveMatchingLocalEcho (used for plaintext rooms) for the encrypted path.
+        /// </summary>
+        private void RemoveMatchingLocalEcho(string roomId, string msgType, string body)
+        {
+            try
+            {
+                foreach (var m in _db.GetMessages(roomId, 20))
+                {
+                    if (m.IsLocalEcho && m.Sender == _settings?.UserId && m.MsgType == msgType && m.Body == body)
+                    {
+                        _db.DeleteMessage(m.EventId);
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex) { App.Log("CRYPTO: RemoveMatchingLocalEcho failed: " + ex.Message); }
         }
 
         // ---- Outgoing encryption ----
