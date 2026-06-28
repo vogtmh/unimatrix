@@ -281,7 +281,7 @@ namespace UniMatrix
                 RecoveryPanel.Visibility = Visibility.Collapsed;
 
                 // Decrypt any history that the freshly-restored keys can now read.
-                RetryAllRoomsDecryption();
+                await RetryAllRoomsDecryption();
                 RefreshRooms();
                 if (!string.IsNullOrEmpty(_currentRoomId))
                     await LoadMessagesAsync(_currentRoomId);
@@ -329,13 +329,13 @@ namespace UniMatrix
 
         /// <summary>Re-attempts decryption of every still-encrypted message across all encrypted rooms
         /// (called after a backup restore brings in new Megolm keys).</summary>
-        private void RetryAllRoomsDecryption()
+        private async Task RetryAllRoomsDecryption()
         {
             if (_crypto == null || !_crypto.Available) return;
             try
             {
                 foreach (var roomId in _db.GetEncryptedRoomIds())
-                    RetryDecryptRoom(roomId);
+                    await RetryDecryptRoom(roomId);
             }
             catch (Exception ex) { App.Log("CRYPTO: RetryAllRoomsDecryption failed: " + ex.Message); }
         }

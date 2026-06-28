@@ -290,6 +290,57 @@ namespace UniMatrix.Services
             return await RestoreAsync(priv);
         }
 
+        /// <summary>
+        /// On-demand recovery of a SINGLE Megolm session from the server backup, used when a received
+        /// room event can't be decrypted because its key was never delivered to this device (e.g. the
+        /// to-device key-share arrived while the app was suspended). Requires the backup to be enabled
+        /// (we hold the private key). Returns true if the session was fetched, decrypted and imported.
+        /// </summary>
+        public async Task<bool> TryRecoverSessionAsync(string roomId, string sessionId)
+        {
+            if (string.IsNullOrEmpty(roomId) || string.IsNullOrEmpty(sessionId)) return false;
+            try
+            {
+                if (string.IsNullOrEmpty(Version)) await LoadAsync();
+                if (!Enabled) return false; // no backup or we don't hold the private key
+
+                byte[] priv = GetPrivateKey();
+                if (priv == null || priv.Length != 32) return false;
+
+                var keyData = await _client.BackupKeyGetAsync(Version, roomId, sessionId);
+                var sd = keyData != null ? CryptoService.GetObj(keyData, "session_data") : null;
+                if (sd == null) return false; // not in the backup
+
+                string ephemeral = MatrixClient.GetString(sd, "ephemeral");
+                string mac = MatrixClient.GetString(sd, "mac");
+                string ciphertext = MatrixClient.GetString(sd, "ciphertext");
+                if (string.IsNullOrEmpty(ciphertext)) return false;
+
+                using (var dec = OlmPkDecryption.FromPrivateKey(priv))
+                {
+                    string plainJson;
+                    try { plainJson = dec.Decrypt(ephemeral, mac, ciphertext); }
+                    catch (Exception ex) { App.Log("CRYPTO: backup decrypt failed for " + sessionId + ": " + ex.Message); return false; }
+
+                    JsonObject plain;
+                    if (!JsonObject.TryParse(plainJson, out plain)) return false;
+
+                    string sessionKey = MatrixClient.GetString(plain, "session_key");
+                    string senderKey = MatrixClient.GetString(plain, "sender_key");
+                    var claimed = CryptoService.GetObj(plain, "sender_claimed_keys");
+                    string ed25519 = claimed != null ? MatrixClient.GetString(claimed, "ed25519") : null;
+                    if (string.IsNullOrEmpty(sessionKey)) return false;
+
+                    bool imported = _crypto.ImportInboundSession(roomId, sessionKey, senderKey, ed25519, true);
+                    App.Log("CRYPTO: on-demand backup fetch sid=" + (sessionId.Length > 8 ? sessionId.Substring(0, 8) : sessionId) +
+                            " room=" + roomId + (imported ? " -> imported" : " -> already had it"));
+                    // "already had it" still counts as recoverable: the caller can retry decryption.
+                    return true;
+                }
+            }
+            catch (Exception ex) { App.Log("CRYPTO: TryRecoverSessionAsync failed: " + ex.Message); return false; }
+        }
+
         /// <summary>The locally-held backup private key (32 bytes) or null. Used by SSSS to stash it.</summary>
         public byte[] GetPrivateKey()
         {
@@ -317,6 +368,7 @@ namespace UniMatrix.Services
         public Task BackupAllAsync() { return Task.FromResult(0); }
         public Task<int> RestoreAsync(byte[] privateKey) { return Task.FromResult(-1); }
         public Task<int> RestoreWithRecoveryKeyAsync(string recoveryKey) { return Task.FromResult(-1); }
+        public Task<bool> TryRecoverSessionAsync(string roomId, string sessionId) { return Task.FromResult(false); }
         public byte[] GetPrivateKey() { return null; }
 #endif
     }

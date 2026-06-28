@@ -950,6 +950,21 @@ namespace UniMatrix.Services
             return await GetAsync(path, CancellationToken.None);
         }
 
+        /// <summary>Downloads a single backed-up Megolm session (one room/session id) at the given
+        /// version. Returns the key-data object (with "session_data"), or null if absent.</summary>
+        public async Task<JsonObject> BackupKeyGetAsync(string version, string roomId, string sessionId)
+        {
+            try
+            {
+                string path = "/_matrix/client/r0/room_keys/keys/" + Uri.EscapeDataString(roomId) +
+                              "/" + Uri.EscapeDataString(sessionId) +
+                              "?version=" + Uri.EscapeDataString(version) +
+                              "&access_token=" + Uri.EscapeDataString(_accessToken);
+                return await GetAsync(path, CancellationToken.None);
+            }
+            catch { return null; }
+        }
+
         // ---- Media ----
 
         /// <summary>

@@ -27,6 +27,10 @@ namespace UniMatrix
         // Guards the one-time "a backup exists, want to restore it?" prompt so it appears at most once.
         private bool _recoveryPromptShown;
 
+        // Session ids we've already tried to fetch on-demand from the server backup (keyed
+        // "room|session"), so a permanently-missing key isn't re-requested on every retry pass.
+        private readonly HashSet<string> _backupFetchAttempted = new HashSet<string>();
+
         /// <summary>
         /// Creates and initializes the CryptoService once per signed-in session (idempotent).
         /// Loads or creates the Olm account, publishes device keys + one-time keys on first run.
@@ -124,7 +128,7 @@ namespace UniMatrix
                     // 3. Decrypt the encrypted timeline events from this sync.
                     foreach (var enc in result.EncryptedEvents)
                     {
-                        if (DecryptAndStore(result, enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
+                        if (await DecryptAndStore(result, enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
                             result.ChangedRooms.Add(enc.RoomId);
                     }
 
@@ -133,7 +137,7 @@ namespace UniMatrix
                     {
                         foreach (var roomId in newKeyRooms)
                         {
-                            if (RetryDecryptRoom(roomId))
+                            if (await RetryDecryptRoom(roomId))
                                 result.ChangedRooms.Add(roomId);
                         }
                     }
@@ -159,13 +163,47 @@ namespace UniMatrix
             }
         }
 
+        /// <summary>
+        /// On a missing Megolm key, fetches that one session from the server-side backup (the
+        /// to-device key-share is sent only once, so if this device was suspended/restarted when it
+        /// was delivered the key is otherwise lost forever). Each (room, session) is attempted at most
+        /// once per app run to avoid hammering the server for keys that aren't in the backup (e.g.
+        /// pre-backup history). Returns true if a session was fetched, so the caller can retry.
+        /// </summary>
+        private async Task<bool> TryRecoverMissingSessionAsync(string roomId, JsonObject content)
+        {
+            if (_backup == null || content == null) return false;
+            try
+            {
+                string sessionId = MatrixClient.GetString(content, "session_id");
+                if (string.IsNullOrEmpty(sessionId)) return false;
+
+                string dedupKey = roomId + "|" + sessionId;
+                lock (_backupFetchAttempted)
+                {
+                    if (_backupFetchAttempted.Contains(dedupKey)) return false;
+                    _backupFetchAttempted.Add(dedupKey);
+                }
+
+                return await _backup.TryRecoverSessionAsync(roomId, sessionId);
+            }
+            catch (Exception ex) { App.Log("CRYPTO: backup recover hook failed: " + ex.Message); return false; }
+        }
+
         /// <summary>Decrypts one encrypted event and overwrites its stored row. Returns true on success.</summary>
-        private bool DecryptAndStore(SyncResult result, string roomId, string eventId, string sender, long ts, JsonObject content)
+        private async Task<bool> DecryptAndStore(SyncResult result, string roomId, string eventId, string sender, long ts, JsonObject content)
         {
             if (_crypto == null || !_crypto.Available || content == null) return false;
             try
             {
                 var dr = _crypto.DecryptRoomEvent(roomId, content);
+                if ((!dr.Ok || dr.ClearContent == null) && dr.FailureReason == "no session" &&
+                    await TryRecoverMissingSessionAsync(roomId, content))
+                {
+                    // The Megolm key was missing but we fetched it from the server backup
+                    // (the to-device key-share was likely missed while suspended) — retry once.
+                    dr = _crypto.DecryptRoomEvent(roomId, content);
+                }
                 if (!dr.Ok || dr.ClearContent == null)
                 {
                     // Log the reason so undecryptable events (especially call signalling, which
@@ -274,7 +312,7 @@ namespace UniMatrix
         }
 
         /// <summary>Re-attempts decryption of every still-encrypted row in a room (key just arrived).</summary>
-        private bool RetryDecryptRoom(string roomId)
+        private async Task<bool> RetryDecryptRoom(string roomId)
         {
             if (_crypto == null || !_crypto.Available) return false;
             bool any = false;
@@ -285,6 +323,12 @@ namespace UniMatrix
                     JsonObject content;
                     if (!JsonObject.TryParse(kv.Value, out content)) continue;
                     var dr = _crypto.DecryptRoomEvent(roomId, content);
+                    if ((!dr.Ok || dr.ClearContent == null) && dr.FailureReason == "no session" &&
+                        await TryRecoverMissingSessionAsync(roomId, content))
+                    {
+                        // Missing Megolm key recovered from the server backup — retry once.
+                        dr = _crypto.DecryptRoomEvent(roomId, content);
+                    }
                     if (!dr.Ok || dr.ClearContent == null)
                     {
                         // Log why an old ciphertext still can't be decrypted (e.g. "unknown message

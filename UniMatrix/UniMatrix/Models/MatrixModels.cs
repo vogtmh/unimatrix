@@ -332,31 +332,67 @@ namespace UniMatrix.Models
             }
         }
 
-        /// <summary>Static OpenStreetMap tile URL for the inline preview (the tile that contains the point).</summary>
-        public string MapPreviewUrl
+        private const double TilePixels = 256.0;  // OSM/Geofabrik tile edge length, in pixels
+
+        /// <summary>
+        /// A single map tile to composite into the inline preview, with its position
+        /// (Canvas.Left/Top) inside the 240x240 view.
+        /// </summary>
+        public sealed class MapTile
+        {
+            public string Url { get; set; }
+            public double X { get; set; }
+            public double Y { get; set; }
+        }
+
+        /// <summary>
+        /// The tiles to composite for the inline preview, positioned so the point lands dead-centre
+        /// of the 240x240 view. At most a 2x2 grid is required because the view (240) is smaller than
+        /// one tile (256). Tiles are fetched from Geofabrik (OSM's servers block direct tile access).
+        /// </summary>
+        public IEnumerable<MapTile> MapPreviewTiles
         {
             get
             {
                 if (!IsLocation) return null;
-                int tileX = (int)Math.Floor(MercX);
-                int tileY = (int)Math.Floor(MercY);
-                return string.Format("https://a.tile.geofabrik.de/2b232a218fc74caab0859632066bb003/{0}/{1}/{2}.png", MapPreviewZoom, tileX, tileY);
+                var tiles = new List<MapTile>();
+                double half = MapPreviewSize / 2.0;
+                // World-pixel position of the point at the preview zoom, then the view's top-left.
+                double viewLeft = MercX * TilePixels - half;
+                double viewTop = MercY * TilePixels - half;
+                int txMin = (int)Math.Floor(viewLeft / TilePixels);
+                int txMax = (int)Math.Floor((viewLeft + MapPreviewSize) / TilePixels);
+                int tyMin = (int)Math.Floor(viewTop / TilePixels);
+                int tyMax = (int)Math.Floor((viewTop + MapPreviewSize) / TilePixels);
+                int n = 1 << MapPreviewZoom;
+                for (int ty = tyMin; ty <= tyMax; ty++)
+                {
+                    if (ty < 0 || ty >= n) continue;            // no tiles beyond the poles
+                    for (int tx = txMin; tx <= txMax; tx++)
+                    {
+                        int wrappedX = ((tx % n) + n) % n;       // wrap longitude across the date line
+                        tiles.Add(new MapTile
+                        {
+                            Url = string.Format("https://a.tile.geofabrik.de/2b232a218fc74caab0859632066bb003/{0}/{1}/{2}.png", MapPreviewZoom, wrappedX, ty),
+                            X = tx * TilePixels - viewLeft,      // unwrapped tx keeps placement continuous
+                            Y = ty * TilePixels - viewTop
+                        });
+                    }
+                }
+                return tiles;
             }
         }
 
-        /// <summary>Margin that places the pin glyph's tip over the exact point within the preview tile.</summary>
+        /// <summary>Margin that places the pin glyph's tip at the centre of the preview (where the point is).</summary>
         public Thickness MapPinMargin
         {
             get
             {
                 if (!IsLocation) return new Thickness(0);
-                double fx = MercX - Math.Floor(MercX);
-                double fy = MercY - Math.Floor(MercY);
-                double px = fx * MapPreviewSize;
-                double py = fy * MapPreviewSize;
+                double half = MapPreviewSize / 2.0;
                 // The pin glyph (FontSize 28) has its tip at bottom-centre, so shift left ~half a
-                // glyph width and up ~one glyph height to anchor the tip on the point.
-                return new Thickness(px - 14, py - 26, 0, 0);
+                // glyph width and up ~one glyph height to anchor the tip on the centred point.
+                return new Thickness(half - 14, half - 26, 0, 0);
             }
         }
 

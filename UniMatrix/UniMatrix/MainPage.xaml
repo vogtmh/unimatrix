@@ -373,12 +373,32 @@
                                     <Image Source="{Binding MediaUrl}" Stretch="Uniform" MaxHeight="220"
                                            Visibility="{Binding ImageVisibility}" Margin="0,2,0,0"
                                            Tapped="MessageImage_Tapped" />
-                                    <!-- Inline location preview: a static OpenStreetMap tile with a
-                                         pin overlay. Tapping opens the interactive fullscreen map. -->
+                                    <!-- Inline location preview: tiles composited so the point sits
+                                         dead-centre, with a pin overlay. Tapping opens the fullscreen map. -->
                                     <Grid Width="240" Height="240" Margin="0,4,0,0" CornerRadius="6"
                                           Visibility="{Binding LocationVisibility}"
                                           Background="#22000000" Tapped="MessageMap_Tapped">
-                                        <Image Source="{Binding MapPreviewUrl}" Width="240" Height="240" Stretch="Fill" />
+                                        <Grid.Clip>
+                                            <RectangleGeometry Rect="0,0,240,240" />
+                                        </Grid.Clip>
+                                        <ItemsControl ItemsSource="{Binding MapPreviewTiles}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <Canvas />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemContainerStyle>
+                                                <Style TargetType="ContentPresenter">
+                                                    <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                                    <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                                </Style>
+                                            </ItemsControl.ItemContainerStyle>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Image Source="{Binding Url}" Width="256" Height="256" Stretch="Fill" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
                                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE81D;" FontSize="28"
                                                   Foreground="#E03333" HorizontalAlignment="Left" VerticalAlignment="Top"
                                                   Margin="{Binding MapPinMargin}" />

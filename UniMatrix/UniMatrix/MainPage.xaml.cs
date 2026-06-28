@@ -670,10 +670,10 @@ namespace UniMatrix
             if (room.IsEncrypted && _crypto != null && _crypto.Available)
             {
                 string openedRoomId = room.Id;
-                var ignore = Task.Run(() =>
+                var ignore = Task.Run(async () =>
                 {
                     bool changed = false;
-                    try { changed = RetryDecryptRoom(openedRoomId); }
+                    try { changed = await RetryDecryptRoom(openedRoomId); }
                     catch (Exception ex) { App.Log("CRYPTO: open-retry failed: " + ex.Message); }
                     if (changed)
                     {

@@ -145,7 +145,7 @@
     <Compile Include="Properties\BuildInfo.cs" />
     <Compile Include="Services\CallService.cs" />
     <Compile Include="Services\CryptoService.cs" />
-    <Compile Include="Services\KeyBackupService.cs" />
+    <Compile Include="Services\MegolmBackupService.cs" />
     <Compile Include="Services\SsssService.cs" />
     <Compile Include="Services\VerificationService.cs" />
     <Compile Include="Services\AttachmentCrypto.cs" />
