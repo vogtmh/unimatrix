@@ -44,6 +44,10 @@ namespace UniMatrix
         // with /p:ManagedRtcSpike=false). Only one of the two answers the SFU offer.
         private ManagedRtcProbe _managedRtcProbe;
 
+        // Stage-1 dependency-free STUN probe: tests whether the appcontainer can do UDP to the SFU's
+        // STUN/TURN servers (the foundation under any managed WebRTC path). Logs "STUN:" lines.
+        private StunProbe _stunProbe;
+
         // True while an accept/join attempt is in progress, so a double-tap doesn't fire twice.
         private bool _matrixRtcJoining;
 
@@ -361,6 +365,15 @@ namespace UniMatrix
                     if (CallStatusText != null)
                         CallStatusText.Text = "In call \u00B7 " + (join.OtherParticipantCount + 1) + " on SFU";
                 });
+
+                // Stage-1 spike: fire a dependency-free STUN probe at the SFU's ICE servers to confirm
+                // the appcontainer can do UDP to them (the foundation for any managed WebRTC path).
+                if (_liveKitSignal == signal && join != null)
+                {
+                    var stun = new StunProbe();
+                    _stunProbe = stun;
+                    _ = stun.ProbeAsync(join.IceServers);
+                }
             };
 
             signal.Closed += reason =>
@@ -391,6 +404,13 @@ namespace UniMatrix
             if (probe != null)
             {
                 try { probe.Close(); } catch { }
+            }
+
+            var stun = _stunProbe;
+            _stunProbe = null;
+            if (stun != null)
+            {
+                try { stun.Close(); } catch { }
             }
 
             var signal = _liveKitSignal;

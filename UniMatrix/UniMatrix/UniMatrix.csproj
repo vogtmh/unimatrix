@@ -158,6 +158,7 @@
     <Compile Include="Services\LiveKitSignalClient.cs" />
     <Compile Include="Services\LiveKitMediaSession.cs" />
     <Compile Include="Services\ManagedRtcProbe.cs" />
+    <Compile Include="Services\StunProbe.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
     <Compile Include="Services\PreferencesService.cs" />
@@ -250,23 +251,21 @@
     </PackageReference>
   </ItemGroup>
   <!--
-    MANAGED-RTC SPIKE (ON by default so it ships in the appxpackage for sideloading). Pulls in
-    SIPSorcery (pure-C# WebRTC: ICE + DTLS + SRTP + raw RTP) to test whether a fully-managed media
-    path can run under .NET Native on ARM32 — the seam Org.WebRtc M71 lacks for decrypting E2EE
-    MatrixRTC audio. To turn it OFF, build with /p:ManagedRtcSpike=false. If NuGet can't resolve this
-    exact version on the legacy UWP toolchain, install via the VS NuGet UI (it auto-picks the highest
-    uap10.0.16299-compatible version) and update the version here. SIPSorcery pulls Concentus (Opus)
-    transitively. The spike code lives behind the SPIKE_MANAGED_RTC compile constant (set below).
+    MANAGED-RTC SPIKE (OFF by default — it CANNOT restore on this project).
+    SIPSorcery only ships netstandard2.0+, and consuming netstandard2.0 requires
+    TargetPlatformMinVersion >= 10.0.16299; this project is min 10.0.14393 (and the target device,
+    a Lumia 930 on Windows 10 Mobile, never reaches 16299), so NuGet restore fails with NU1202 and
+    the resulting package would be undeployable anyway. Left here (gated off) for reference. To even
+    attempt it you must (a) raise TargetPlatformMinVersion to 10.0.16299 AND (b) have a device on
+    >= 16299. Enable with /p:ManagedRtcSpike=true only if you understand it won't install on W10M.
+    The spike code lives behind the SPIKE_MANAGED_RTC compile constant (set below).
   -->
-  <PropertyGroup Condition="'$(ManagedRtcSpike)' == ''">
-    <ManagedRtcSpike>true</ManagedRtcSpike>
-  </PropertyGroup>
-  <ItemGroup Condition="'$(ManagedRtcSpike)' != 'false'">
+  <ItemGroup Condition="'$(ManagedRtcSpike)' == 'true'">
     <PackageReference Include="SIPSorcery">
       <Version>6.2.4</Version>
     </PackageReference>
   </ItemGroup>
-  <PropertyGroup Condition="'$(ManagedRtcSpike)' != 'false'">
+  <PropertyGroup Condition="'$(ManagedRtcSpike)' == 'true'">
     <DefineConstants>$(DefineConstants);SPIKE_MANAGED_RTC</DefineConstants>
   </PropertyGroup>
   <!--
