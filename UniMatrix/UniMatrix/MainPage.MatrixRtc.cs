@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
+using Windows.Data.Json;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using UniMatrix.Services;
@@ -76,6 +78,14 @@ namespace UniMatrix
         // later call until the app was restarted. Bounded to avoid unbounded growth.
         private readonly HashSet<string> _rtcRangMemberships = new HashSet<string>();
 
+        // Whether we've published our own m.rtc.member join for the current call, and where, so we
+        // can retract it (publish an empty membership = "left") when the ring/call is dismissed. This
+        // is what makes Element show UniMatrix as a participant ("both sides connect") and is a
+        // prerequisite for ever receiving the per-participant E2EE media keys.
+        private bool _rtcMemberPublished;
+        private string _rtcMemberPublishedRoomId;
+        private string _rtcMemberPublishedStateKey;
+
         // Default ring lifetime when a notification doesn't specify one (MSC4075 suggests ~30s).
         private const long DefaultRtcRingLifetimeMs = 30000;
 
@@ -93,11 +103,26 @@ namespace UniMatrix
             if (memCount > 0 || notifCount > 0)
                 App.Log("RTC: dispatch memberships=" + memCount + " notifications=" + notifCount);
 
-            if (result.MatrixRtcMemberships != null)
+            if (result.MatrixRtcMemberships != null && result.MatrixRtcMemberships.Count > 0)
             {
+                // Collapse multiple membership changes for the same (room, state_key) within this
+                // sync batch down to their net-final state. A post-restart or gappy sync can deliver
+                // a join AND its matching leave together (a call that already ended before we synced);
+                // processing both would ring then instantly dismiss. Keeping only the last entry per
+                // state key nets a join+leave to "left" (so we never ring for an already-ended call),
+                // while a leave+join collapses to "join" (a genuine new call) and still rings.
+                var netMembers = new Dictionary<string, MatrixRtcMembership>();
+                var netOrder = new List<string>();
                 foreach (var m in result.MatrixRtcMemberships)
                 {
-                    try { UpdateRtcMembership(m); }
+                    if (m == null) continue;
+                    string key = (m.RoomId ?? "") + "\n" + (m.StateKey ?? "");
+                    if (!netMembers.ContainsKey(key)) netOrder.Add(key);
+                    netMembers[key] = m; // arrival order is chronological -> last wins
+                }
+                foreach (var key in netOrder)
+                {
+                    try { UpdateRtcMembership(netMembers[key]); }
                     catch (Exception ex) { App.Log("RTC: membership update failed: " + ex.Message); }
                 }
             }
@@ -239,6 +264,18 @@ namespace UniMatrix
                 return;
             }
 
+            // Don't ring for a notification whose call has already ended. If we're tracking this
+            // room's call membership and it currently has no active members, the call is over — this
+            // happens on a post-restart replay where the membership leave was processed (in the same
+            // batch) just before this notification. A room we've never tracked has no entry, so we
+            // don't suppress it.
+            HashSet<string> activeMembers;
+            if (_rtcActiveMembers.TryGetValue(n.RoomId, out activeMembers) && activeMembers.Count == 0)
+            {
+                App.Log("RTC: notification for an ended call (no active members in " + n.RoomId + ") -> not ringing");
+                return;
+            }
+
             // Don't hijack the screen if a legacy 1:1 call is already up, or we're already ringing.
             if (_callService != null && _callService.InCall) { App.Log("RTC: notification while in a legacy call -> skip"); return; }
             if (_incomingIsMatrixRtc) { App.Log("RTC: notification but already ringing -> skip"); return; }
@@ -298,6 +335,7 @@ namespace UniMatrix
 
             string room = _matrixRtcRoomAlias;
             string focus = _matrixRtcFocusUrl;
+            string roomId = _matrixRtcRingingRoomId;
             if (CallStatusText != null) CallStatusText.Text = "Connecting\u2026";
 
             try
@@ -336,6 +374,10 @@ namespace UniMatrix
                 if (CallStatusText != null) CallStatusText.Text = "Connecting to call\u2026";
 
                 StartLiveKitSignalling(creds.Url, creds.Jwt);
+
+                // Announce ourselves as a call participant so Element shows us in the call ("both
+                // sides connect"). Best-effort: a failure here doesn't abort the join attempt.
+                await PublishRtcMemberAsync(roomId);
             }
             catch (Exception ex)
             {
@@ -418,6 +460,96 @@ namespace UniMatrix
             _ = signal.ConnectAsync(sfuUrl, jwt);
         }
 
+        /// <summary>
+        /// Publishes our own MatrixRTC call membership (m.rtc.member) so the caller's client (Element)
+        /// sees UniMatrix as a participant in the call. Uses the MSC3757 owned-state key format Element
+        /// itself uses (a leading underscore + our mxid + device + "_m.call"), mirroring the join
+        /// content. Best-effort: any failure is logged and swallowed so it can't break the join flow.
+        /// </summary>
+        private async Task PublishRtcMemberAsync(string roomId)
+        {
+            if (string.IsNullOrEmpty(roomId)) return;
+            string userId = _settings?.UserId;
+            string deviceId = _settings?.DeviceId;
+            if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(deviceId))
+            {
+                App.Log("RTC: cannot publish m.rtc.member (no user/device id)");
+                return;
+            }
+
+            // MSC3757 owned state key, matching the format Element publishes
+            // (e.g. _@user:server_DEVICE_m.call) so the homeserver lets us set it.
+            string stateKey = "_" + userId + "_" + deviceId + "_m.call";
+
+            var foci = new JsonArray();
+            if (!string.IsNullOrEmpty(_matrixRtcFocusUrl))
+            {
+                var focus = new JsonObject();
+                focus["livekit_alias"] = JsonValue.CreateStringValue(_matrixRtcRoomAlias ?? roomId);
+                focus["livekit_service_url"] = JsonValue.CreateStringValue(_matrixRtcFocusUrl);
+                focus["type"] = JsonValue.CreateStringValue("livekit");
+                foci.Add(focus);
+            }
+            var focusActive = new JsonObject();
+            focusActive["focus_selection"] = JsonValue.CreateStringValue("oldest_membership");
+            focusActive["type"] = JsonValue.CreateStringValue("livekit");
+
+            var content = new JsonObject();
+            content["application"] = JsonValue.CreateStringValue("m.call");
+            content["call_id"] = JsonValue.CreateStringValue("");
+            content["device_id"] = JsonValue.CreateStringValue(deviceId);
+            content["expires"] = JsonValue.CreateNumberValue(14400000);
+            content["foci_preferred"] = foci;
+            content["focus_active"] = focusActive;
+            content["m.call.intent"] = JsonValue.CreateStringValue("audio");
+            content["membershipID"] = JsonValue.CreateStringValue(userId + ":" + deviceId);
+            content["scope"] = JsonValue.CreateStringValue("m.room");
+
+            try
+            {
+                string evId = await _client.SendStateEventAsync(roomId, "org.matrix.msc3401.call.member", content, stateKey);
+                if (!string.IsNullOrEmpty(evId))
+                {
+                    _rtcMemberPublished = true;
+                    _rtcMemberPublishedRoomId = roomId;
+                    _rtcMemberPublishedStateKey = stateKey;
+                    App.Log("RTC: published m.rtc.member join -> Element should now see us (evId=" + evId + ")");
+                }
+                else
+                {
+                    App.Log("RTC: publish m.rtc.member returned no event id (send may have failed)");
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log("RTC: publish m.rtc.member FAILED: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Retracts our published call membership (sends an empty m.rtc.member = "left") so Element
+        /// removes us from the call when the ring/call is dismissed. No-op if we never published.
+        /// </summary>
+        private async Task RetractRtcMemberAsync()
+        {
+            if (!_rtcMemberPublished) return;
+            string roomId = _rtcMemberPublishedRoomId;
+            string stateKey = _rtcMemberPublishedStateKey;
+            _rtcMemberPublished = false;
+            _rtcMemberPublishedRoomId = null;
+            _rtcMemberPublishedStateKey = null;
+            if (string.IsNullOrEmpty(roomId) || string.IsNullOrEmpty(stateKey)) return;
+            try
+            {
+                await _client.SendStateEventAsync(roomId, "org.matrix.msc3401.call.member", new JsonObject(), stateKey);
+                App.Log("RTC: retracted m.rtc.member (left call)");
+            }
+            catch (Exception ex)
+            {
+                App.Log("RTC: retract m.rtc.member failed: " + ex.Message);
+            }
+        }
+
         /// <summary>Closes and clears the LiveKit signalling socket and media session if open.</summary>
         private void CloseLiveKitSignalling()
         {
@@ -462,6 +594,9 @@ namespace UniMatrix
         {
             if (!_incomingIsMatrixRtc) return;
             App.Log("RTC: dismissing ring (" + reason + ")");
+
+            // If we announced ourselves as a participant, tell Element we left.
+            var _ = RetractRtcMemberAsync();
 
             _incomingIsMatrixRtc = false;
             _matrixRtcJoining = false;
