@@ -46,6 +46,9 @@ namespace UniMatrix.Services
         // Whether the local microphone is currently muted (track disabled). Kept platform-agnostic so
         // the UI can query/toggle it even on builds without the native WebRTC library.
         private bool _muted;
+        // True while a standalone local camera preview (no peer connection) is running. Used by the
+        // Phase 1 video smoke test to show the self-view before full video calling is wired up.
+        private bool _previewActive;
 
         /// <summary>True when this build actually has the native WebRTC library available.</summary>
         public bool IsWebRtcAvailable
@@ -130,6 +133,11 @@ namespace UniMatrix.Services
         private RTCPeerConnection _pc;
         private IMediaStreamTrack _selfAudioTrack;
         private IMediaStreamTrack _peerAudioTrack;
+        // Video tracks (Phase 1+: capture/self-preview now; remote render in a later phase).
+        private IMediaStreamTrack _selfVideoTrack;
+        private IMediaStreamTrack _peerVideoTrack;
+        // True when the current call/preview involves video (camera capture + video offer).
+        private bool _isVideoCall;
 
         private bool _isCaller;
         private bool _remoteDescriptionSet;
@@ -197,6 +205,52 @@ namespace UniMatrix.Services
                 App.Log("CALL: mic access failed: " + ex.Message);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Requests camera (and microphone) access so the OS shows the webcam consent prompt on
+        /// first use. The probe MediaCapture is disposed right away so it doesn't hold the camera
+        /// device open before Org.WebRtc's VideoCapturer opens it. UI-thread only.
+        /// </summary>
+        private static async Task<bool> RequestCameraAsync()
+        {
+            try
+            {
+                var capture = new Windows.Media.Capture.MediaCapture();
+                var settings = new Windows.Media.Capture.MediaCaptureInitializationSettings
+                {
+                    StreamingCaptureMode = Windows.Media.Capture.StreamingCaptureMode.AudioAndVideo
+                };
+                await capture.InitializeAsync(settings);
+                capture.Dispose();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: camera access failed: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Returns the device id of the front-facing camera (the one we want for a video call), or
+        /// null if it can't be determined. Used to prefer the front camera over the rear one.
+        /// </summary>
+        private static async Task<string> GetFrontCameraIdAsync()
+        {
+            try
+            {
+                var devices = await Windows.Devices.Enumeration.DeviceInformation.FindAllAsync(
+                    Windows.Devices.Enumeration.DeviceClass.VideoCapture);
+                foreach (var d in devices)
+                {
+                    var loc = d.EnclosureLocation;
+                    if (loc != null && loc.Panel == Windows.Devices.Enumeration.Panel.Front)
+                        return d.Id;
+                }
+            }
+            catch (Exception ex) { App.Log("CALL: front-camera lookup failed: " + ex.Message); }
+            return null;
         }
 
         /// <summary>
@@ -405,6 +459,134 @@ namespace UniMatrix.Services
             _pendingRemoteCandidates.Clear();
         }
 #endif
+
+        /// <summary>
+        /// Starts a standalone local camera preview (Phase 1 smoke test): it initializes the
+        /// native library, opens the front camera and renders the self-view into the given
+        /// MediaElement. No peer connection or signalling is involved, so it only verifies that
+        /// camera capture and Org.WebRtc's MediaElementMaker rendering work on the device.
+        /// </summary>
+        public async Task<bool> StartLocalPreviewAsync(Windows.UI.Xaml.Controls.MediaElement target)
+        {
+#if WEBRTC
+            if (target == null) return false;
+            if (_inCall) { Status("Can't start preview during a call."); return false; }
+            if (_previewActive) return true;
+            try
+            {
+                EnsureLibrary();
+                if (!await RequestCameraAsync())
+                {
+                    Status("Camera permission denied.");
+                    return false;
+                }
+
+                // Enumerate cameras (UI thread) and prefer the front-facing one.
+                string frontId = await GetFrontCameraIdAsync();
+                var cameras = await VideoCapturer.GetDevices();
+                string camName = null, camId = null;
+                if (cameras != null)
+                {
+                    foreach (var c in cameras)
+                    {
+                        if (c?.Info == null) continue;
+                        if (camId == null) { camName = c.Info.Name; camId = c.Info.Id; } // fallback: first
+                        if (!string.IsNullOrEmpty(frontId) && c.Info.Id == frontId)
+                        {
+                            camName = c.Info.Name; camId = c.Info.Id; break;
+                        }
+                    }
+                }
+                if (camId == null) { Status("No camera found."); return false; }
+                Status("Using camera: " + (camName ?? camId));
+
+                // The native constructors block until the WebRTC dispatcher pumps, so build the
+                // capturer/source/track off the UI thread (same rule as CreatePeerConnection).
+                bool built = await Task.Run(() =>
+                {
+                    try
+                    {
+                        _factory = new WebRtcFactory(new WebRtcFactoryConfiguration());
+
+                        var capturer = VideoCapturer.Create(camName, camId, false);
+
+                        // QVGA @ 15fps keeps the encoder light on the Lumia 930.
+                        IReadOnlyList<IConstraint> mandatory = new List<IConstraint>
+                        {
+                            new Constraint("maxWidth", "320"),
+                            new Constraint("minWidth", "320"),
+                            new Constraint("maxHeight", "240"),
+                            new Constraint("minHeight", "240"),
+                            new Constraint("maxFrameRate", "15"),
+                            new Constraint("minFrameRate", "15")
+                        };
+                        IReadOnlyList<IConstraint> optional = new List<IConstraint>();
+                        var constraints = new MediaConstraints(mandatory, optional);
+
+                        var videoOptions = new VideoOptions
+                        {
+                            Factory = _factory,
+                            Capturer = capturer,
+                            Constraints = constraints
+                        };
+                        var source = VideoTrackSource.Create(videoOptions);
+                        _selfVideoTrack = MediaStreamTrack.CreateVideoTrack("SELF_VIDEO", source);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log("CALL: preview build failed: " + ex);
+                        return false;
+                    }
+                });
+
+                if (!built || _selfVideoTrack == null)
+                {
+                    Status("Camera preview failed.");
+                    StopLocalPreview();
+                    return false;
+                }
+
+                // Binding a track to a MediaElement touches XAML, so it must run on the UI thread
+                // (we're back on it after the await above).
+                _selfVideoTrack.Element = MediaElementMaker.Bind(target);
+                _isVideoCall = true;
+                _previewActive = true;
+                Status("Local camera preview started.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                App.Log("CALL: StartLocalPreview failed: " + ex);
+                StopLocalPreview();
+                return false;
+            }
+#else
+            await Task.CompletedTask;
+            return false;
+#endif
+        }
+
+        /// <summary>Stops the standalone local camera preview and releases the camera.</summary>
+        public void StopLocalPreview()
+        {
+#if WEBRTC
+            try
+            {
+                if (_selfVideoTrack != null)
+                {
+                    try { _selfVideoTrack.Element = null; } catch { }
+                    (_selfVideoTrack as IDisposable)?.Dispose();
+                    _selfVideoTrack = null;
+                }
+                // Only drop the factory if no peer connection owns it (preview has no _pc).
+                if (_pc == null) _factory = null;
+            }
+            catch (Exception ex) { App.Log("CALL: StopLocalPreview error: " + ex.Message); }
+            _previewActive = false;
+            if (_pc == null) _isVideoCall = false;
+#endif
+        }
 
         /// <summary>Places an outgoing audio call to the given room.</summary>
         public async Task PlaceCallAsync(string roomId)
@@ -863,6 +1045,10 @@ namespace UniMatrix.Services
                 }
                 (_selfAudioTrack as IDisposable)?.Dispose();
                 (_peerAudioTrack as IDisposable)?.Dispose();
+                if (_selfVideoTrack != null) { try { _selfVideoTrack.Element = null; } catch { } }
+                if (_peerVideoTrack != null) { try { _peerVideoTrack.Element = null; } catch { } }
+                (_selfVideoTrack as IDisposable)?.Dispose();
+                (_peerVideoTrack as IDisposable)?.Dispose();
                 (_pc as IDisposable)?.Dispose();
             }
             catch (Exception ex) { App.Log("CALL: teardown error: " + ex.Message); }
@@ -870,6 +1056,10 @@ namespace UniMatrix.Services
             _factory = null;
             _selfAudioTrack = null;
             _peerAudioTrack = null;
+            _selfVideoTrack = null;
+            _peerVideoTrack = null;
+            _isVideoCall = false;
+            _previewActive = false;
             _remoteDescriptionSet = false;
             _pendingRemoteCandidates.Clear();
             _pendingOfferSdp = null;

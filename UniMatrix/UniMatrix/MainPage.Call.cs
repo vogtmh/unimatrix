@@ -44,6 +44,37 @@ namespace UniMatrix
             await _callService.PlaceCallAsync(_currentRoomId);
         }
 
+        /// <summary>
+        /// Phase 1 video smoke test: opens the call overlay and shows a local camera self-preview
+        /// (no signalling yet). Verifies that camera capture + WebRTC rendering work on the device.
+        /// Hang up stops the preview. Full video calling is wired in a later phase.
+        /// </summary>
+        private async void VideoCallButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentRoomId == null) return;
+            if (_callService == null) return;
+
+            if (!_callService.IsWebRtcAvailable)
+            {
+                await new Windows.UI.Popups.MessageDialog(
+                    "Video calling needs the ARM build of UniMatrix running on the phone.",
+                    "Calling unavailable").ShowAsync();
+                return;
+            }
+            if (_callService.InCall) return;
+
+            ShowCallOverlay(incoming: false, roomId: _currentRoomId,
+                            peerName: GetRoomDisplayName(_currentRoomId), status: "Camera preview\u2026");
+            if (SelfVideoBorder != null) SelfVideoBorder.Visibility = Visibility.Visible;
+
+            bool ok = await _callService.StartLocalPreviewAsync(SelfVideo);
+            if (!ok)
+            {
+                if (SelfVideoBorder != null) SelfVideoBorder.Visibility = Visibility.Collapsed;
+                HideCallOverlay();
+            }
+        }
+
         private async void CallAcceptButton_Click(object sender, RoutedEventArgs e)
         {
             if (_callService == null) return;
@@ -236,6 +267,10 @@ namespace UniMatrix
 
         private void HideCallOverlay()
         {
+            // Stop a standalone camera preview (Phase 1 smoke test) and hide the self-view. During a
+            // real call InCall is true, so the preview teardown is skipped (the call owns the tracks).
+            if (_callService != null && !_callService.InCall) _callService.StopLocalPreview();
+            if (SelfVideoBorder != null) SelfVideoBorder.Visibility = Visibility.Collapsed;
             if (CallOverlay != null) CallOverlay.Visibility = Visibility.Collapsed;
         }
 

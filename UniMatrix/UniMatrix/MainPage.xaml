@@ -301,6 +301,11 @@
                             ToolTipService.ToolTip="Audio call">
                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE717;" FontSize="18" Foreground="White" />
                     </Button>
+                    <Button x:Name="VideoCallButton" Click="VideoCallButton_Click" Background="Transparent"
+                            BorderThickness="0" Padding="12,8" VerticalAlignment="Center"
+                            ToolTipService.ToolTip="Video call">
+                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE714;" FontSize="18" Foreground="White" />
+                    </Button>
                     <Button Click="RoomInfoButton_Click" Background="Transparent"
                             BorderThickness="0" Padding="12,8" VerticalAlignment="Center">
                         <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE946;" FontSize="18" Foreground="White" />
@@ -1175,6 +1180,15 @@
                     </Grid>
                 </Grid>
             </Grid>
+
+            <!-- Local self-preview (picture-in-picture). Hidden until a video call/preview starts;
+                 a MediaElement is the render target for the WebRTC self video track via
+                 MediaElementMaker.Bind. -->
+            <Border x:Name="SelfVideoBorder" Width="108" Height="144" Visibility="Collapsed"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,24,16,0"
+                    CornerRadius="8" Background="#22000000" BorderBrush="#33FFFFFF" BorderThickness="1">
+                <MediaElement x:Name="SelfVideo" Stretch="UniformToFill" />
+            </Border>
         </Grid>
 
         <!-- Full-screen "Your sessions" manager. Opened from Security settings; lists every device
