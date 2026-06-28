@@ -40,6 +40,10 @@ namespace UniMatrix
         // WebRTC media half of the in-progress join (subscriber/publisher peer connections).
         private LiveKitMediaSession _liveKitMedia;
 
+        // Managed-RTC spike probe (SIPSorcery), used instead of _liveKitMedia (on by default; disable
+        // with /p:ManagedRtcSpike=false). Only one of the two answers the SFU offer.
+        private ManagedRtcProbe _managedRtcProbe;
+
         // True while an accept/join attempt is in progress, so a double-tap doesn't fire twice.
         private bool _matrixRtcJoining;
 
@@ -329,6 +333,11 @@ namespace UniMatrix
             var signal = new LiveKitSignalClient();
             _liveKitSignal = signal;
 
+#if SPIKE_MANAGED_RTC
+            // Spike build: drive the managed SIPSorcery media path instead of the Org.WebRtc one, so
+            // only one of them answers the SFU offer.
+            _managedRtcProbe = new ManagedRtcProbe(signal);
+#else
             // Wire the media session (subscriber/publisher peer connections) BEFORE connecting, so it
             // is subscribed to the signalling events when the SFU's JoinResponse + subscriber offer
             // arrive. It captures the ICE servers from the join and answers the subscriber offer.
@@ -342,6 +351,7 @@ namespace UniMatrix
                     App.Log("RTC: media " + s);
                 });
             };
+#endif
 
             signal.JoinReceived += join =>
             {
@@ -374,6 +384,13 @@ namespace UniMatrix
             if (media != null)
             {
                 try { media.Close(); } catch { }
+            }
+
+            var probe = _managedRtcProbe;
+            _managedRtcProbe = null;
+            if (probe != null)
+            {
+                try { probe.Close(); } catch { }
             }
 
             var signal = _liveKitSignal;

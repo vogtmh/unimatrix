@@ -157,6 +157,7 @@
     <Compile Include="Services\LiveKitProto.cs" />
     <Compile Include="Services\LiveKitSignalClient.cs" />
     <Compile Include="Services\LiveKitMediaSession.cs" />
+    <Compile Include="Services\ManagedRtcProbe.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
     <Compile Include="Services\PreferencesService.cs" />
@@ -248,6 +249,26 @@
       <Version>4.4.0</Version>
     </PackageReference>
   </ItemGroup>
+  <!--
+    MANAGED-RTC SPIKE (ON by default so it ships in the appxpackage for sideloading). Pulls in
+    SIPSorcery (pure-C# WebRTC: ICE + DTLS + SRTP + raw RTP) to test whether a fully-managed media
+    path can run under .NET Native on ARM32 — the seam Org.WebRtc M71 lacks for decrypting E2EE
+    MatrixRTC audio. To turn it OFF, build with /p:ManagedRtcSpike=false. If NuGet can't resolve this
+    exact version on the legacy UWP toolchain, install via the VS NuGet UI (it auto-picks the highest
+    uap10.0.16299-compatible version) and update the version here. SIPSorcery pulls Concentus (Opus)
+    transitively. The spike code lives behind the SPIKE_MANAGED_RTC compile constant (set below).
+  -->
+  <PropertyGroup Condition="'$(ManagedRtcSpike)' == ''">
+    <ManagedRtcSpike>true</ManagedRtcSpike>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(ManagedRtcSpike)' != 'false'">
+    <PackageReference Include="SIPSorcery">
+      <Version>6.2.4</Version>
+    </PackageReference>
+  </ItemGroup>
+  <PropertyGroup Condition="'$(ManagedRtcSpike)' != 'false'">
+    <DefineConstants>$(DefineConstants);SPIKE_MANAGED_RTC</DefineConstants>
+  </PropertyGroup>
   <!--
     Windows Mobile Extensions for the UWP: provides the mobile-only contracts used at compile time,
     e.g. Windows.Phone.Devices.Notification.VibrationDevice (incoming-call ring vibration). All such
