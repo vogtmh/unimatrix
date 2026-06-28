@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Location</title>
+    <link href="leaflet.css" rel="stylesheet" />
+    <style>
+        html, body { margin: 0; padding: 0; height: 100%; background: #101418; }
+        #map { position: absolute; top: 0; bottom: 0; left: 0; right: 0; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="leaflet.js"></script>
+    <script>
+        var map = null;
+        var marker = null;
+
+        // A pin icon backed by the bundled Leaflet marker images (the default auto-detected
+        // path does not resolve inside the ms-appx-web package, so we set it explicitly).
+        var pinIcon = L.icon({
+            iconUrl: 'images/marker-icon.png',
+            iconRetinaUrl: 'images/marker-icon-2x.png',
+            shadowUrl: 'images/marker-shadow.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            shadowSize: [41, 41]
+        });
+
+        // Called from the C# host (WebView.InvokeScriptAsync) with the coordinates to show.
+        // Arguments arrive as strings, so parse them.
+        function setLocation(lat, lon) {
+            var la = parseFloat(lat);
+            var lo = parseFloat(lon);
+            if (isNaN(la) || isNaN(lo)) return;
+
+            if (map === null) {
+                map = L.map('map', { zoomControl: true }).setView([la, lo], 15);
+                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19,
+                    attribution: '&copy; OpenStreetMap'
+                }).addTo(map);
+            } else {
+                map.setView([la, lo], 15);
+            }
+
+            if (marker === null) {
+                marker = L.marker([la, lo], { icon: pinIcon }).addTo(map);
+            } else {
+                marker.setLatLng([la, lo]);
+            }
+
+            // The container size is only correct after the overlay becomes visible; force a recalc.
+            setTimeout(function () { if (map) map.invalidateSize(); }, 50);
+        }
+    </script>
+</body>
+</html>
