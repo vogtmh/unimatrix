@@ -194,7 +194,17 @@ namespace UniMatrix
                     return true; // the room changed (placeholder removed)
                 }
 
-                return StoreClearEvent(roomId, eventId, sender, ts, dr.ClearType, dr.ClearContent);
+                if (StoreClearEvent(roomId, eventId, sender, ts, dr.ClearType, dr.ClearContent))
+                    return true;
+
+                // Decrypted OK but not a displayable message (reaction/relation/redaction/state, or
+                // a non-legacy call format such as Element Call / MSC3401). Remove the ciphertext
+                // placeholder so it stops rendering as an unreadable blob, and log the cleartype so
+                // unhandled event types — especially call signalling — are diagnosable.
+                App.Log("CRYPTO: decrypted " + eventId + " type=" + (dr.ClearType ?? "?") +
+                        " not displayable -> removing blob");
+                _db.DeleteMessage(eventId);
+                return true;
             }
             catch (Exception ex)
             {
@@ -239,7 +249,15 @@ namespace UniMatrix
                     JsonObject content;
                     if (!JsonObject.TryParse(kv.Value, out content)) continue;
                     var dr = _crypto.DecryptRoomEvent(roomId, content);
-                    if (dr.Ok && dr.ClearContent != null)
+                    if (!dr.Ok || dr.ClearContent == null)
+                    {
+                        // Log why an old ciphertext still can't be decrypted (e.g. "unknown message
+                        // index" = the shared key starts later than this event, so it's permanently
+                        // undecryptable; "no session" = key still missing). The blob is kept for a
+                        // possible future retry.
+                        App.Log("CRYPTO: retry decrypt " + kv.Key + " not ok: " + (dr.FailureReason ?? "?"));
+                        continue;
+                    }
                     {
                         // A call event whose key arrived late: route it to the CallService so a still
                         // in-progress call rings (OnRemoteInvite drops it if the invite is >60s old),
@@ -260,7 +278,18 @@ namespace UniMatrix
                         // Sender/ts are preserved on the existing row; pass null/0 so the stored
                         // values aren't clobbered by StoreClearEvent (it reads the row first).
                         if (StoreClearEvent(roomId, kv.Key, null, 0, dr.ClearType, dr.ClearContent))
+                        {
                             any = true;
+                        }
+                        else
+                        {
+                            // Decrypted but not displayable (reaction/relation/state, or a non-legacy
+                            // call format): drop the ciphertext placeholder and log the cleartype.
+                            App.Log("CRYPTO: retry decrypted " + kv.Key + " type=" + (dr.ClearType ?? "?") +
+                                    " not displayable -> removing blob");
+                            _db.DeleteMessage(kv.Key);
+                            any = true;
+                        }
                     }
                 }
             }
@@ -467,9 +496,11 @@ namespace UniMatrix
                 await ShareRoomKeysAsync(roomId);
                 var encrypted = _crypto.EncryptRoomEvent(roomId, eventType, content);
                 if (encrypted == null) throw new Exception("Encryption failed");
+                App.Log("CALL: sent " + eventType + " ENCRYPTED (m.room.encrypted)");
                 return await _client.SendEventAsync(roomId, "m.room.encrypted", encrypted);
             }
 
+            App.Log("CALL: sent " + eventType + " PLAINTEXT (room not encrypted)");
             return await _client.SendEventAsync(roomId, eventType, content);
         }
     }
