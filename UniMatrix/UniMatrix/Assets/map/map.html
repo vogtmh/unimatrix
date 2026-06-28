@@ -38,9 +38,9 @@
 
             if (map === null) {
                 map = L.map('map', { zoomControl: true }).setView([la, lo], 15);
-                L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                L.tileLayer('https://a.tile.geofabrik.de/2b232a218fc74caab0859632066bb003/{z}/{x}/{y}.png', {
                     maxZoom: 19,
-                    attribution: '&copy; OpenStreetMap'
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; Geofabrik'
                 }).addTo(map);
             } else {
                 map.setView([la, lo], 15);

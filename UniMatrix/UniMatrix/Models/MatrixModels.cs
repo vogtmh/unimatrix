@@ -340,7 +340,7 @@ namespace UniMatrix.Models
                 if (!IsLocation) return null;
                 int tileX = (int)Math.Floor(MercX);
                 int tileY = (int)Math.Floor(MercY);
-                return string.Format("https://tile.openstreetmap.org/{0}/{1}/{2}.png", MapPreviewZoom, tileX, tileY);
+                return string.Format("https://a.tile.geofabrik.de/2b232a218fc74caab0859632066bb003/{0}/{1}/{2}.png", MapPreviewZoom, tileX, tileY);
             }
         }
 

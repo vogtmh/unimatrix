@@ -323,6 +323,26 @@ namespace UniMatrix.Services
                     _db.SetMeta("pb_" + roomId, prevBatch);
 
                 JsonArray events = GetArray(timeline, "events");
+
+                // DIAGNOSTIC (incoming-message loss): a "limited" timeline means the server is
+                // signalling a GAP — more events accumulated since our last /sync than the filter's
+                // timeline limit (20), so only the most recent ones are in this window and the rest
+                // were NOT delivered. We do not currently backfill that gap, so those messages are
+                // silently lost. This is the likely cause of intermittently-missed incoming messages
+                // (e.g. after the phone resumes from suspend and the sender's backlog overflows 20).
+                bool limited = false;
+                try
+                {
+                    if (timeline.ContainsKey("limited") && timeline["limited"].ValueType == JsonValueType.Boolean)
+                        limited = timeline.GetNamedBoolean("limited");
+                }
+                catch { }
+                int evCount = events != null ? events.Count : 0;
+                if (limited || evCount > 0)
+                    App.Log("SYNC timeline room=" + roomId + " limited=" + limited + " events=" + evCount +
+                            " prevBatch=" + (string.IsNullOrEmpty(prevBatch) ? "<none>" : "set") +
+                            (limited ? "  *** GAP — earlier messages in this room were NOT fetched (possible message loss) ***" : ""));
+
                 if (events != null)
                 {
                     foreach (var evVal in events)
@@ -730,15 +750,33 @@ namespace UniMatrix.Services
         private Message ApplyMessageEvent(string roomId, JsonObject ev)
         {
             string eventId = MatrixClient.GetString(ev, "event_id");
-            if (string.IsNullOrEmpty(eventId)) return null;
+            if (string.IsNullOrEmpty(eventId))
+            {
+                App.Log("SYNC drop m.room.message room=" + roomId + ": no event_id");
+                return null;
+            }
 
             JsonObject content = GetObject(ev, "content");
-            if (content == null) return null;
+            if (content == null)
+            {
+                App.Log("SYNC drop m.room.message id=" + eventId + ": no content (redacted?)");
+                return null;
+            }
 
             string msgType = MatrixClient.GetString(content, "msgtype");
             if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image" && msgType != "m.location")
             {
                 // Unsupported message type (file, audio, video, encrypted...). Skip for v1.
+                // DIAGNOSTIC: log the actual msgtype so silently-dropped incoming messages are
+                // visible. Edits (m.replace), replies and some clients can carry an unexpected or
+                // missing msgtype; without this they vanish with no trace.
+                bool hasNewContent = content.ContainsKey("m.new_content");
+                bool hasRelates = content.ContainsKey("m.relates_to");
+                App.Log("SYNC drop m.room.message id=" + eventId + " sender=" +
+                        (MatrixClient.GetString(ev, "sender") ?? "?") +
+                        " unsupported msgtype=" + (msgType ?? "<null>") +
+                        (hasNewContent ? " (edit/m.new_content)" : "") +
+                        (hasRelates ? " (has m.relates_to)" : ""));
                 return null;
             }
 
@@ -772,6 +810,12 @@ namespace UniMatrix.Services
             }
 
             _db.UpsertMessage(msg);
+            // DIAGNOSTIC: confirm the incoming message was actually persisted (pairs with the "RX"
+            // raw-event line and the "SYNC drop" lines so a missed message can be pinpointed to
+            // either never-arrived (no RX line), dropped (SYNC drop), or stored-but-not-shown).
+            App.Log("SYNC stored msg id=" + eventId + " room=" + roomId + " sender=" +
+                    (sender ?? "?") + " type=" + msgType +
+                    (sender == _myUserId ? " (own)" : ""));
             return msg;
         }
 

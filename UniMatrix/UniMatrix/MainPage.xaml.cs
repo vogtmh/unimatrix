@@ -1245,7 +1245,20 @@ namespace UniMatrix
                 if (prev != null &&
                     (m.Timestamp < prev.Timestamp ||
                      (m.Timestamp == prev.Timestamp && string.CompareOrdinal(m.EventId, prev.EventId) <= 0)))
+                {
+                    // DIAGNOSTIC (incoming-message loss): this stored message is NOT being shown
+                    // because its timestamp is not strictly newer than the last bubble on screen.
+                    // This silently hides genuine incoming messages whenever the last on-screen
+                    // message is "ahead" in time — e.g. our own just-sent local echo timestamped
+                    // with the DEVICE clock, which can run ahead of the server's origin_server_ts.
+                    // The message is in the DB (reopening the room shows it) but never appended live.
+                    App.Log("UI not-shown msg id=" + m.EventId + " room=" + roomId + " sender=" +
+                            (m.Sender ?? "?") + " ts=" + m.Timestamp + " <= lastShownTs=" +
+                            (prev != null ? prev.Timestamp : 0) + " (lastShown id=" +
+                            (prev != null ? prev.EventId : "?") +
+                            (prev != null && prev.IsLocalEcho ? " ECHO" : "") + ")");
                     continue;
+                }
 
                 DecorateMessage(m, names);
                 SetDateSeparator(m, prev);
