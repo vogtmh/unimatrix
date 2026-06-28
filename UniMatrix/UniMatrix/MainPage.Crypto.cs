@@ -464,8 +464,21 @@ namespace UniMatrix
                         body = "\uD83D\uDCCD " + FriendlyOrDefault(body, "Location");
                         break;
                     case "m.file":
-                        msgType = "m.notice";
-                        body = "\uD83D\uDCCE " + FriendlyOrDefault(body, "File");
+                        msgType = "m.file";
+                        // Filename for the card; prefer explicit filename, fall back to body.
+                        string fileName = MatrixClient.GetString(clearContent, "filename");
+                        body = FriendlyOrDefault(string.IsNullOrEmpty(fileName) ? body : fileName, "File");
+                        // The blob may be a plaintext url or an encrypted-attachment "file" block.
+                        mxc = MatrixClient.GetString(clearContent, "url");
+                        if (string.IsNullOrEmpty(mxc))
+                        {
+                            var fileBlock = CryptoService.GetObj(clearContent, "file");
+                            if (fileBlock != null)
+                            {
+                                mxc = MatrixClient.GetString(fileBlock, "url");
+                                if (!string.IsNullOrEmpty(mxc)) _db.SaveAttachmentKey(mxc, fileBlock.Stringify());
+                            }
+                        }
                         break;
                     case "m.audio":
                         msgType = "m.notice";
@@ -536,7 +549,9 @@ namespace UniMatrix
 
             // Replace the "🔒 Encrypted message" room-list preview with the decrypted text, but only
             // when this is the latest event (so older messages decrypting later don't clobber it).
-            string preview = msgType == "m.image" ? "\uD83D\uDCF7 Photo" : body;
+            string preview = msgType == "m.image" ? "\uD83D\uDCF7 Photo"
+                           : msgType == "m.file" ? "\uD83D\uDCCE " + body
+                           : body;
             _db.SetRoomPreviewIfLatest(roomId, ts, preview);
             return true;
         }

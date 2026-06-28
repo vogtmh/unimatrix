@@ -399,6 +399,20 @@
                                                   Foreground="#E03333" HorizontalAlignment="Left" VerticalAlignment="Top"
                                                   Margin="{Binding MapPinMargin}" />
                                     </Grid>
+                                    <!-- File card (m.file): document icon + filename, tap to download & open. -->
+                                    <Border Margin="0,4,0,0" CornerRadius="6" Padding="10,8"
+                                            Background="#22000000" Visibility="{Binding FileVisibility}"
+                                            Tapped="MessageFile_Tapped">
+                                        <StackPanel Orientation="Horizontal">
+                                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7C3;" FontSize="24"
+                                                      Foreground="White" VerticalAlignment="Center" />
+                                            <StackPanel Margin="10,0,0,0" VerticalAlignment="Center" MaxWidth="200">
+                                                <TextBlock Text="{Binding FileName}" Foreground="White" FontSize="14"
+                                                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="Tap to open" Foreground="#99FFFFFF" FontSize="11" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                     <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
                                                FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
                                 </StackPanel>
@@ -437,7 +451,7 @@
                 <Button Grid.Column="0" x:Name="AttachButton" Click="AttachButton_Click"
                         Background="Transparent" BorderThickness="0"
                         Margin="0,0,4,0" Padding="10,10" VerticalAlignment="Stretch">
-                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE723;" FontSize="18" Foreground="#CCFFFFFF" />
+                    <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE710;" FontSize="18" Foreground="#CCFFFFFF" />
                 </Button>
                 <TextBox Grid.Column="1" x:Name="MessageBox" PlaceholderText="Message"
                          Background="{StaticResource AppCardBrush}" BorderThickness="0"
@@ -1125,6 +1139,79 @@
                     Background="#80000000" BorderThickness="0" Padding="12,12">
                 <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="18" Foreground="White" />
             </Button>
+        </Grid>
+
+        <!-- ===================== ATTACH BOTTOM SHEET ===================== -->
+        <!-- Slide-up "+" menu for the composer (image / file / location), modelled on the
+             WinMaps bottom sheet: a tap-to-dismiss scrim plus a panel that slides in from the
+             bottom via a TranslateTransform animation. -->
+        <Rectangle x:Name="AttachScrim" Fill="Black" Opacity="0" Visibility="Collapsed"
+                   PointerPressed="AttachScrim_PointerPressed" />
+        <Grid x:Name="AttachSheet" VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
+              Visibility="Collapsed">
+            <Grid.RenderTransform>
+                <TranslateTransform x:Name="AttachSheetTranslate" Y="400" />
+            </Grid.RenderTransform>
+            <Grid.Resources>
+                <Storyboard x:Name="AttachSheetSlideIn">
+                    <DoubleAnimation Storyboard.TargetName="AttachSheetTranslate"
+                                     Storyboard.TargetProperty="Y" To="0" Duration="0:0:0.25">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseOut" />
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                    <DoubleAnimation Storyboard.TargetName="AttachScrim"
+                                     Storyboard.TargetProperty="Opacity" To="0.5" Duration="0:0:0.25" />
+                </Storyboard>
+                <Storyboard x:Name="AttachSheetSlideOut">
+                    <DoubleAnimation Storyboard.TargetName="AttachSheetTranslate"
+                                     Storyboard.TargetProperty="Y" To="400" Duration="0:0:0.2">
+                        <DoubleAnimation.EasingFunction>
+                            <CubicEase EasingMode="EaseIn" />
+                        </DoubleAnimation.EasingFunction>
+                    </DoubleAnimation>
+                    <DoubleAnimation Storyboard.TargetName="AttachScrim"
+                                     Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.2" />
+                </Storyboard>
+            </Grid.Resources>
+            <Border Background="{StaticResource AppPanelBrush}" CornerRadius="14,14,0,0">
+                <StackPanel>
+                    <!-- Drag handle -->
+                    <Rectangle Width="36" Height="4" RadiusX="2" RadiusY="2"
+                               HorizontalAlignment="Center" Margin="0,10,0,4" Fill="#55FFFFFF" />
+                    <Button x:Name="AttachImageButton" Click="AttachImageButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="Transparent" BorderThickness="0" Padding="20,16">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xEB9F;" FontSize="20"
+                                      Foreground="{StaticResource AppAccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="Image" Foreground="White" FontSize="16"
+                                       VerticalAlignment="Center" Margin="16,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="AttachFileButton" Click="AttachFileButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="Transparent" BorderThickness="0" Padding="20,16">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE7C3;" FontSize="20"
+                                      Foreground="{StaticResource AppAccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="File" Foreground="White" FontSize="16"
+                                       VerticalAlignment="Center" Margin="16,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="AttachLocationButton" Click="AttachLocationButton_Click"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Background="Transparent" BorderThickness="0" Padding="20,16">
+                        <StackPanel Orientation="Horizontal">
+                            <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE81D;" FontSize="20"
+                                      Foreground="{StaticResource AppAccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Text="Location" Foreground="White" FontSize="16"
+                                       VerticalAlignment="Center" Margin="16,0,0,0" />
+                        </StackPanel>
+                    </Button>
+                    <Rectangle Height="12" />
+                </StackPanel>
+            </Border>
         </Grid>
 
         <!-- ===================== CALL OVERLAY ===================== -->

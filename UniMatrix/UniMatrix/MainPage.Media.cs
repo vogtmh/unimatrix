@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Windows.Devices.Geolocation;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -19,6 +20,63 @@ namespace UniMatrix
     public sealed partial class MainPage
     {
         private async void AttachButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentRoomId == null) return;
+            ShowAttachSheet();
+            await Task.FromResult(0);
+        }
+
+        // ---- Attach bottom sheet (image / file / location) ----
+
+        private void ShowAttachSheet()
+        {
+            AttachScrim.Visibility = Visibility.Visible;
+            AttachSheet.Visibility = Visibility.Visible;
+            AttachSheetTranslate.Y = 400;
+            AttachSheetSlideIn.Begin();
+        }
+
+        private Action _attachSheetSlideOutAction;
+
+        private void CloseAttachSheet(Action afterClose = null)
+        {
+            AttachSheetSlideOut.Completed -= OnAttachSheetSlideOutCompleted;
+            _attachSheetSlideOutAction = afterClose;
+            AttachSheetSlideOut.Completed += OnAttachSheetSlideOutCompleted;
+            AttachSheetSlideOut.Begin();
+        }
+
+        private void OnAttachSheetSlideOutCompleted(object sender, object e)
+        {
+            AttachSheetSlideOut.Completed -= OnAttachSheetSlideOutCompleted;
+            AttachSheet.Visibility = Visibility.Collapsed;
+            AttachScrim.Visibility = Visibility.Collapsed;
+            var act = _attachSheetSlideOutAction;
+            _attachSheetSlideOutAction = null;
+            act?.Invoke();
+        }
+
+        private void AttachScrim_PointerPressed(object sender, Windows.UI.Xaml.Input.PointerRoutedEventArgs e)
+        {
+            CloseAttachSheet();
+        }
+
+        private void AttachImageButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAttachSheet(async () => await PickAndSendImageAsync());
+        }
+
+        private void AttachFileButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAttachSheet(async () => await PickAndSendFileAsync());
+        }
+
+        private void AttachLocationButton_Click(object sender, RoutedEventArgs e)
+        {
+            CloseAttachSheet(async () => await SendCurrentLocationAsync());
+        }
+
+        private async Task PickAndSendImageAsync()
         {
             if (_currentRoomId == null) return;
 
@@ -333,5 +391,261 @@ namespace UniMatrix
             MapViewerPanel.Visibility = Visibility.Collapsed;
         }
 
-        private void MapViewerCloseButton_Click(object sender, RoutedEventArgs e) => CloseMapViewer();    }
+        private void MapViewerCloseButton_Click(object sender, RoutedEventArgs e) => CloseMapViewer();
+
+        // ---- Send current location (m.location) ----
+
+        /// <summary>
+        /// Reads the device's current position and sends it as an m.location event (geo_uri =
+        /// "geo:lat,lon"). Works in both plaintext and encrypted rooms via <see cref="SendRoomMessageAsync"/>.
+        /// Shows an optimistic local-echo location bubble that the confirmed event replaces via /sync.
+        /// </summary>
+        private async Task SendCurrentLocationAsync()
+        {
+            string roomId = _currentRoomId;
+            if (roomId == null) return;
+
+            Geoposition pos;
+            try
+            {
+                var access = await Geolocator.RequestAccessAsync();
+                if (access != GeolocationAccessStatus.Allowed)
+                {
+                    await ShowErrorAsync("Location access is turned off. Enable it in Settings to share your location.");
+                    return;
+                }
+
+                var locator = new Geolocator { DesiredAccuracyInMeters = 50 };
+                pos = await locator.GetGeopositionAsync(TimeSpan.FromMinutes(1), TimeSpan.FromSeconds(20));
+            }
+            catch (Exception ex)
+            {
+                App.Log("Location EXC: " + ex.Message);
+                await ShowErrorAsync("Could not get your location: " + ex.Message);
+                return;
+            }
+
+            if (pos?.Coordinate?.Point == null)
+            {
+                await ShowErrorAsync("Could not determine your location.");
+                return;
+            }
+
+            double lat = pos.Coordinate.Point.Position.Latitude;
+            double lon = pos.Coordinate.Point.Position.Longitude;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string geoUri = "geo:" + lat.ToString(inv) + "," + lon.ToString(inv);
+            // The wire body is plain ("Location"); both receive paths add the 📍 prefix. The echo
+            // uses that same display form so it de-duplicates against the confirmed event.
+            string wireBody = "Location";
+            string displayBody = "\uD83D\uDCCD Location";
+
+            // Optimistic local echo (renders the inline map immediately).
+            var echo = new Message
+            {
+                EventId = "echo_" + Guid.NewGuid().ToString("N"),
+                RoomId = roomId,
+                Sender = _settings.UserId,
+                MsgType = "m.location",
+                Body = displayBody,
+                Mxc = geoUri,   // the model reads geo_uri from Mxc
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                IsLocalEcho = true,
+                IsMine = true
+            };
+            _db.UpsertMessage(echo);
+            SetEchoDateSeparator(echo);
+            Messages.Add(echo);
+            ScrollMessagesToBottom();
+
+            try
+            {
+                var content = new Windows.Data.Json.JsonObject
+                {
+                    ["msgtype"] = Windows.Data.Json.JsonValue.CreateStringValue("m.location"),
+                    ["body"] = Windows.Data.Json.JsonValue.CreateStringValue(wireBody),
+                    ["geo_uri"] = Windows.Data.Json.JsonValue.CreateStringValue(geoUri)
+                };
+                await SendRoomMessageAsync(roomId, content);
+                // The confirmed event arrives via /sync, which removes this echo.
+            }
+            catch (Exception ex)
+            {
+                echo.Body = displayBody + "  (not sent)";
+                await ShowErrorAsync("Could not send location: " + ex.Message);
+            }
+        }
+
+        // ---- Send a file (m.file) ----
+
+        private async Task PickAndSendFileAsync()
+        {
+            if (_currentRoomId == null) return;
+
+            var picker = new FileOpenPicker
+            {
+                ViewMode = PickerViewMode.List,
+                SuggestedStartLocation = PickerLocationId.DocumentsLibrary
+            };
+            // "*" allows any file type.
+            picker.FileTypeFilter.Add("*");
+
+            StorageFile file;
+            try { file = await picker.PickSingleFileAsync(); }
+            catch (Exception ex) { App.Log("File picker EXC: " + ex.Message); return; }
+            if (file == null) return;
+
+            await SendFileAsync(file);
+        }
+
+        /// <summary>
+        /// Uploads a picked file and sends it as an m.file event (encrypted-attachment block in
+        /// encrypted rooms). Shows an optimistic local-echo file card that the confirmed event
+        /// replaces via /sync. Mirrors <see cref="SendImageAsync"/> but without image probing.
+        /// </summary>
+        private async Task SendFileAsync(StorageFile file)
+        {
+            string roomId = _currentRoomId;
+            if (roomId == null) return;
+
+            IBuffer buffer;
+            string contentType = string.IsNullOrEmpty(file.ContentType) ? "application/octet-stream" : file.ContentType;
+            ulong size = 0;
+            try
+            {
+                var props = await file.GetBasicPropertiesAsync();
+                size = props.Size;
+                buffer = await FileIO.ReadBufferAsync(file);
+            }
+            catch (Exception ex)
+            {
+                await ShowErrorAsync("Could not read file: " + ex.Message);
+                return;
+            }
+
+            // Optimistic local echo (file card with the filename).
+            var echo = new Message
+            {
+                EventId = "echo_" + Guid.NewGuid().ToString("N"),
+                RoomId = roomId,
+                Sender = _settings.UserId,
+                MsgType = "m.file",
+                Body = file.Name,
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                IsLocalEcho = true,
+                IsMine = true
+            };
+            _db.UpsertMessage(echo);
+            SetEchoDateSeparator(echo);
+            Messages.Add(echo);
+            ScrollMessagesToBottom();
+
+            try
+            {
+                if (RoomNeedsEncryption(roomId))
+                {
+                    await SendEncryptedFileAsync(roomId, file, buffer, contentType, size, echo);
+                    return;
+                }
+
+                string mxc = await _client.UploadMediaAsync(buffer, contentType, file.Name);
+                if (string.IsNullOrEmpty(mxc))
+                {
+                    echo.Body = file.Name + "  (not sent)";
+                    await ShowErrorAsync("Could not upload file.");
+                    return;
+                }
+
+                var info = new Windows.Data.Json.JsonObject();
+                if (!string.IsNullOrEmpty(contentType)) info["mimetype"] = Windows.Data.Json.JsonValue.CreateStringValue(contentType);
+                if (size > 0) info["size"] = Windows.Data.Json.JsonValue.CreateNumberValue(size);
+
+                var content = new Windows.Data.Json.JsonObject
+                {
+                    ["msgtype"] = Windows.Data.Json.JsonValue.CreateStringValue("m.file"),
+                    ["body"] = Windows.Data.Json.JsonValue.CreateStringValue(file.Name),
+                    ["filename"] = Windows.Data.Json.JsonValue.CreateStringValue(file.Name),
+                    ["url"] = Windows.Data.Json.JsonValue.CreateStringValue(mxc),
+                    ["info"] = info
+                };
+                await SendRoomMessageAsync(roomId, content);
+                // The confirmed event arrives via /sync, which removes this echo.
+            }
+            catch (Exception ex)
+            {
+                echo.Body = file.Name + "  (not sent)";
+                await ShowErrorAsync("Could not send file: " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Encrypts a picked file, uploads the ciphertext, persists its decryption key against the
+        /// resulting mxc, and sends an m.file event carrying the encrypted-attachment "file" block.
+        /// Mirrors <see cref="SendEncryptedImageAsync"/>.
+        /// </summary>
+        private async Task SendEncryptedFileAsync(string roomId, StorageFile file,
+            IBuffer buffer, string contentType, ulong size, Message echo)
+        {
+            byte[] plain;
+            Windows.Security.Cryptography.CryptographicBuffer.CopyToByteArray(buffer, out plain);
+
+            var enc = Services.AttachmentCrypto.Encrypt(plain);
+            var cipherBuf = Windows.Security.Cryptography.CryptographicBuffer.CreateFromByteArray(enc.Ciphertext);
+
+            string mxc = await _client.UploadMediaAsync(cipherBuf, "application/octet-stream", null);
+            if (string.IsNullOrEmpty(mxc))
+            {
+                echo.Body = file.Name + "  (not sent)";
+                await ShowErrorAsync("Could not upload file.");
+                return;
+            }
+
+            enc.FileInfo["url"] = Windows.Data.Json.JsonValue.CreateStringValue(mxc);
+            _db.SaveAttachmentKey(mxc, enc.FileInfo.Stringify());
+
+            var info = new Windows.Data.Json.JsonObject();
+            if (!string.IsNullOrEmpty(contentType)) info["mimetype"] = Windows.Data.Json.JsonValue.CreateStringValue(contentType);
+            if (size > 0) info["size"] = Windows.Data.Json.JsonValue.CreateNumberValue(size);
+
+            var content = new Windows.Data.Json.JsonObject
+            {
+                ["msgtype"] = Windows.Data.Json.JsonValue.CreateStringValue("m.file"),
+                ["body"] = Windows.Data.Json.JsonValue.CreateStringValue(file.Name),
+                ["filename"] = Windows.Data.Json.JsonValue.CreateStringValue(file.Name),
+                ["file"] = enc.FileInfo,
+                ["info"] = info
+            };
+
+            await SendRoomMessageAsync(roomId, content);
+            // The confirmed event arrives via /sync, which removes this echo.
+        }
+
+        // ---- Receive a file: download (decrypting if needed) and open ----
+
+        private async void MessageFile_Tapped(object sender, Windows.UI.Xaml.Input.TappedRoutedEventArgs e)
+        {
+            var fe = sender as FrameworkElement;
+            var msg = fe?.DataContext as Message;
+            if (msg == null || !msg.IsFile) return;
+            e.Handled = true;
+            if (string.IsNullOrEmpty(msg.Mxc)) return; // unconfirmed echo: nothing to download yet
+
+            try
+            {
+                var file = await _media.DownloadToFileAsync(msg.Mxc, msg.Body);
+                if (file == null)
+                {
+                    await ShowErrorAsync("Could not download file.");
+                    return;
+                }
+                await Windows.System.Launcher.LaunchFileAsync(file);
+            }
+            catch (Exception ex)
+            {
+                App.Log("File open EXC: " + ex.Message);
+                await ShowErrorAsync("Could not open file: " + ex.Message);
+            }
+        }
+    }
 }
+

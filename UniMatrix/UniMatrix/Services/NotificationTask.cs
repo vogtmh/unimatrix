@@ -183,6 +183,7 @@ namespace UniMatrix.Services
         {
             if (m == null) return "";
             if (m.MsgType == "m.image") return "\uD83D\uDCF7 Photo";
+            if (m.MsgType == "m.file") return "\uD83D\uDCCE " + (string.IsNullOrEmpty(m.Body) ? "File" : m.Body);
             // Background sync can't decrypt (no Olm account in the task host); show a neutral
             // placeholder instead of the raw ciphertext blob.
             if (m.MsgType == "m.room.encrypted") return "\uD83D\uDD12 Encrypted message";

@@ -276,7 +276,14 @@ namespace UniMatrix.Models
         public bool IsImage { get { return MsgType == "m.image"; } }
         public bool HasImage { get { return IsImage && !string.IsNullOrEmpty(_mediaUrl); } }
         public Visibility ImageVisibility { get { return HasImage ? Visibility.Visible : Visibility.Collapsed; } }
-        public Visibility TextVisibility { get { return (HasImage || IsCall) ? Visibility.Collapsed : Visibility.Visible; } }
+        public Visibility TextVisibility { get { return (HasImage || IsCall || IsFile) ? Visibility.Collapsed : Visibility.Visible; } }
+
+        // ---- File (m.file) rendering ----
+        // A tappable card showing the filename; the downloadable mxc is carried in the Mxc field.
+        // Tapping downloads (decrypting when needed) and opens the file with its default app.
+        public bool IsFile { get { return MsgType == "m.file"; } }
+        public Visibility FileVisibility { get { return IsFile ? Visibility.Visible : Visibility.Collapsed; } }
+        public string FileName { get { return string.IsNullOrEmpty(Body) ? "File" : Body; } }
 
         // ---- Location (m.location) rendering ----
         // The point is carried in the (otherwise unused) Mxc field as the event's geo_uri

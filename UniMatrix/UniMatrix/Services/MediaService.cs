@@ -176,6 +176,50 @@ namespace UniMatrix.Services
         }
 
         /// <summary>
+        /// Downloads an mxc attachment (decrypting it when an attachment key is on file) and writes
+        /// it to the app's media folder under its real filename so it can be opened with the default
+        /// app via Launcher. Returns the StorageFile, or null on failure. Used by the file-message
+        /// "tap to open" path.
+        /// </summary>
+        public async Task<StorageFile> DownloadToFileAsync(string mxc, string suggestedName)
+        {
+            if (string.IsNullOrEmpty(mxc) || !mxc.StartsWith("mxc://", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            try
+            {
+                var buffer = await _client.FetchOriginalAsync(mxc);
+                buffer = await MaybeDecryptAsync(mxc, buffer);
+                if (buffer == null) return null;
+
+                var folder = await GetFolderAsync();
+                string name = SanitizeDownloadName(suggestedName, mxc);
+                var file = await folder.CreateFileAsync(name, CreationCollisionOption.GenerateUniqueName);
+                await FileIO.WriteBufferAsync(file, buffer);
+                return file;
+            }
+            catch (Exception ex)
+            {
+                App.Log("DownloadToFile EXC for " + mxc + ": " + ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>Turns a message filename into a safe local filename, falling back to a name
+        /// derived from the mxc when the suggested name is empty or has no usable characters.</summary>
+        private static string SanitizeDownloadName(string suggestedName, string mxc)
+        {
+            string name = (suggestedName ?? "").Trim();
+            if (!string.IsNullOrEmpty(name))
+            {
+                foreach (char c in System.IO.Path.GetInvalidFileNameChars())
+                    name = name.Replace(c, '_');
+            }
+            if (string.IsNullOrEmpty(name)) name = SafeFileName(mxc) + ".bin";
+            return name;
+        }
+
+        /// <summary>
         /// Best-effort deletion of every cached media file on disk. Called during a cache wipe so
         /// orphaned files don't accumulate. Files still locked by a live image (e.g. an avatar
         /// currently on screen) are skipped silently; their now-unique names mean a re-download

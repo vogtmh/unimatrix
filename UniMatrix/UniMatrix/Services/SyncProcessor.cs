@@ -764,7 +764,8 @@ namespace UniMatrix.Services
             }
 
             string msgType = MatrixClient.GetString(content, "msgtype");
-            if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image" && msgType != "m.location")
+            if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image" &&
+                msgType != "m.location" && msgType != "m.file")
             {
                 // Unsupported message type (file, audio, video, encrypted...). Skip for v1.
                 // DIAGNOSTIC: log the actual msgtype so silently-dropped incoming messages are
@@ -787,9 +788,17 @@ namespace UniMatrix.Services
             // locations) so the message model can render a map, and give the bubble a pin caption.
             string mxc = msgType == "m.image" ? MatrixClient.GetString(content, "url")
                        : msgType == "m.location" ? MatrixClient.GetString(content, "geo_uri")
+                       : msgType == "m.file" ? MatrixClient.GetString(content, "url")
                        : null;
             if (msgType == "m.location")
                 body = "\uD83D\uDCCD " + (string.IsNullOrEmpty(body) ? "Location" : body);
+            if (msgType == "m.file")
+            {
+                // Prefer an explicit filename; fall back to the body, then a generic label.
+                string fn = MatrixClient.GetString(content, "filename");
+                if (string.IsNullOrEmpty(fn)) fn = body;
+                body = string.IsNullOrEmpty(fn) ? "File" : fn;
+            }
 
             var msg = new Message
             {
@@ -1042,6 +1051,7 @@ namespace UniMatrix.Services
         private static string BuildPreview(Message msg)
         {
             if (msg.MsgType == "m.image") return "\uD83D\uDCF7 Photo";
+            if (msg.MsgType == "m.file") return "\uD83D\uDCCE " + (string.IsNullOrEmpty(msg.Body) ? "File" : msg.Body);
             if (msg.MsgType == "m.call") return msg.Body;
             return msg.Body;
         }
