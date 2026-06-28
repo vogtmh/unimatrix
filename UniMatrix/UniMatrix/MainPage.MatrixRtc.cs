@@ -37,6 +37,9 @@ namespace UniMatrix
         // LiveKit signalling socket for the in-progress join (connect -> JoinResponse -> media).
         private LiveKitSignalClient _liveKitSignal;
 
+        // WebRTC media half of the in-progress join (subscriber/publisher peer connections).
+        private LiveKitMediaSession _liveKitMedia;
+
         // True while an accept/join attempt is in progress, so a double-tap doesn't fire twice.
         private bool _matrixRtcJoining;
 
@@ -326,6 +329,20 @@ namespace UniMatrix
             var signal = new LiveKitSignalClient();
             _liveKitSignal = signal;
 
+            // Wire the media session (subscriber/publisher peer connections) BEFORE connecting, so it
+            // is subscribed to the signalling events when the SFU's JoinResponse + subscriber offer
+            // arrive. It captures the ICE servers from the join and answers the subscriber offer.
+            var media = new LiveKitMediaSession(Dispatcher, signal);
+            _liveKitMedia = media;
+            media.StatusChanged += s =>
+            {
+                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
+                {
+                    if (_liveKitMedia != media) return;
+                    App.Log("RTC: media " + s);
+                });
+            };
+
             signal.JoinReceived += join =>
             {
                 _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
@@ -349,9 +366,16 @@ namespace UniMatrix
             _ = signal.ConnectAsync(sfuUrl, jwt);
         }
 
-        /// <summary>Closes and clears the LiveKit signalling socket if one is open.</summary>
+        /// <summary>Closes and clears the LiveKit signalling socket and media session if open.</summary>
         private void CloseLiveKitSignalling()
         {
+            var media = _liveKitMedia;
+            _liveKitMedia = null;
+            if (media != null)
+            {
+                try { media.Close(); } catch { }
+            }
+
             var signal = _liveKitSignal;
             _liveKitSignal = null;
             if (signal != null)

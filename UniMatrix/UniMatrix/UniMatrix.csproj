@@ -156,6 +156,7 @@
     <Compile Include="Services\LiveKitAuthService.cs" />
     <Compile Include="Services\LiveKitProto.cs" />
     <Compile Include="Services\LiveKitSignalClient.cs" />
+    <Compile Include="Services\LiveKitMediaSession.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
     <Compile Include="Services\PreferencesService.cs" />

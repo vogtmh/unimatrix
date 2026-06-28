@@ -227,16 +227,27 @@ namespace UniMatrix.Services
         /// <summary>Initializes the native WebRTC library exactly once, on the UI thread.</summary>
         private void EnsureLibrary()
         {
+            EnsureWebRtcLibrary(_dispatcher);
+            Status("WebRTC library initialized.");
+        }
+
+        /// <summary>
+        /// Initializes the native WebRTC library exactly once, process-wide. Shared so other WebRTC
+        /// users (e.g. the LiveKit/MatrixRTC media session) reuse the single <see cref="WebRtcLib.Setup"/>
+        /// call — calling Setup twice throws. Must run on the UI thread (the event queue binds to it).
+        /// </summary>
+        internal static void EnsureWebRtcLibrary(CoreDispatcher dispatcher)
+        {
             if (_libInitialized) return;
-            var queue = EventQueueMaker.Bind(_dispatcher);
+            var queue = EventQueueMaker.Bind(dispatcher);
             var cfg = new WebRtcLibConfiguration { Queue = queue };
             cfg.AudioCaptureFrameProcessingQueue = EventQueue.GetOrCreateThreadQueueByName("AudioCaptureProcessingQueue");
             cfg.AudioRenderFrameProcessingQueue = EventQueue.GetOrCreateThreadQueueByName("AudioRenderProcessingQueue");
             cfg.VideoFrameProcessingQueue = EventQueue.GetOrCreateThreadQueueByName("VideoFrameProcessingQueue");
             WebRtcLib.Setup(cfg);
             _libInitialized = true;
-            Status("WebRTC library initialized.");
         }
+
 
         /// <summary>Requests microphone access (the OS prompts on first use). UI-thread only.</summary>
         private static async Task<bool> RequestMicAsync()
