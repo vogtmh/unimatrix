@@ -154,6 +154,8 @@
     <Compile Include="Services\MatrixClient.cs" />
     <Compile Include="Services\MasClient.cs" />
     <Compile Include="Services\LiveKitAuthService.cs" />
+    <Compile Include="Services\LiveKitProto.cs" />
+    <Compile Include="Services\LiveKitSignalClient.cs" />
     <Compile Include="Services\SyncProcessor.cs" />
     <Compile Include="Services\MediaService.cs" />
     <Compile Include="Services\PreferencesService.cs" />

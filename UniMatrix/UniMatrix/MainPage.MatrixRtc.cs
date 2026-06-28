@@ -34,6 +34,9 @@ namespace UniMatrix
         // MatrixRTC -> LiveKit authorization (OpenID token -> SFU JWT). Lazily created.
         private LiveKitAuthService _liveKitAuth;
 
+        // LiveKit signalling socket for the in-progress join (connect -> JoinResponse -> media).
+        private LiveKitSignalClient _liveKitSignal;
+
         // True while an accept/join attempt is in progress, so a double-tap doesn't fire twice.
         private bool _matrixRtcJoining;
 
@@ -295,16 +298,65 @@ namespace UniMatrix
                     return;
                 }
 
-                // Authorization succeeded. Media join (LiveKit signalling) is the next phase.
-                App.Log("RTC: JOIN AUTH OK — SFU url=" + creds.Url + " (media join not yet implemented)");
-                if (CallStatusText != null)
-                    CallStatusText.Text = "SFU authorized \u00B7 media not yet supported";
+                // Authorization succeeded. Open the LiveKit signalling socket and wait for the
+                // server's JoinResponse (ICE servers, subscriber-primary mode, peers). Media wiring
+                // (WebRTC peer connections) is layered on top of these signalling events next.
+                App.Log("RTC: JOIN AUTH OK — SFU url=" + creds.Url);
+                if (CallStatusText != null) CallStatusText.Text = "Connecting to call\u2026";
+
+                StartLiveKitSignalling(creds.Url, creds.Jwt);
             }
             catch (Exception ex)
             {
                 App.Log("RTC: join attempt failed: " + ex.Message);
                 if (CallStatusText != null) CallStatusText.Text = "Join failed";
                 _matrixRtcJoining = false;
+            }
+        }
+
+        /// <summary>
+        /// Opens the LiveKit signalling WebSocket with the SFU credentials and wires its events. On a
+        /// JoinResponse we know the connection is live; receiving media (subscriber offer -> answer)
+        /// and publishing the mic are the subsequent milestones.
+        /// </summary>
+        private void StartLiveKitSignalling(string sfuUrl, string jwt)
+        {
+            CloseLiveKitSignalling();
+
+            var signal = new LiveKitSignalClient();
+            _liveKitSignal = signal;
+
+            signal.JoinReceived += join =>
+            {
+                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
+                {
+                    if (_liveKitSignal != signal) return; // superseded
+                    if (CallStatusText != null)
+                        CallStatusText.Text = "In call \u00B7 " + (join.OtherParticipantCount + 1) + " on SFU";
+                });
+            };
+
+            signal.Closed += reason =>
+            {
+                _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, () =>
+                {
+                    if (_liveKitSignal != signal) return;
+                    App.Log("RTC: signalling closed (" + reason + ")");
+                    if (CallStatusText != null) CallStatusText.Text = "Call disconnected";
+                });
+            };
+
+            _ = signal.ConnectAsync(sfuUrl, jwt);
+        }
+
+        /// <summary>Closes and clears the LiveKit signalling socket if one is open.</summary>
+        private void CloseLiveKitSignalling()
+        {
+            var signal = _liveKitSignal;
+            _liveKitSignal = null;
+            if (signal != null)
+            {
+                try { signal.Close("local hangup"); } catch { }
             }
         }
 
@@ -319,6 +371,7 @@ namespace UniMatrix
             _matrixRtcRingingRoomId = null;
             _matrixRtcFocusUrl = null;
             _matrixRtcRoomAlias = null;
+            CloseLiveKitSignalling();
             if (_matrixRtcRingTimer != null) _matrixRtcRingTimer.Stop();
             StopRingVibration();
             ResetMatrixRtcOverlayChrome();
