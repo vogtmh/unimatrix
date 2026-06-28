@@ -126,6 +126,9 @@
     <Compile Include="MainPage.Crypto.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="MainPage.MatrixRtc.cs">
+      <DependentUpon>MainPage.xaml</DependentUpon>
+    </Compile>
     <Compile Include="MainPage.Security.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>

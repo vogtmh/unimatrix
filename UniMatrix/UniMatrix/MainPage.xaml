@@ -1142,16 +1142,16 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Click="CallDeclineButton_Click"
+                        <Button x:Name="CallDeclineButton" Grid.Column="0" Click="CallDeclineButton_Click"
                                 HorizontalAlignment="Stretch" Margin="0,0,6,0" Padding="16,14"
                                 Background="#3A1414" Foreground="#FF6B6B" BorderThickness="0">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                 <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE778;" FontSize="18"
                                           Foreground="#FF6B6B" VerticalAlignment="Center" />
-                                <TextBlock Text="Decline" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
+                                <TextBlock x:Name="CallDeclineLabel" Text="Decline" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
                             </StackPanel>
                         </Button>
-                        <Button Grid.Column="1" Click="CallAcceptButton_Click"
+                        <Button x:Name="CallAcceptButton" Grid.Column="1" Click="CallAcceptButton_Click"
                                 HorizontalAlignment="Stretch" Margin="6,0,0,0" Padding="16,14"
                                 Background="#14401C" Foreground="#4CD964" BorderThickness="0">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">

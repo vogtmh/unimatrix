@@ -303,6 +303,8 @@ namespace UniMatrix
             if (CallOverlay != null && CallOverlay.Visibility == Visibility.Visible)
             {
                 e.Handled = true;
+                // A MatrixRTC ring isn't a legacy call: just dismiss it (no hangup to send).
+                if (_incomingIsMatrixRtc) { DismissMatrixRtcRing("back pressed"); return; }
                 HideCallOverlay();
                 if (_callService != null) await _callService.HangupAsync();
                 return;
@@ -1678,6 +1680,11 @@ namespace UniMatrix
                             catch (Exception ex) { App.Log("CALL: signal dispatch failed: " + ex.Message); }
                         }
                     }
+
+                    // MatrixRTC (Element Call) awareness: ring on incoming m.rtc.notification and
+                    // track call membership so a stale ring is dismissed when the call ends. We're on
+                    // the UI thread here (the await resumed on it), which the overlay/ring need.
+                    DispatchMatrixRtc(result);
 
                     if (result.HasChanges)
                     {

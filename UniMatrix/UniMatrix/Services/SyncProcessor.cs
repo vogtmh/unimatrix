@@ -37,6 +37,21 @@ namespace UniMatrix.Services
 
         /// <summary>Encrypted room timeline events awaiting Megolm decryption by the sync loop.</summary>
         public List<EncryptedTimelineEvent> EncryptedEvents { get; } = new List<EncryptedTimelineEvent>();
+
+        // ---- MatrixRTC (Element Call / Matrix 2.0) awareness ----
+
+        /// <summary>
+        /// MSC4075 ring notifications (m.rtc.notification) seen this sync. UniMatrix can't join the
+        /// LiveKit SFU media, so these only drive the incoming-call ring + a timeline tile; the call
+        /// itself is answered in Element. The sync loop dispatches them on the UI thread.
+        /// </summary>
+        public List<MatrixRtcNotification> MatrixRtcNotifications { get; } = new List<MatrixRtcNotification>();
+
+        /// <summary>
+        /// MSC4143 call-membership state changes (m.rtc.member) seen this sync. Used to tell when a
+        /// MatrixRTC call in a room has started or ended (so a stale ring can be dismissed).
+        /// </summary>
+        public List<MatrixRtcMembership> MatrixRtcMemberships { get; } = new List<MatrixRtcMembership>();
     }
 
     /// <summary>A stored m.room.encrypted timeline event the sync loop will try to decrypt.</summary>
@@ -58,6 +73,27 @@ namespace UniMatrix.Services
         public string Sender { get; set; }
         public long Timestamp { get; set; }    // origin_server_ts
         public JsonObject Content { get; set; }
+    }
+
+    /// <summary>A MatrixRTC ring notification (MSC4075 m.rtc.notification) captured from /sync.</summary>
+    internal class MatrixRtcNotification
+    {
+        public string RoomId { get; set; }
+        public string EventId { get; set; }
+        public string Sender { get; set; }
+        public long Timestamp { get; set; }            // origin_server_ts
+        public string NotificationType { get; set; }   // "ring" or "notification"
+        public long Lifetime { get; set; }             // ms the ring stays valid; 0 = unspecified
+        public string ParentId { get; set; }           // m.relates_to.event_id (call identity), if any
+    }
+
+    /// <summary>A MatrixRTC call-membership change (MSC4143 m.rtc.member state event).</summary>
+    internal class MatrixRtcMembership
+    {
+        public string RoomId { get; set; }
+        public string StateKey { get; set; }   // the membership's state key (user/device scoped)
+        public string UserId { get; set; }     // best-effort user id parsed from the state key
+        public bool Active { get; set; }       // true = in the call, false = left
     }
 
     /// <summary>
@@ -250,7 +286,7 @@ namespace UniMatrix.Services
                 {
                     foreach (var ev in events)
                     {
-                        ApplyStateEvent(roomId, ev.GetObject(), room);
+                        ApplyStateEvent(roomId, ev.GetObject(), room, result);
                     }
                 }
             }
@@ -327,6 +363,32 @@ namespace UniMatrix.Services
                                 latestTs = msg.Timestamp;
                                 preview = BuildPreview(msg);
                             }
+                        }
+                        else if (IsRtcNotificationType(type))
+                        {
+                            // MatrixRTC (Element Call) ring in a plaintext room. Surface it for the
+                            // incoming-call ring and drop a timeline tile (encrypted rooms take the
+                            // decrypted path in MainPage.Crypto, which reuses the same helpers).
+                            JsonObject rtcContent = GetObject(ev, "content");
+                            string rtcEventId = MatrixClient.GetString(ev, "event_id");
+                            string rtcSender = MatrixClient.GetString(ev, "sender");
+                            long rtcTs = (long)GetNumber(ev, "origin_server_ts", 0);
+                            var n = ParseRtcNotification(roomId, rtcEventId, rtcSender, rtcTs, rtcContent);
+                            if (n != null)
+                            {
+                                result.MatrixRtcNotifications.Add(n);
+                                var tile = BuildRtcMissedTile(roomId, n.ParentId ?? rtcEventId, rtcSender, rtcTs, _myUserId);
+                                if (tile != null)
+                                {
+                                    _db.UpsertMessage(tile);
+                                    if (tile.Timestamp > latestTs) { latestTs = tile.Timestamp; preview = BuildPreview(tile); }
+                                }
+                            }
+                        }
+                        else if (IsRtcMemberType(type))
+                        {
+                            // MatrixRTC call-membership change carried inline in the timeline.
+                            ApplyStateEvent(roomId, ev, room, result);
                         }
                         else if (type == "m.room.name" || type == "m.room.avatar" ||
                                  type == "m.room.topic" || type == "m.room.member" ||
@@ -519,11 +581,27 @@ namespace UniMatrix.Services
 
 
         /// <summary>Applies a single state event; returns true if room metadata changed.</summary>
-        private bool ApplyStateEvent(string roomId, JsonObject ev, Room room)
+        private bool ApplyStateEvent(string roomId, JsonObject ev, Room room, SyncResult result = null)
         {
             string type = MatrixClient.GetString(ev, "type");
             JsonObject content = GetObject(ev, "content");
             if (content == null) return false;
+
+            if (IsRtcMemberType(type))
+            {
+                if (result != null)
+                {
+                    string sk = MatrixClient.GetString(ev, "state_key");
+                    result.MatrixRtcMemberships.Add(new MatrixRtcMembership
+                    {
+                        RoomId = roomId,
+                        StateKey = sk,
+                        UserId = UserFromRtcStateKey(sk),
+                        Active = IsActiveRtcMembership(content)
+                    });
+                }
+                return false;
+            }
 
             switch (type)
             {
@@ -745,6 +823,88 @@ namespace UniMatrix.Services
             msg.Body = CallSummaryLabel(msg.CallKind);
             _db.UpsertMessage(msg);
             return msg;
+        }
+
+        // ---- MatrixRTC (Element Call) helpers, shared with the encrypted-decrypt path ----
+
+        /// <summary>True for the MSC4075 RTC ring notification event type (stable + unstable).</summary>
+        internal static bool IsRtcNotificationType(string type)
+        {
+            return type == "m.rtc.notification" || type == "org.matrix.msc4075.rtc.notification";
+        }
+
+        /// <summary>True for the MatrixRTC call-membership state event type (current + legacy names).</summary>
+        internal static bool IsRtcMemberType(string type)
+        {
+            return type == "m.rtc.member" ||
+                   type == "org.matrix.msc3401.call.member" ||
+                   type == "m.call.member";
+        }
+
+        /// <summary>
+        /// Parses an MSC4075 RTC notification's content into a MatrixRtcNotification. Works for both
+        /// the plaintext timeline event and the decrypted inner event (encrypted rooms), so the ring
+        /// path is identical regardless of room encryption.
+        /// </summary>
+        internal static MatrixRtcNotification ParseRtcNotification(string roomId, string eventId, string sender, long ts, JsonObject content)
+        {
+            if (content == null) return null;
+            var n = new MatrixRtcNotification
+            {
+                RoomId = roomId,
+                EventId = eventId,
+                Sender = sender,
+                Timestamp = ts,
+                NotificationType = MatrixClient.GetString(content, "notification_type"),
+                Lifetime = (long)GetNumber(content, "lifetime", 0)
+            };
+            JsonObject rel = GetObject(content, "m.relates_to");
+            if (rel != null) n.ParentId = MatrixClient.GetString(rel, "event_id");
+            return n;
+        }
+
+        /// <summary>
+        /// Builds the one-line timeline tile for an incoming MatrixRTC call (rendered like a missed
+        /// 1:1 call, since UniMatrix can't join the LiveKit media and the call is taken in Element).
+        /// Returns null for our own device's notification (sender == me) so we don't log a self call.
+        /// All rings for one call share <paramref name="callKey"/> (the parent event id) so repeats
+        /// collapse to a single row.
+        /// </summary>
+        internal static Message BuildRtcMissedTile(string roomId, string callKey, string sender, long ts, string myUserId)
+        {
+            if (!string.IsNullOrEmpty(myUserId) && sender == myUserId) return null;
+            if (string.IsNullOrEmpty(callKey)) return null;
+            return new Message
+            {
+                EventId = "rtccall:" + callKey,
+                RoomId = roomId,
+                Sender = sender,
+                MsgType = "m.call",
+                CallKind = "missed",
+                Body = "Missed call",
+                Timestamp = ts,
+                IsLocalEcho = false
+            };
+        }
+
+        /// <summary>
+        /// Decides whether an m.rtc.member state event means the member is currently in the call.
+        /// Empty content (or an empty memberships array) is the standard "left the call" marker.
+        /// </summary>
+        private static bool IsActiveRtcMembership(JsonObject content)
+        {
+            if (content == null || content.Keys.Count == 0) return false;
+            if (content.ContainsKey("memberships") && content["memberships"].ValueType == JsonValueType.Array)
+                return content.GetNamedArray("memberships").Count > 0;
+            return true;
+        }
+
+        /// <summary>Best-effort user id from an m.rtc.member state key ("@user:server" or "_@user:server_DEVICE").</summary>
+        private static string UserFromRtcStateKey(string stateKey)
+        {
+            if (string.IsNullOrEmpty(stateKey)) return stateKey;
+            int at = stateKey.IndexOf('@');
+            return at >= 0 ? stateKey.Substring(at) : stateKey;
         }
 
         /// <summary>Friendly preview/label text for a call row, by its outcome kind.</summary>

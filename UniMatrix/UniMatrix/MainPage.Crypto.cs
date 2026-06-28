@@ -194,6 +194,26 @@ namespace UniMatrix
                     return true; // the room changed (placeholder removed)
                 }
 
+                // Encrypted MatrixRTC (Element Call) ring: surface it for the incoming-call ring and
+                // record a timeline tile, then drop the ciphertext placeholder. UniMatrix can't join
+                // the LiveKit media, so the call itself is answered in Element.
+                if (!string.IsNullOrEmpty(dr.ClearType) && SyncProcessor.IsRtcNotificationType(dr.ClearType))
+                {
+                    App.Log("CALL: live-decrypted MatrixRTC notification from " + (sender ?? "?") + " -> ring");
+                    // One-off: log the cleartext content shape so the assumed MSC4075 fields
+                    // (notification_type / lifetime / m.relates_to) can be verified on-device.
+                    try { App.Log("RTC: notification content=" + dr.ClearContent.Stringify()); } catch { }
+                    var n = SyncProcessor.ParseRtcNotification(roomId, eventId, sender, ts, dr.ClearContent);
+                    if (n != null)
+                    {
+                        result.MatrixRtcNotifications.Add(n);
+                        var tile = SyncProcessor.BuildRtcMissedTile(roomId, n.ParentId ?? eventId, sender, ts, _settings?.UserId);
+                        if (tile != null) _db.UpsertMessage(tile);
+                    }
+                    _db.DeleteMessage(eventId);
+                    return true;
+                }
+
                 if (StoreClearEvent(roomId, eventId, sender, ts, dr.ClearType, dr.ClearContent))
                     return true;
 
@@ -270,6 +290,24 @@ namespace UniMatrix
                             App.Log("CALL: retry-decrypted " + dr.ClearType + " from " + (sender ?? "?") +
                                     " ts=" + ts + " -> routing");
                             RouteDecryptedCallSignal(roomId, dr.ClearType, sender, ts, dr.ClearContent);
+                            _db.DeleteMessage(kv.Key);
+                            any = true;
+                            continue;
+                        }
+
+                        // A late-arriving MatrixRTC ring from history: it's already stale (won't
+                        // ring), so just record the timeline tile and drop the ciphertext blob.
+                        if (!string.IsNullOrEmpty(dr.ClearType) && SyncProcessor.IsRtcNotificationType(dr.ClearType))
+                        {
+                            var row = _db.GetMessageById(kv.Key);
+                            string sender = row != null ? row.Sender : null;
+                            long ts = row != null ? row.Timestamp : 0;
+                            var n = SyncProcessor.ParseRtcNotification(roomId, kv.Key, sender, ts, dr.ClearContent);
+                            var tile = n != null
+                                ? SyncProcessor.BuildRtcMissedTile(roomId, n.ParentId ?? kv.Key, sender, ts, _settings?.UserId)
+                                : null;
+                            if (tile != null) _db.UpsertMessage(tile);
+                            App.Log("CALL: retry-decrypted MatrixRTC notification (history) -> tile, removing blob");
                             _db.DeleteMessage(kv.Key);
                             any = true;
                             continue;

@@ -1,0 +1,201 @@
+using System;
+using System.Collections.Generic;
+using Windows.UI.Xaml;
+using Windows.UI.Xaml.Controls;
+using UniMatrix.Services;
+
+namespace UniMatrix
+{
+    /// <summary>
+    /// MatrixRTC (Element Call / Matrix 2.0) incoming-call awareness. Element no longer rings 1:1
+    /// calls over the legacy m.call.* protocol — it sends an MSC4075 ring (m.rtc.notification) and
+    /// joins a LiveKit SFU. UniMatrix's WebRTC stack (Org.WebRtc M71) can't join that SFU, so this
+    /// layer does NOT attempt media: it rings the phone, shows the incoming-call screen in a
+    /// read-only "answer in Element" mode, drops a timeline tile, and auto-dismisses when the call
+    /// ends (the caller's m.rtc.member membership goes empty) or the ring lifetime expires.
+    ///
+    /// The legacy peer-to-peer CallService (UniMatrix &lt;-&gt; UniMatrix calls) is untouched and keeps
+    /// working; this only adds handling for the Element/MatrixRTC ring it can't otherwise answer.
+    /// </summary>
+    public sealed partial class MainPage
+    {
+        // The room whose MatrixRTC ring is currently showing on the overlay, or null when not ringing.
+        private string _matrixRtcRingingRoomId;
+
+        // True while the call overlay is showing a MatrixRTC ring (so the accept/decline handlers and
+        // HideCallOverlay know to use the "answer in Element" behaviour rather than the legacy path).
+        private bool _incomingIsMatrixRtc;
+
+        // Auto-dismisses the ring after the notification's lifetime so it never rings forever.
+        private DispatcherTimer _matrixRtcRingTimer;
+
+        // Notification event ids already handled, so a re-delivered ring (or a sync replay) doesn't
+        // ring twice. Bounded to avoid unbounded growth over a long session.
+        private readonly HashSet<string> _handledRtcNotifications = new HashSet<string>();
+
+        // Active MatrixRTC call members per room (state-key set), so we can tell when a call ends.
+        private readonly Dictionary<string, HashSet<string>> _rtcActiveMembers =
+            new Dictionary<string, HashSet<string>>();
+
+        // Default ring lifetime when a notification doesn't specify one (MSC4075 suggests ~30s).
+        private const long DefaultRtcRingLifetimeMs = 30000;
+
+        /// <summary>
+        /// Applies the MatrixRTC parts of a sync result on the UI thread: first the membership
+        /// changes (which may end an active call and dismiss a stale ring), then any fresh ring
+        /// notifications. Called from the sync loop after CallSignals are dispatched.
+        /// </summary>
+        private void DispatchMatrixRtc(SyncResult result)
+        {
+            if (result == null) return;
+
+            if (result.MatrixRtcMemberships != null)
+            {
+                foreach (var m in result.MatrixRtcMemberships)
+                {
+                    try { UpdateRtcMembership(m); }
+                    catch (Exception ex) { App.Log("RTC: membership update failed: " + ex.Message); }
+                }
+            }
+
+            if (result.MatrixRtcNotifications != null)
+            {
+                foreach (var n in result.MatrixRtcNotifications)
+                {
+                    try { HandleMatrixRtcNotification(n); }
+                    catch (Exception ex) { App.Log("RTC: notification handling failed: " + ex.Message); }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Tracks who is currently in a room's MatrixRTC call. When the room we're ringing for drops
+        /// to zero active members, the caller has left, so the ring is dismissed.
+        /// </summary>
+        private void UpdateRtcMembership(MatrixRtcMembership m)
+        {
+            if (m == null || string.IsNullOrEmpty(m.RoomId) || string.IsNullOrEmpty(m.StateKey)) return;
+
+            HashSet<string> set;
+            if (!_rtcActiveMembers.TryGetValue(m.RoomId, out set))
+            {
+                set = new HashSet<string>();
+                _rtcActiveMembers[m.RoomId] = set;
+            }
+
+            if (m.Active) set.Add(m.StateKey);
+            else set.Remove(m.StateKey);
+
+            App.Log("RTC: member " + (m.UserId ?? m.StateKey) + " " + (m.Active ? "joined" : "left") +
+                    " call in " + m.RoomId + " (active=" + set.Count + ")");
+
+            // The call we're ringing for has ended.
+            if (_incomingIsMatrixRtc && m.RoomId == _matrixRtcRingingRoomId && set.Count == 0)
+                DismissMatrixRtcRing("call ended");
+        }
+
+        /// <summary>
+        /// Rings the phone for a fresh, relevant MSC4075 ring notification. Ignores our own device's
+        /// notifications, stale/replayed ones, "notification" (non-ring) types, and rings that arrive
+        /// while a legacy call is already in progress.
+        /// </summary>
+        private void HandleMatrixRtcNotification(MatrixRtcNotification n)
+        {
+            if (n == null || string.IsNullOrEmpty(n.RoomId)) return;
+
+            // De-dupe: each notification event rings at most once.
+            if (!string.IsNullOrEmpty(n.EventId))
+            {
+                if (_handledRtcNotifications.Contains(n.EventId)) return;
+                if (_handledRtcNotifications.Count > 256) _handledRtcNotifications.Clear();
+                _handledRtcNotifications.Add(n.EventId);
+            }
+
+            // Our own ring (another of our devices started the call): nothing to answer here.
+            if (!string.IsNullOrEmpty(_settings?.UserId) && n.Sender == _settings.UserId) return;
+
+            // Only "ring" notifications ring; "notification" is a silent presence hint.
+            if (!string.IsNullOrEmpty(n.NotificationType) && n.NotificationType != "ring")
+            {
+                App.Log("RTC: notification type=" + n.NotificationType + " (not a ring) -> ignored");
+                return;
+            }
+
+            // Drop stale rings (history backfill / sync replay): only ring within the lifetime window.
+            long lifetime = n.Lifetime > 0 ? n.Lifetime : DefaultRtcRingLifetimeMs;
+            long age = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - n.Timestamp;
+            if (n.Timestamp > 0 && age > lifetime)
+            {
+                App.Log("RTC: stale ring (" + age + "ms > " + lifetime + "ms) -> not ringing");
+                return;
+            }
+
+            // Don't hijack the screen if a legacy 1:1 call is already up, or we're already ringing.
+            if (_callService != null && _callService.InCall) return;
+            if (_incomingIsMatrixRtc) return;
+
+            App.Log("RTC: ringing for MatrixRTC call in " + n.RoomId + " from " + (n.Sender ?? "?"));
+
+            _matrixRtcRingingRoomId = n.RoomId;
+            _incomingIsMatrixRtc = true;
+            ShowMatrixRtcIncomingOverlay(n.RoomId);
+            StartRingVibration();
+
+            // Auto-dismiss when the ring's lifetime elapses (caller may never publish a leave we see).
+            long remaining = n.Timestamp > 0 ? Math.Max(1000, lifetime - age) : lifetime;
+            if (_matrixRtcRingTimer == null)
+            {
+                _matrixRtcRingTimer = new DispatcherTimer();
+                _matrixRtcRingTimer.Tick += (s, e) => DismissMatrixRtcRing("ring timed out");
+            }
+            _matrixRtcRingTimer.Interval = TimeSpan.FromMilliseconds(remaining);
+            _matrixRtcRingTimer.Start();
+        }
+
+        /// <summary>
+        /// Shows the call overlay as a MatrixRTC incoming ring: the avatar/name plus an "answer in
+        /// Element" hint, with the Accept button hidden (UniMatrix can't join the media) and the
+        /// Decline button widened to a single "Dismiss".
+        /// </summary>
+        private void ShowMatrixRtcIncomingOverlay(string roomId)
+        {
+            ShowCallOverlay(incoming: true, roomId: roomId,
+                            peerName: GetRoomDisplayName(roomId),
+                            status: "Incoming call \u00B7 answer in Element");
+
+            if (CallAcceptButton != null) CallAcceptButton.Visibility = Visibility.Collapsed;
+            if (CallDeclineButton != null)
+            {
+                Grid.SetColumnSpan(CallDeclineButton, 2);
+                CallDeclineButton.Margin = new Thickness(0);
+            }
+            if (CallDeclineLabel != null) CallDeclineLabel.Text = "Dismiss";
+        }
+
+        /// <summary>Stops a MatrixRTC ring and restores the overlay to its normal (legacy-call) layout.</summary>
+        private void DismissMatrixRtcRing(string reason)
+        {
+            if (!_incomingIsMatrixRtc) return;
+            App.Log("RTC: dismissing ring (" + reason + ")");
+
+            _incomingIsMatrixRtc = false;
+            _matrixRtcRingingRoomId = null;
+            if (_matrixRtcRingTimer != null) _matrixRtcRingTimer.Stop();
+            StopRingVibration();
+            ResetMatrixRtcOverlayChrome();
+            HideCallOverlay();
+        }
+
+        /// <summary>Restores the accept/decline panel to its default two-button (Decline + Accept) state.</summary>
+        private void ResetMatrixRtcOverlayChrome()
+        {
+            if (CallAcceptButton != null) CallAcceptButton.Visibility = Visibility.Visible;
+            if (CallDeclineButton != null)
+            {
+                Grid.SetColumnSpan(CallDeclineButton, 1);
+                CallDeclineButton.Margin = new Thickness(0, 0, 6, 0);
+            }
+            if (CallDeclineLabel != null) CallDeclineLabel.Text = "Decline";
+        }
+    }
+}

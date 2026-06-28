@@ -74,6 +74,8 @@ namespace UniMatrix
         private async void CallAcceptButton_Click(object sender, RoutedEventArgs e)
         {
             if (_callService == null) return;
+            // A MatrixRTC ring has no Accept (the button is hidden); guard defensively.
+            if (_incomingIsMatrixRtc) return;
             StopRingVibration();
             // If the caller offered video, answer with our camera too: hand over the render targets
             // and show the self-view PiP before accepting.
@@ -90,6 +92,8 @@ namespace UniMatrix
 
         private async void CallDeclineButton_Click(object sender, RoutedEventArgs e)
         {
+            // A MatrixRTC ring isn't a legacy call: just dismiss the overlay, no hangup to send.
+            if (_incomingIsMatrixRtc) { DismissMatrixRtcRing("dismissed by user"); return; }
             StopRingVibration();
             HideCallOverlay();
             if (_callService != null) await _callService.HangupAsync();
@@ -289,6 +293,16 @@ namespace UniMatrix
 
         private void HideCallOverlay()
         {
+            // If a MatrixRTC ring is up, clear its state so the overlay returns to the normal
+            // (legacy-call) layout for the next call.
+            if (_incomingIsMatrixRtc)
+            {
+                _incomingIsMatrixRtc = false;
+                _matrixRtcRingingRoomId = null;
+                if (_matrixRtcRingTimer != null) _matrixRtcRingTimer.Stop();
+                StopRingVibration();
+                ResetMatrixRtcOverlayChrome();
+            }
             // Stop a standalone camera preview (Phase 1 smoke test) and hide the self-view. During a
             // real call InCall is true, so the preview teardown is skipped (the call owns the tracks).
             if (_callService != null && !_callService.InCall) _callService.StopLocalPreview();
