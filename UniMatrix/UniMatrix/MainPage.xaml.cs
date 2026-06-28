@@ -205,6 +205,9 @@ namespace UniMatrix
             // UI thread) so it is created here rather than in a service constructor.
             _callService = new CallService();
             _callService.Initialize(Dispatcher, _client);
+            // Route outgoing call signalling through the crypto-aware sender so m.call.* events are
+            // Megolm-encrypted in encrypted rooms (plaintext call events are rejected there).
+            _callService.SetEventSender(SendCallEventAsync);
             _callService.IncomingCall += CallService_IncomingCall;
             _callService.CallConnected += CallService_CallConnected;
             _callService.CallEnded += CallService_CallEnded;

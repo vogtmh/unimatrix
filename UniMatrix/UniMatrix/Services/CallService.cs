@@ -119,6 +119,26 @@ namespace UniMatrix.Services
             _client = client;
         }
 
+        /// <summary>
+        /// Optional sender used for all outgoing call signalling. When set (by MainPage), it
+        /// encrypts the event with Megolm for encrypted rooms before sending; otherwise we fall back
+        /// to the plaintext client send. In an encrypted room, plaintext m.call.* events are
+        /// rejected/ignored by other clients, so this is required for calls to work there.
+        /// </summary>
+        public void SetEventSender(Func<string, string, JsonObject, Task<string>> sender)
+        {
+            _sendEvent = sender;
+        }
+
+        private Func<string, string, JsonObject, Task<string>> _sendEvent;
+
+        /// <summary>Sends a call event via the injected (encrypting) sender, or the plaintext client.</summary>
+        private async Task<string> SendCallEventAsync(string roomId, string eventType, JsonObject content)
+        {
+            if (_sendEvent != null) return await _sendEvent(roomId, eventType, content);
+            return await _client.SendEventAsync(roomId, eventType, content);
+        }
+
         // ---- Matrix VoIP signalling key names (spec) ----
         private const string KVersion = "version";
         private const string KCallId = "call_id";
@@ -747,7 +767,7 @@ namespace UniMatrix.Services
                     };
                     App.Log("CALL: SEND m.call.invite v=\"1\" party=" + _localPartyId +
                             " sdpLen=" + (offer.Sdp != null ? offer.Sdp.Length : 0));
-                    await _client.SendEventAsync(roomId, "m.call.invite", content);
+                    await SendCallEventAsync(roomId, "m.call.invite", content);
                     return true;
                 });
 
@@ -817,7 +837,7 @@ namespace UniMatrix.Services
                     };
                     App.Log("CALL: SEND m.call.answer v=\"1\" party=" + _localPartyId +
                             " sdpLen=" + (answer.Sdp != null ? answer.Sdp.Length : 0));
-                    await _client.SendEventAsync(_roomId, "m.call.answer", content);
+                    await SendCallEventAsync(_roomId, "m.call.answer", content);
                     return true;
                 });
 
@@ -1108,7 +1128,7 @@ namespace UniMatrix.Services
             {
                 try
                 {
-                    await _client.SendEventAsync(roomId, eventType, content);
+                    await SendCallEventAsync(roomId, eventType, content);
                     return;
                 }
                 catch (MatrixException mex) when (mex.StatusCode == 429 && attempt < maxAttempts)

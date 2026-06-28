@@ -124,7 +124,7 @@ namespace UniMatrix
                     // 3. Decrypt the encrypted timeline events from this sync.
                     foreach (var enc in result.EncryptedEvents)
                     {
-                        if (DecryptAndStore(enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
+                        if (DecryptAndStore(result, enc.RoomId, enc.EventId, enc.Sender, enc.Timestamp, enc.Content))
                             result.ChangedRooms.Add(enc.RoomId);
                     }
 
@@ -160,13 +160,31 @@ namespace UniMatrix
         }
 
         /// <summary>Decrypts one encrypted event and overwrites its stored row. Returns true on success.</summary>
-        private bool DecryptAndStore(string roomId, string eventId, string sender, long ts, JsonObject content)
+        private bool DecryptAndStore(SyncResult result, string roomId, string eventId, string sender, long ts, JsonObject content)
         {
             if (_crypto == null || !_crypto.Available || content == null) return false;
             try
             {
                 var dr = _crypto.DecryptRoomEvent(roomId, content);
                 if (!dr.Ok || dr.ClearContent == null) return false;
+
+                // Encrypted VoIP signalling: surface it to the CallService (the sync loop dispatches
+                // result.CallSignals on the UI thread, where the WebRTC queue lives) and remove the
+                // ciphertext placeholder row so it doesn't render as an unreadable blob.
+                if (!string.IsNullOrEmpty(dr.ClearType) && dr.ClearType.StartsWith("m.call."))
+                {
+                    result.CallSignals.Add(new CallSignal
+                    {
+                        RoomId = roomId,
+                        Type = dr.ClearType,
+                        Sender = sender,
+                        Timestamp = ts,
+                        Content = dr.ClearContent
+                    });
+                    _db.DeleteMessage(eventId);
+                    return true; // the room changed (placeholder removed)
+                }
+
                 return StoreClearEvent(roomId, eventId, sender, ts, dr.ClearType, dr.ClearContent);
             }
             catch (Exception ex)
@@ -190,6 +208,16 @@ namespace UniMatrix
                     var dr = _crypto.DecryptRoomEvent(roomId, content);
                     if (dr.Ok && dr.ClearContent != null)
                     {
+                        // A call event whose key only arrived now is stale (the call is long over):
+                        // don't re-ring, just drop the ciphertext placeholder so it stops rendering
+                        // as an unreadable blob.
+                        if (!string.IsNullOrEmpty(dr.ClearType) && dr.ClearType.StartsWith("m.call."))
+                        {
+                            _db.DeleteMessage(kv.Key);
+                            any = true;
+                            continue;
+                        }
+
                         // Sender/ts are preserved on the existing row; pass null/0 so the stored
                         // values aren't clobbered by StoreClearEvent (it reads the row first).
                         if (StoreClearEvent(roomId, kv.Key, null, 0, dr.ClearType, dr.ClearContent))
@@ -294,6 +322,46 @@ namespace UniMatrix
             }
 
             await _client.SendEventAsync(roomId, "m.room.message", content);
+        }
+
+        /// <summary>
+        /// Sends a Matrix VoIP signalling event (m.call.*), encrypting it with Megolm when the room
+        /// is encrypted. Injected into the CallService so calls work in encrypted rooms: a plaintext
+        /// m.call.* event in an encrypted room is rejected/ignored by other clients. Returns the
+        /// event id, or throws on encryption failure (we never fall back to plaintext in an
+        /// encrypted room).
+        ///
+        /// The CallService fires sends from several threads (the offer/answer build inside Task.Run,
+        /// the ICE candidate flush timer, the native WebRTC callback thread). The outbound Megolm
+        /// session is NOT thread-safe — two concurrent encrypts could reuse a ratchet index (key
+        /// reuse), so we marshal every call-event encrypt onto the UI thread, the same thread the
+        /// message-send path uses, which serialises all outbound Megolm access.
+        /// </summary>
+        private Task<string> SendCallEventAsync(string roomId, string eventType, JsonObject content)
+        {
+            if (Dispatcher.HasThreadAccess)
+                return SendCallEventCoreAsync(roomId, eventType, content);
+
+            var tcs = new TaskCompletionSource<string>();
+            var _ = Dispatcher.RunAsync(Windows.UI.Core.CoreDispatcherPriority.Normal, async () =>
+            {
+                try { tcs.SetResult(await SendCallEventCoreAsync(roomId, eventType, content)); }
+                catch (Exception ex) { tcs.SetException(ex); }
+            });
+            return tcs.Task;
+        }
+
+        private async Task<string> SendCallEventCoreAsync(string roomId, string eventType, JsonObject content)
+        {
+            if (RoomNeedsEncryption(roomId))
+            {
+                await ShareRoomKeysAsync(roomId);
+                var encrypted = _crypto.EncryptRoomEvent(roomId, eventType, content);
+                if (encrypted == null) throw new Exception("Encryption failed");
+                return await _client.SendEventAsync(roomId, "m.room.encrypted", encrypted);
+            }
+
+            return await _client.SendEventAsync(roomId, eventType, content);
         }
     }
 }
