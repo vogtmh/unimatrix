@@ -406,7 +406,8 @@ namespace UniMatrix
                         }
                         break;
                     case "m.location":
-                        msgType = "m.notice";
+                        msgType = "m.location";
+                        mxc = MatrixClient.GetString(clearContent, "geo_uri");
                         body = "\uD83D\uDCCD " + FriendlyOrDefault(body, "Location");
                         break;
                     case "m.file":
@@ -445,7 +446,8 @@ namespace UniMatrix
             else if (clearType == "m.location")
             {
                 // MSC3488 standalone location event.
-                msgType = "m.notice";
+                msgType = "m.location";
+                mxc = MatrixClient.GetString(clearContent, "geo_uri");
                 body = "\uD83D\uDCCD " + FriendlyOrDefault(MatrixClient.GetString(clearContent, "body"), "Location");
             }
             else

@@ -373,6 +373,16 @@
                                     <Image Source="{Binding MediaUrl}" Stretch="Uniform" MaxHeight="220"
                                            Visibility="{Binding ImageVisibility}" Margin="0,2,0,0"
                                            Tapped="MessageImage_Tapped" />
+                                    <!-- Inline location preview: a static OpenStreetMap tile with a
+                                         pin overlay. Tapping opens the interactive fullscreen map. -->
+                                    <Grid Width="240" Height="240" Margin="0,4,0,0" CornerRadius="6"
+                                          Visibility="{Binding LocationVisibility}"
+                                          Background="#22000000" Tapped="MessageMap_Tapped">
+                                        <Image Source="{Binding MapPreviewUrl}" Width="240" Height="240" Stretch="Fill" />
+                                        <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE81D;" FontSize="28"
+                                                  Foreground="#E03333" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                                  Margin="{Binding MapPinMargin}" />
+                                    </Grid>
                                     <TextBlock Text="{Binding TimeText}" Foreground="#CCFFFFFF"
                                                FontSize="10" HorizontalAlignment="Right" Margin="0,3,0,0" />
                                 </StackPanel>
@@ -1083,6 +1093,18 @@
             <ProgressRing x:Name="ImageViewerSpinner" IsActive="False" Width="48" Height="48"
                           Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
             <Button x:Name="ImageViewerCloseButton" Click="ImageViewerCloseButton_Click"
+                    HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0"
+                    Background="#80000000" BorderThickness="0" Padding="12,12">
+                <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="18" Foreground="White" />
+            </Button>
+        </Grid>
+
+        <!-- ===================== FULL-SCREEN MAP VIEWER ===================== -->
+        <!-- Interactive Leaflet/OpenStreetMap map shown when a location bubble is tapped.
+             The WebView is created lazily and reused; coordinates are pushed in via script. -->
+        <Grid x:Name="MapViewerPanel" Background="#F0101418" Visibility="Collapsed">
+            <WebView x:Name="MapWebView" />
+            <Button x:Name="MapViewerCloseButton" Click="MapViewerCloseButton_Click"
                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,12,0"
                     Background="#80000000" BorderThickness="0" Padding="12,12">
                 <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE711;" FontSize="18" Foreground="White" />

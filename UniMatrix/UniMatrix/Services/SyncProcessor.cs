@@ -736,7 +736,7 @@ namespace UniMatrix.Services
             if (content == null) return null;
 
             string msgType = MatrixClient.GetString(content, "msgtype");
-            if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image")
+            if (msgType != "m.text" && msgType != "m.notice" && msgType != "m.image" && msgType != "m.location")
             {
                 // Unsupported message type (file, audio, video, encrypted...). Skip for v1.
                 return null;
@@ -745,7 +745,13 @@ namespace UniMatrix.Services
             string sender = MatrixClient.GetString(ev, "sender");
             long ts = (long)GetNumber(ev, "origin_server_ts", 0);
             string body = MatrixClient.GetString(content, "body");
-            string mxc = msgType == "m.image" ? MatrixClient.GetString(content, "url") : null;
+            // For m.location the point lives in geo_uri ("geo:lat,lon"); stash it in mxc (unused for
+            // locations) so the message model can render a map, and give the bubble a pin caption.
+            string mxc = msgType == "m.image" ? MatrixClient.GetString(content, "url")
+                       : msgType == "m.location" ? MatrixClient.GetString(content, "geo_uri")
+                       : null;
+            if (msgType == "m.location")
+                body = "\uD83D\uDCCD " + (string.IsNullOrEmpty(body) ? "Location" : body);
 
             var msg = new Message
             {

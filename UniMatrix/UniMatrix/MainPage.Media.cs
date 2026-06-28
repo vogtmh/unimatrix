@@ -275,5 +275,63 @@ namespace UniMatrix
             // the user expects backdrop-tap-to-close like other photo viewers.
             CloseImageViewer();
         }
-    }
+        // ---- Full-screen location map viewer ----
+
+        // The coordinates awaiting display; pushed into the WebView once it has finished loading.
+        private double _pendingMapLat, _pendingMapLon;
+        private bool _mapWebViewReady;
+
+        private void MessageMap_Tapped(object sender, Windows.UI.Xaml.Input.TappedRoutedEventArgs e)
+        {
+            var grid = sender as Grid;
+            var msg = grid?.DataContext as Message;
+            if (msg == null || !msg.IsLocation) return;
+            e.Handled = true;
+            OpenMapViewer(msg.Latitude, msg.Longitude);
+        }
+
+        private void OpenMapViewer(double lat, double lon)
+        {
+            _pendingMapLat = lat;
+            _pendingMapLon = lon;
+            MapViewerPanel.Visibility = Visibility.Visible;
+
+            if (!_mapWebViewReady)
+            {
+                // First open: load the bundled Leaflet page, then push coordinates from
+                // NavigationCompleted (the script isn't callable until the page is ready).
+                MapWebView.NavigationCompleted += MapWebView_NavigationCompleted;
+                MapWebView.Source = new Uri("ms-appx-web:///Assets/map/map.html");
+            }
+            else
+            {
+                PushMapLocation();
+            }
+        }
+
+        private void MapWebView_NavigationCompleted(WebView sender, WebViewNavigationCompletedEventArgs args)
+        {
+            _mapWebViewReady = args.IsSuccess;
+            if (args.IsSuccess) PushMapLocation();
+        }
+
+        private async void PushMapLocation()
+        {
+            try
+            {
+                await MapWebView.InvokeScriptAsync("setLocation", new[]
+                {
+                    _pendingMapLat.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    _pendingMapLon.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                });
+            }
+            catch (Exception ex) { App.Log("Map viewer EXC: " + ex.Message); }
+        }
+
+        private void CloseMapViewer()
+        {
+            MapViewerPanel.Visibility = Visibility.Collapsed;
+        }
+
+        private void MapViewerCloseButton_Click(object sender, RoutedEventArgs e) => CloseMapViewer();    }
 }

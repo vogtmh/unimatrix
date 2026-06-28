@@ -278,6 +278,88 @@ namespace UniMatrix.Models
         public Visibility ImageVisibility { get { return HasImage ? Visibility.Visible : Visibility.Collapsed; } }
         public Visibility TextVisibility { get { return (HasImage || IsCall) ? Visibility.Collapsed : Visibility.Visible; } }
 
+        // ---- Location (m.location) rendering ----
+        // The point is carried in the (otherwise unused) Mxc field as the event's geo_uri
+        // ("geo:lat,lon" with an optional ";u=accuracy" suffix). The inline preview is a single
+        // static OpenStreetMap tile with a pin overlay; tapping it opens the interactive
+        // fullscreen Leaflet map. Coordinates are parsed once and cached.
+        private const int MapPreviewZoom = 15;
+        private const double MapPreviewSize = 240;  // inline preview edge length, in DIPs
+        private bool _geoParsed;
+        private bool _geoValid;
+        private double _lat, _lon;
+
+        private void ParseGeo()
+        {
+            if (_geoParsed) return;
+            _geoParsed = true;
+            _geoValid = false;
+            if (MsgType != "m.location" || string.IsNullOrEmpty(Mxc)) return;
+            try
+            {
+                string s = Mxc.Trim();
+                if (s.StartsWith("geo:", StringComparison.OrdinalIgnoreCase)) s = s.Substring(4);
+                int semi = s.IndexOf(';'); if (semi >= 0) s = s.Substring(0, semi);
+                var parts = s.Split(',');
+                if (parts.Length < 2) return;
+                double la, lo;
+                if (double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out la) &&
+                    double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out lo) &&
+                    la >= -90 && la <= 90 && lo >= -180 && lo <= 180)
+                {
+                    _lat = la; _lon = lo; _geoValid = true;
+                }
+            }
+            catch { _geoValid = false; }
+        }
+
+        public double Latitude { get { ParseGeo(); return _lat; } }
+        public double Longitude { get { ParseGeo(); return _lon; } }
+
+        /// <summary>True for a renderable location event carrying valid coordinates.</summary>
+        public bool IsLocation { get { ParseGeo(); return MsgType == "m.location" && _geoValid; } }
+        public Visibility LocationVisibility { get { return IsLocation ? Visibility.Visible : Visibility.Collapsed; } }
+
+        // Web-Mercator projection of the point at the preview zoom, expressed in tile units.
+        private double MercX { get { ParseGeo(); return (_lon + 180.0) / 360.0 * (1 << MapPreviewZoom); } }
+        private double MercY
+        {
+            get
+            {
+                ParseGeo();
+                double latRad = _lat * Math.PI / 180.0;
+                return (1.0 - Math.Log(Math.Tan(latRad) + 1.0 / Math.Cos(latRad)) / Math.PI) / 2.0 * (1 << MapPreviewZoom);
+            }
+        }
+
+        /// <summary>Static OpenStreetMap tile URL for the inline preview (the tile that contains the point).</summary>
+        public string MapPreviewUrl
+        {
+            get
+            {
+                if (!IsLocation) return null;
+                int tileX = (int)Math.Floor(MercX);
+                int tileY = (int)Math.Floor(MercY);
+                return string.Format("https://tile.openstreetmap.org/{0}/{1}/{2}.png", MapPreviewZoom, tileX, tileY);
+            }
+        }
+
+        /// <summary>Margin that places the pin glyph's tip over the exact point within the preview tile.</summary>
+        public Thickness MapPinMargin
+        {
+            get
+            {
+                if (!IsLocation) return new Thickness(0);
+                double fx = MercX - Math.Floor(MercX);
+                double fy = MercY - Math.Floor(MercY);
+                double px = fx * MapPreviewSize;
+                double py = fy * MapPreviewSize;
+                // The pin glyph (FontSize 28) has its tip at bottom-centre, so shift left ~half a
+                // glyph width and up ~one glyph height to anchor the tip on the point.
+                return new Thickness(px - 14, py - 26, 0, 0);
+            }
+        }
+
         /// <summary>
         /// True for synthesized voice/video call events (m.call.*). These render as a
         /// centered system pill rather than a chat bubble.

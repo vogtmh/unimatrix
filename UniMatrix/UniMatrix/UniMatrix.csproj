@@ -226,6 +226,14 @@
     <Content Include="Assets\Wide310x150Logo.scale-400.png" />
     <Content Include="Assets\unimatrix_logo.png" />
     <Content Include="Assets\unimatrix_banner.png" />
+    <Content Include="Assets\map\map.html" />
+    <Content Include="Assets\map\leaflet.js" />
+    <Content Include="Assets\map\leaflet.css" />
+    <Content Include="Assets\map\images\marker-icon.png" />
+    <Content Include="Assets\map\images\marker-icon-2x.png" />
+    <Content Include="Assets\map\images\marker-shadow.png" />
+    <Content Include="Assets\map\images\layers.png" />
+    <Content Include="Assets\map\images\layers-2x.png" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">

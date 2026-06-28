@@ -318,6 +318,14 @@ namespace UniMatrix
                 return;
             }
 
+            // The full-screen map viewer also overlays everything; Back closes it.
+            if (MapViewerPanel != null && MapViewerPanel.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                CloseMapViewer();
+                return;
+            }
+
             // The verification overlay sits above everything else; Back cancels the in-progress
             // verification and dismisses it.
             if (VerifyOverlay != null && VerifyOverlay.Visibility == Visibility.Visible)
