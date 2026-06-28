@@ -190,6 +190,7 @@ namespace UniMatrix.Services
                 ["body"] = JsonValue.CreateStringValue(body)
             };
 
+            App.Log("TX " + roomId + " type=m.room.message content=" + content.Stringify());
             var resp = await PutAsync(path, content);
             return GetString(resp, "event_id");
         }
@@ -210,6 +211,7 @@ namespace UniMatrix.Services
             string path = "/_matrix/client/r0/rooms/" + Uri.EscapeDataString(roomId) +
                           "/send/" + Uri.EscapeDataString(eventType) + "/" + Uri.EscapeDataString(txnId);
 
+            App.Log("TX " + roomId + " type=" + eventType + " content=" + content.Stringify());
             var resp = await PutAsync(path, content);
             return GetString(resp, "event_id");
         }
@@ -227,6 +229,7 @@ namespace UniMatrix.Services
                           "/state/" + Uri.EscapeDataString(eventType) +
                           "/" + Uri.EscapeDataString(stateKey ?? "");
 
+            App.Log("TX-state " + roomId + " type=" + eventType + " state_key=" + (stateKey ?? "") + " content=" + content.Stringify());
             var resp = await PutAsync(path, content);
             return GetString(resp, "event_id");
         }
@@ -305,6 +308,7 @@ namespace UniMatrix.Services
                 ["info"] = info
             };
 
+            App.Log("TX " + roomId + " type=m.room.message content=" + content.Stringify());
             var resp = await PutAsync(path, content);
             return GetString(resp, "event_id");
         }

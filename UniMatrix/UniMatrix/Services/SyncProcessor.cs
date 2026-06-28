@@ -223,7 +223,11 @@ namespace UniMatrix.Services
                 JsonObject toDevice = GetObject(sync, "to_device");
                 JsonArray events = GetArray(toDevice, "events");
                 if (events != null)
-                    foreach (var v in events) if (v.ValueType == JsonValueType.Object) result.ToDeviceEvents.Add(v.GetObject());
+                    foreach (var v in events) if (v.ValueType == JsonValueType.Object)
+                    {
+                        LogRawEvent("RX-todevice", null, v.GetObject());
+                        result.ToDeviceEvents.Add(v.GetObject());
+                    }
             }
             catch (Exception ex)
             {
@@ -286,6 +290,7 @@ namespace UniMatrix.Services
                 {
                     foreach (var ev in events)
                     {
+                        LogRawEvent("RX-state", roomId, ev.GetObject());
                         ApplyStateEvent(roomId, ev.GetObject(), room, result);
                     }
                 }
@@ -315,6 +320,7 @@ namespace UniMatrix.Services
                     {
                         JsonObject ev = evVal.GetObject();
                         string type = MatrixClient.GetString(ev, "type");
+                        LogRawEvent("RX", roomId, ev);
 
                         if (type == "m.room.message")
                         {
@@ -940,6 +946,33 @@ namespace UniMatrix.Services
         }
 
         // ---- JSON helpers ----
+
+        /// <summary>
+        /// Diagnostic: dumps a raw room event (type, sender, event_id, content) to the debug log so
+        /// we can see exactly what the homeserver delivers — including event types UniMatrix doesn't
+        /// otherwise surface (e.g. MatrixRTC m.rtc.* events). Content is truncated to keep the log
+        /// readable; encrypted ciphertext blobs are noisy but bounded.
+        /// </summary>
+        internal static void LogRawEvent(string dir, string roomId, JsonObject ev)
+        {
+            try
+            {
+                if (ev == null) return;
+                string type = MatrixClient.GetString(ev, "type");
+                string sender = MatrixClient.GetString(ev, "sender");
+                string eventId = MatrixClient.GetString(ev, "event_id");
+                string stateKey = MatrixClient.GetString(ev, "state_key");
+                JsonObject content = GetObject(ev, "content");
+                string c = content != null ? content.Stringify() : "{}";
+                if (c != null && c.Length > 900) c = c.Substring(0, 900) + "...(" + c.Length + " chars)";
+                App.Log(dir + " " + (roomId ?? "?") + " type=" + (type ?? "?") +
+                        " sender=" + (sender ?? "?") +
+                        (string.IsNullOrEmpty(stateKey) ? "" : " state_key=" + stateKey) +
+                        (string.IsNullOrEmpty(eventId) ? "" : " id=" + eventId) +
+                        " content=" + c);
+            }
+            catch { }
+        }
 
         private static JsonObject GetObject(JsonObject parent, string key)
         {

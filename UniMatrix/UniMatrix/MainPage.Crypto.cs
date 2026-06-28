@@ -176,6 +176,15 @@ namespace UniMatrix
                     return false;
                 }
 
+                try
+                {
+                    string dc = dr.ClearContent.Stringify();
+                    if (dc != null && dc.Length > 900) dc = dc.Substring(0, 900) + "...(" + dc.Length + " chars)";
+                    App.Log("RX-decrypted " + roomId + " type=" + (dr.ClearType ?? "?") +
+                            " sender=" + (sender ?? "?") + " id=" + (eventId ?? "?") + " content=" + dc);
+                }
+                catch { }
+
                 // Encrypted VoIP signalling: surface it to the CallService (the sync loop dispatches
                 // result.CallSignals on the UI thread, where the WebRTC queue lives) and remove the
                 // ciphertext placeholder row so it doesn't render as an unreadable blob.
@@ -488,6 +497,7 @@ namespace UniMatrix
         /// </summary>
         private async Task SendRoomMessageAsync(string roomId, JsonObject content)
         {
+            App.Log("TX-plain " + roomId + " type=m.room.message content=" + content.Stringify());
             if (RoomNeedsEncryption(roomId))
             {
                 await ShareRoomKeysAsync(roomId);
