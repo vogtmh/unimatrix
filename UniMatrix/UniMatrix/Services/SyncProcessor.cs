@@ -91,6 +91,7 @@ namespace UniMatrix.Services
     internal class MatrixRtcMembership
     {
         public string RoomId { get; set; }
+        public string EventId { get; set; }    // the state event's id (per-publish; used to dedupe rings)
         public string StateKey { get; set; }   // the membership's state key (user/device scoped)
         public string UserId { get; set; }     // best-effort user id parsed from the state key
         public string Sender { get; set; }     // the event sender (clean user id, for self-checks)
@@ -609,6 +610,7 @@ namespace UniMatrix.Services
                     var mem = new MatrixRtcMembership
                     {
                         RoomId = roomId,
+                        EventId = MatrixClient.GetString(ev, "event_id"),
                         StateKey = sk,
                         UserId = UserFromRtcStateKey(sk),
                         Sender = MatrixClient.GetString(ev, "sender"),

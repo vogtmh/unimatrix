@@ -68,10 +68,13 @@ namespace UniMatrix
         private readonly Dictionary<string, HashSet<string>> _rtcActiveMembers =
             new Dictionary<string, HashSet<string>>();
 
-        // Rooms we've already rung for in the current active call session, so a periodic membership
-        // refresh (Element re-publishes m.rtc.member while the call is up) doesn't ring repeatedly.
-        // Cleared for a room when its call ends (active members drop to zero).
-        private readonly HashSet<string> _rtcRangForRoom = new HashSet<string>();
+        // Membership state events we've already rung for, keyed by event id. Each genuine new call
+        // publishes a fresh m.rtc.member state event (new event id), so deduping on the event id
+        // rings every real call exactly once WITHOUT a sticky per-room flag. The old per-room flag
+        // was cleared only when a "leave" dropped the active set to zero — so a single missed leave
+        // (common after a gappy/post-restart sync) poisoned the room and silently swallowed every
+        // later call until the app was restarted. Bounded to avoid unbounded growth.
+        private readonly HashSet<string> _rtcRangMemberships = new HashSet<string>();
 
         // Default ring lifetime when a notification doesn't specify one (MSC4075 suggests ~30s).
         private const long DefaultRtcRingLifetimeMs = 30000;
@@ -134,23 +137,24 @@ namespace UniMatrix
             App.Log("RTC: member " + (m.Sender ?? m.UserId ?? m.StateKey) + " " + (m.Active ? "joined" : "left") +
                     " call in " + m.RoomId + " (active=" + set.Count + ", ts=" + m.Timestamp + ", age=" + ageMs + "ms)");
 
-            // The call has ended (everyone left): reset the "already rang" guard and, if we were
-            // ringing for this room, dismiss the ring.
+            // The call has ended (everyone left): if we were ringing for this room, dismiss the
+            // ring. (Ring de-dupe is keyed on the membership event id, so there is no per-room flag
+            // to reset here — a missed leave can therefore no longer poison future calls.)
             if (set.Count == 0)
             {
-                _rtcRangForRoom.Remove(m.RoomId);
                 if (_incomingIsMatrixRtc && m.RoomId == _matrixRtcRingingRoomId)
                     DismissMatrixRtcRing("call ended");
                 return;
             }
 
             // A remote user is now in the call -> ring (unless this is our own membership, we're
-            // already in a legacy call, already ringing, or we've already rung for this call).
+            // already in a legacy call, already ringing, or we've already rung for this exact
+            // membership event).
             if (!m.Active) return;
             bool isSelf = !string.IsNullOrEmpty(_settings?.UserId) &&
                           (m.Sender == _settings.UserId || (m.UserId != null && m.UserId.StartsWith(_settings.UserId)));
             if (isSelf) { App.Log("RTC: own membership join (" + m.StateKey + ") -> not ringing"); return; }
-            if (_rtcRangForRoom.Contains(m.RoomId)) { App.Log("RTC: already rang for " + m.RoomId + " this call -> not ringing again"); return; }
+            if (!string.IsNullOrEmpty(m.EventId) && _rtcRangMemberships.Contains(m.EventId)) { App.Log("RTC: already rang for membership " + m.EventId + " -> not ringing again"); return; }
             if (_callService != null && _callService.InCall) { App.Log("RTC: in a legacy call -> not ringing for member join"); return; }
             if (_incomingIsMatrixRtc) { App.Log("RTC: already showing an rtc ring -> not ringing for member join"); return; }
 
@@ -165,7 +169,11 @@ namespace UniMatrix
                 }
             }
 
-            _rtcRangForRoom.Add(m.RoomId);
+            if (!string.IsNullOrEmpty(m.EventId))
+            {
+                if (_rtcRangMemberships.Count > 256) _rtcRangMemberships.Clear();
+                _rtcRangMemberships.Add(m.EventId);
+            }
             App.Log("RTC: ringing for MatrixRTC call (member join) in " + m.RoomId + " from " + (m.Sender ?? "?"));
 
             // Remember the LiveKit focus so an accept can request SFU credentials.
