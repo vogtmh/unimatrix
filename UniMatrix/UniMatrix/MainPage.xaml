@@ -1157,7 +1157,7 @@
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                 <FontIcon FontFamily="Segoe MDL2 Assets" Glyph="&#xE717;" FontSize="18"
                                           Foreground="#4CD964" VerticalAlignment="Center" />
-                                <TextBlock Text="Accept" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
+                                <TextBlock x:Name="CallAcceptLabel" Text="Accept" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="15" />
                             </StackPanel>
                         </Button>
                     </Grid>

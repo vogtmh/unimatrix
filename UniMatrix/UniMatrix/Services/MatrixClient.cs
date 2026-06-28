@@ -125,6 +125,35 @@ namespace UniMatrix.Services
             _accessToken = null;
         }
 
+        /// <summary>
+        /// Requests a short-lived Matrix OpenID token for the logged-in user. This token lets a
+        /// third-party service (here the MatrixRTC/LiveKit authorization service, "lk-jwt-service")
+        /// verify our Matrix identity with our homeserver and then issue a LiveKit SFU access token.
+        /// Returns null on failure. The returned object is opaque to us; we forward it verbatim.
+        /// </summary>
+        public async Task<JsonObject> RequestOpenIdTokenAsync()
+        {
+            if (string.IsNullOrEmpty(UserId)) return null;
+            try
+            {
+                string path = "/_matrix/client/v3/user/" + Uri.EscapeDataString(UserId) +
+                              "/openid/request_token";
+                var resp = await PostAsync(path, new JsonObject(), requireAuth: true);
+                if (resp == null || !resp.ContainsKey("access_token"))
+                {
+                    App.Log("RTC: OpenID token request returned no access_token");
+                    return null;
+                }
+                App.Log("RTC: OpenID token obtained (server=" + GetString(resp, "matrix_server_name") + ")");
+                return resp;
+            }
+            catch (Exception ex)
+            {
+                App.Log("RTC: OpenID token request failed: " + ex.Message);
+                return null;
+            }
+        }
+
         // ---- Sync ----
 
         /// <summary>

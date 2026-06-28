@@ -96,6 +96,12 @@ namespace UniMatrix.Services
         public string Sender { get; set; }     // the event sender (clean user id, for self-checks)
         public long Timestamp { get; set; }    // origin_server_ts (to drop stale joins on backfill)
         public bool Active { get; set; }       // true = in the call, false = left
+
+        // LiveKit focus info (from the join's foci_preferred[0]/focus_active), used to obtain an SFU
+        // token and connect. Null on a leave (empty content) or non-LiveKit focus.
+        public string FocusServiceUrl { get; set; }  // e.g. https://livekit-jwt.call.matrix.org
+        public string FocusRoomAlias { get; set; }   // LiveKit room name (livekit_alias), usually the room id
+        public string CallId { get; set; }           // call_id from content (usually "" for the room's call)
     }
 
     /// <summary>
@@ -600,15 +606,18 @@ namespace UniMatrix.Services
                 if (result != null)
                 {
                     string sk = MatrixClient.GetString(ev, "state_key");
-                    result.MatrixRtcMemberships.Add(new MatrixRtcMembership
+                    var mem = new MatrixRtcMembership
                     {
                         RoomId = roomId,
                         StateKey = sk,
                         UserId = UserFromRtcStateKey(sk),
                         Sender = MatrixClient.GetString(ev, "sender"),
                         Timestamp = (long)GetNumber(ev, "origin_server_ts", 0),
-                        Active = IsActiveRtcMembership(content)
-                    });
+                        Active = IsActiveRtcMembership(content),
+                        CallId = MatrixClient.GetString(content, "call_id")
+                    };
+                    ExtractLiveKitFocus(content, mem);
+                    result.MatrixRtcMemberships.Add(mem);
                 }
                 return false;
             }
@@ -915,6 +924,30 @@ namespace UniMatrix.Services
             if (string.IsNullOrEmpty(stateKey)) return stateKey;
             int at = stateKey.IndexOf('@');
             return at >= 0 ? stateKey.Substring(at) : stateKey;
+        }
+
+        /// <summary>
+        /// Pulls the LiveKit SFU focus (service URL + room alias) out of an m.rtc.member join content.
+        /// Element puts it in foci_preferred[] (each {type:"livekit", livekit_service_url, livekit_alias}).
+        /// Sets the membership's FocusServiceUrl/FocusRoomAlias when a LiveKit focus is present.
+        /// </summary>
+        private static void ExtractLiveKitFocus(JsonObject content, MatrixRtcMembership mem)
+        {
+            try
+            {
+                JsonArray foci = GetArray(content, "foci_preferred");
+                if (foci == null) return;
+                foreach (var fVal in foci)
+                {
+                    if (fVal.ValueType != JsonValueType.Object) continue;
+                    JsonObject f = fVal.GetObject();
+                    if (MatrixClient.GetString(f, "type") != "livekit") continue;
+                    mem.FocusServiceUrl = MatrixClient.GetString(f, "livekit_service_url");
+                    mem.FocusRoomAlias = MatrixClient.GetString(f, "livekit_alias");
+                    if (!string.IsNullOrEmpty(mem.FocusServiceUrl)) return;
+                }
+            }
+            catch { }
         }
 
         /// <summary>Friendly preview/label text for a call row, by its outcome kind.</summary>

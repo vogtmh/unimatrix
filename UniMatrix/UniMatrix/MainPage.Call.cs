@@ -73,9 +73,9 @@ namespace UniMatrix
 
         private async void CallAcceptButton_Click(object sender, RoutedEventArgs e)
         {
+            // A MatrixRTC ring: "Join" attempts the LiveKit SFU join instead of the legacy path.
+            if (_incomingIsMatrixRtc) { AcceptMatrixRtcCall(); return; }
             if (_callService == null) return;
-            // A MatrixRTC ring has no Accept (the button is hidden); guard defensively.
-            if (_incomingIsMatrixRtc) return;
             StopRingVibration();
             // If the caller offered video, answer with our camera too: hand over the render targets
             // and show the self-view PiP before accepting.

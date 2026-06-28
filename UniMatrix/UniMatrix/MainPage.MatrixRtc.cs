@@ -23,8 +23,19 @@ namespace UniMatrix
         private string _matrixRtcRingingRoomId;
 
         // True while the call overlay is showing a MatrixRTC ring (so the accept/decline handlers and
-        // HideCallOverlay know to use the "answer in Element" behaviour rather than the legacy path).
+        // HideCallOverlay know to use the MatrixRTC behaviour rather than the legacy path).
         private bool _incomingIsMatrixRtc;
+
+        // LiveKit focus info for the currently-ringing call (from the caller's m.rtc.member), used to
+        // obtain SFU credentials when the user accepts.
+        private string _matrixRtcFocusUrl;
+        private string _matrixRtcRoomAlias;
+
+        // MatrixRTC -> LiveKit authorization (OpenID token -> SFU JWT). Lazily created.
+        private LiveKitAuthService _liveKitAuth;
+
+        // True while an accept/join attempt is in progress, so a double-tap doesn't fire twice.
+        private bool _matrixRtcJoining;
 
         // Auto-dismisses the ring after the notification's lifetime so it never rings forever.
         private DispatcherTimer _matrixRtcRingTimer;
@@ -131,6 +142,10 @@ namespace UniMatrix
             _rtcRangForRoom.Add(m.RoomId);
             App.Log("RTC: ringing for MatrixRTC call (member join) in " + m.RoomId + " from " + (m.Sender ?? "?"));
 
+            // Remember the LiveKit focus so an accept can request SFU credentials.
+            _matrixRtcFocusUrl = m.FocusServiceUrl;
+            _matrixRtcRoomAlias = !string.IsNullOrEmpty(m.FocusRoomAlias) ? m.FocusRoomAlias : m.RoomId;
+
             // Drop a timeline tile for the incoming call (best-effort).
             try
             {
@@ -213,23 +228,84 @@ namespace UniMatrix
         }
 
         /// <summary>
-        /// Shows the call overlay as a MatrixRTC incoming ring: the avatar/name plus an "answer in
-        /// Element" hint, with the Accept button hidden (UniMatrix can't join the media) and the
-        /// Decline button widened to a single "Dismiss".
+        /// Shows the call overlay as a MatrixRTC incoming ring. The Accept button is shown labeled
+        /// "Join" (UniMatrix attempts to join the LiveKit SFU); Decline becomes "Dismiss".
         /// </summary>
         private void ShowMatrixRtcIncomingOverlay(string roomId)
         {
             ShowCallOverlay(incoming: true, roomId: roomId,
                             peerName: GetRoomDisplayName(roomId),
-                            status: "Incoming call \u00B7 answer in Element");
+                            status: "Incoming MatrixRTC call");
 
-            if (CallAcceptButton != null) CallAcceptButton.Visibility = Visibility.Collapsed;
+            if (CallAcceptButton != null) CallAcceptButton.Visibility = Visibility.Visible;
+            if (CallAcceptLabel != null) CallAcceptLabel.Text = "Join";
             if (CallDeclineButton != null)
             {
-                Grid.SetColumnSpan(CallDeclineButton, 2);
-                CallDeclineButton.Margin = new Thickness(0);
+                Grid.SetColumnSpan(CallDeclineButton, 1);
+                CallDeclineButton.Margin = new Thickness(0, 0, 6, 0);
             }
             if (CallDeclineLabel != null) CallDeclineLabel.Text = "Dismiss";
+        }
+
+        /// <summary>
+        /// User tapped "Join" on a MatrixRTC ring. Step 1 of joining: obtain LiveKit SFU credentials
+        /// (Matrix OpenID token -> focus service -> {jwt, url}). Media join (LiveKit signalling +
+        /// WebRTC) is the next phase; for now this proves the authorization path end to end and logs
+        /// the result so we know matrix.org grants SFU access.
+        /// </summary>
+        internal async void AcceptMatrixRtcCall()
+        {
+            if (!_incomingIsMatrixRtc || _matrixRtcJoining) return;
+            _matrixRtcJoining = true;
+
+            // Stop the ring vibration/auto-dismiss while we attempt to join.
+            StopRingVibration();
+            if (_matrixRtcRingTimer != null) _matrixRtcRingTimer.Stop();
+
+            string room = _matrixRtcRoomAlias;
+            string focus = _matrixRtcFocusUrl;
+            if (CallStatusText != null) CallStatusText.Text = "Connecting\u2026";
+
+            try
+            {
+                if (string.IsNullOrEmpty(focus))
+                {
+                    App.Log("RTC: cannot join — no LiveKit focus url from caller");
+                    if (CallStatusText != null) CallStatusText.Text = "Can't join (no SFU info)";
+                    _matrixRtcJoining = false;
+                    return;
+                }
+
+                var openId = await _client.RequestOpenIdTokenAsync();
+                if (openId == null)
+                {
+                    if (CallStatusText != null) CallStatusText.Text = "Can't join (auth failed)";
+                    _matrixRtcJoining = false;
+                    return;
+                }
+
+                if (_liveKitAuth == null) _liveKitAuth = new LiveKitAuthService();
+                var creds = await _liveKitAuth.GetSfuCredentialsAsync(
+                    focus, room, openId, _settings?.DeviceId);
+
+                if (creds == null)
+                {
+                    if (CallStatusText != null) CallStatusText.Text = "Can't join (SFU denied)";
+                    _matrixRtcJoining = false;
+                    return;
+                }
+
+                // Authorization succeeded. Media join (LiveKit signalling) is the next phase.
+                App.Log("RTC: JOIN AUTH OK — SFU url=" + creds.Url + " (media join not yet implemented)");
+                if (CallStatusText != null)
+                    CallStatusText.Text = "SFU authorized \u00B7 media not yet supported";
+            }
+            catch (Exception ex)
+            {
+                App.Log("RTC: join attempt failed: " + ex.Message);
+                if (CallStatusText != null) CallStatusText.Text = "Join failed";
+                _matrixRtcJoining = false;
+            }
         }
 
         /// <summary>Stops a MatrixRTC ring and restores the overlay to its normal (legacy-call) layout.</summary>
@@ -239,7 +315,10 @@ namespace UniMatrix
             App.Log("RTC: dismissing ring (" + reason + ")");
 
             _incomingIsMatrixRtc = false;
+            _matrixRtcJoining = false;
             _matrixRtcRingingRoomId = null;
+            _matrixRtcFocusUrl = null;
+            _matrixRtcRoomAlias = null;
             if (_matrixRtcRingTimer != null) _matrixRtcRingTimer.Stop();
             StopRingVibration();
             ResetMatrixRtcOverlayChrome();
@@ -250,6 +329,7 @@ namespace UniMatrix
         private void ResetMatrixRtcOverlayChrome()
         {
             if (CallAcceptButton != null) CallAcceptButton.Visibility = Visibility.Visible;
+            if (CallAcceptLabel != null) CallAcceptLabel.Text = "Accept";
             if (CallDeclineButton != null)
             {
                 Grid.SetColumnSpan(CallDeclineButton, 1);
